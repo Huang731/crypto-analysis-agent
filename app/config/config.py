@@ -53,6 +53,12 @@ class Settings(BaseSettings):
 
     dimensions: dict[str, list[str]] = {"美元流动性与加密内部流动性": ["DXY_Trend", "Stable_MCap", "M2_YoY", "Fed_Balance"]}
 
+    model_price_table: dict[str, dict[str, float]] = {
+        "glm-4.5-air": {"input": 50.0, "output": 50.0},
+        "glm-4-flash": {"input": 0.0,  "output": 0.0},   # flash 当前免费档
+        "embedding-3": {"input": 0.5,  "output": 0.0},
+    }
+
 @lru_cache
 def get_settings() -> Settings:
     """单例配置。lru_cache 保证全进程只读一次 .env。"""

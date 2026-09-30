@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field  # 解析模型返回的严格
 from app.crypto_analysis.crypto_analysis_contract import _HISTORICAL  # 沿用原入口对历史问题的限制。
 from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog  # 使用本轮配置快照。
 from app.crypto_analysis.crypto_metric_runtime import CALCULATOR_REGISTRY, TOOL_REGISTRY  # 核对实际注册的能力。
+from app.config.config import settings  # 读取规划模型配置。
+from app.tracing import estimate_tokens, trace_generation  # 记录模型调用与估算用量。
 
 
 _ASSET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")  # 接受规范化的单个币种符号。
@@ -97,7 +99,10 @@ async def create_analysis_plan(llm: Any, question: str, catalog: DimensionCatalo
         f"\n配置：{json.dumps(overview, ensure_ascii=False)}\n用户问题：{question}"  # 提供完整配置与原问题。
     )  # 完成提示词。
     structured_llm = llm.with_structured_output(AnalysisPlan, method="function_calling", tool_choice="required")  # 智谱仅支持 auto，覆盖 ChatOpenAI 默认的具名工具选择。
-    plan = await structured_llm.ainvoke(prompt)  # 调用结构化模型，不解析自由文本。
+    with trace_generation("crypto_analysis_plan", model=settings.fast_model) as generation:  # 记录规划模型调用。
+        plan = await structured_llm.ainvoke(prompt)  # 调用结构化模型，不解析自由文本。
+        if isinstance(plan, AnalysisPlan):  # 仅结构化结果可估算输出 token 用量。
+            generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(plan.model_dump_json())}  # 估算输入输出用量。
     if not isinstance(plan, AnalysisPlan):  # 模型未调用结构化工具时不猜测内容。
         raise ValueError("规划模型未返回 AnalysisPlan 结构化结果")  # 阻止空计划进入执行图。
     return validate_plan(plan, catalog)  # 执行三项已确认的计划校验。

@@ -14,6 +14,8 @@ from app.crypto_analysis.crypto_analysis_planner import create_analysis_plan  # 
 from app.crypto_analysis.crypto_metric_runtime import execute_dimension  # 执行维度内指标与聚合。
 from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog, load_dimension_catalog  # 加载维度配置。
 from app.observability import get_logger, log_event, timed_node  # 保留项目现有观测方式。
+from app.config.config import settings  # 读取报告模型配置。
+from app.tracing import estimate_tokens, trace_generation  # 记录模型调用与估算用量。
 
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")  # 当前图使用的结构化日志器。
@@ -78,7 +80,10 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
             "有效的 0 分是实际分数，不等同缺失。报告只供研究参考，不构成投资建议。"
             f"\n维度结果：{facts}"  # 提供全部结构化维度事实。
         )  # 完成报告提示词。
-        response = await smart_llm.ainvoke(prompt)  # 调用报告模型。
+        with trace_generation("crypto_analysis_writer", model=settings.smart_model) as generation:  # 记录报告模型调用。
+            response = await smart_llm.ainvoke(prompt)  # 调用报告模型。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str) or not response.content.strip():  # 报告必须是非空文本。
             raise ValueError("报告模型未返回有效文本")  # 不输出空报告。
         report = response.content.strip()  # 去除模型输出首尾空白。

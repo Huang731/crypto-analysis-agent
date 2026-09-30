@@ -9,6 +9,7 @@ from langchain_core.messages import HumanMessage
 
 from api.schemas import AskRequest
 from app.observability import get_logger, log_event
+from app.tracing import trace_span
 from app.orchestration.query_rewriter import rewrite_question
 
 
@@ -47,7 +48,9 @@ class SupervisorService:
         question = request.question
         if self._rewriter_llm is not None:
             yield _event("progress", {"detail": "正在理解问题"})
-            question = await rewrite_question(self._rewriter_llm, question)
+            with trace_span("question_rewriter", question_chars=len(question)) as span:
+                question = await rewrite_question(self._rewriter_llm, question)
+                span.metadata["rewritten_chars"] = len(question)
             if question != request.question:  # 让用户看到系统实际按什么问题处理。
                 yield _event("progress", {"label": "问题改写", "status": question})
         yield _event("progress", {"detail": "正在判断问题意图"})
@@ -55,13 +58,18 @@ class SupervisorService:
         routed_agent: str | None = None  # 记录 Supervisor 实际交接的 Agent。
         direct_reply = ""  # Supervisor 未分派时的直接回复。
 
-        config = {"configurable": {"thread_id": thread_id}}
-        async for namespace, mode, payload in self._supervisor.astream(
-            {"messages": [HumanMessage(content=question)], "scope": scope},
-            stream_mode=["updates", "messages", "custom"],
-            subgraphs=True,
-            config=config,
-        ):
+        async def traced_supervisor_stream():
+            with trace_span("supervisor_graph"):
+                config = {"configurable": {"thread_id": thread_id}}
+                async for event in self._supervisor.astream(
+                    {"messages": [HumanMessage(content=question)], "scope": scope},
+                    stream_mode=["updates", "messages", "custom"],
+                    subgraphs=True,
+                    config=config,
+                ):
+                    yield event
+
+        async for namespace, mode, payload in traced_supervisor_stream():
             if mode == "updates":
                 # payload = {node_name: state_delta}
                 for node, delta in payload.items():

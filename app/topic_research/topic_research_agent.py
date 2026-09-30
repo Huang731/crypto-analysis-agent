@@ -11,8 +11,10 @@ from langchain_core.messages import AIMessage, HumanMessage  # 读取原问题�
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.types import Send  # 并行分派研究子问题。
 
+from app.config.config import settings  # 读取模型配置用于成本估算。
 from app.llm.model import make_fast_llm, make_smart_llm  # 复用项目现有模型工厂。
 from app.observability import get_logger, log_event, timed_node  # 保留请求观测。
+from app.tracing import estimate_tokens, start_trace, trace_generation  # 记录请求与模型调用。
 from app.topic_research.topic_research_state import AnalysisState, SystemState  # 使用主题研究专属状态。
 
 _LOG = get_logger("crypto_analysis.crypto_analysis_agent")  # 沿用原有日志名称。
@@ -40,7 +42,10 @@ def make_split(fast_llm: Any):  # 创建研究主题拆解节点。
             "每行只写一个问题，不写说明、标题或引用。不要假装已经联网检索。"
             f"\n用户问题：{state['question']}"  # 提供原始研究主题。
         )  # 完成拆题提示词。
-        response = await fast_llm.ainvoke(prompt)  # 让快模型生成子问题。
+        with trace_generation("topic_split", model=settings.fast_model) as generation:  # 记录拆题模型调用。
+            response = await fast_llm.ainvoke(prompt)  # 让快模型生成子问题。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str):  # 消息内容必须是文本。
             raise ValueError("主题拆解模型未返回文本")  # 不猜测非文本内容。
         subquestions = [  # 按行读取研究任务。
@@ -67,7 +72,10 @@ def make_researcher(fast_llm: Any):  # 创建单个子问题的研究节点。
             "对需要实时核实的事实写明待核实。"
             f"\n原主题：{state['question']}\n子问题：{subquestion}"  # 同时提供整体和局部语境。
         )  # 完成研究提示词。
-        response = await fast_llm.ainvoke(prompt)  # 并行调用快模型。
+        with trace_generation("topic_researcher", model=settings.fast_model) as generation:  # 记录子问题模型调用。
+            response = await fast_llm.ainvoke(prompt)  # 并行调用快模型。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str) or not response.content.strip():  # 检查研究结果。
             raise ValueError(f"研究子问题未返回有效内容：{subquestion}")  # 不填充虚构发现。
         finding = {  # 将模型分析与证据状态一起保存。
@@ -101,7 +109,10 @@ def make_summarize(smart_llm: Any):  # 创建全部发现的汇总节点。
             "只使用提供的内容，不补造外部来源或最新事实。"
             f"\n研究发现：{json.dumps(findings, ensure_ascii=False)}"  # 提供全部并行结果。
         )  # 完成汇总提示词。
-        response = await smart_llm.ainvoke(prompt)  # 调用主模型生成摘要。
+        with trace_generation("topic_summarize", model=settings.smart_model) as generation:  # 记录汇总模型调用。
+            response = await smart_llm.ainvoke(prompt)  # 调用主模型生成摘要。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str) or not response.content.strip():  # 摘要不能为空。
             raise ValueError("主题研究汇总为空")  # 阻止空摘要进入写作。
         log_event(_LOG, "research.findings.merged", count=len(findings))  # 记录汇总数量。
@@ -147,7 +158,10 @@ def make_writer(smart_llm: Any):  # 创建研究报告写作节点。
             f"\n用户问题：{question}\n研究摘要：{state['research_summary']}"  # 提供问题和汇总结果。
             f"\n审稿修改意见：{feedback}"  # 首轮为空，重写时提供具体反馈。
         )  # 完成报告提示词。
-        response = await smart_llm.ainvoke(prompt)  # 主模型撰写报告。
+        with trace_generation("topic_writer", model=settings.smart_model) as generation:  # 记录写作模型调用。
+            response = await smart_llm.ainvoke(prompt)  # 主模型撰写报告。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str) or not response.content.strip():  # 报告必须有正文。
             raise ValueError("主题研究报告为空")  # 不返回空报告。
         report = "资料范围：以下分析基于模型已有知识，未联网核验。\n\n" + response.content.strip()  # 固定展示资料边界。
@@ -168,7 +182,10 @@ def make_reviewer(smart_llm: Any):  # 创建研究报告审稿节点。
             "第一行只能回答“合格”或“不合格”；不合格时第二行写具体修改意见。"
             f"\n报告：{state['report']}"  # 提供实际生成的报告。
         )  # 完成审稿提示词。
-        response = await smart_llm.ainvoke(prompt)  # 主模型评估报告。
+        with trace_generation("topic_reviewer", model=settings.smart_model) as generation:  # 记录审稿模型调用。
+            response = await smart_llm.ainvoke(prompt)  # 主模型评估报告。
+            if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
+                generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
         if not isinstance(response.content, str) or not response.content.strip():  # 审稿结果必须可读。
             raise ValueError("主题研究审稿结果为空")  # 不默认视为合格。
         lines = response.content.strip().splitlines()  # 读取首行判断和后续意见。
@@ -209,8 +226,10 @@ async def main() -> None:  # 保留原有命令行入口。
     """独立运行一次通用主题研究。"""
     question = " ".join(sys.argv[1:]).strip() or "分析人工智能对教育行业的影响"  # 读取用户研究主题。
     agent = build_topic_research_agent(make_smart_llm(), make_fast_llm())  # 创建主题研究图。
-    result = await agent.ainvoke({"messages": [HumanMessage(content=question)], "scope": {"as_of": datetime.now(timezone.utc).isoformat()}, "findings": []})  # 直接运行父图。
-    print(result["report"])  # 输出已通过审稿的报告。
+    with start_trace("topic_research.cli", question_chars=len(question)) as trace:  # 为命令行运行建立根 trace。
+        result = await agent.ainvoke({"messages": [HumanMessage(content=question)], "scope": {"as_of": datetime.now(timezone.utc).isoformat()}, "findings": []})  # 直接运行父图。
+        trace.output = {"status": "done", "report_chars": len(result["report"])}  # 只记录结果状态和长度。
+        print(result["report"])  # 输出已通过审稿的报告。
 
 
 if __name__ == "__main__":  # 仅在直接运行模块时执行示例。
