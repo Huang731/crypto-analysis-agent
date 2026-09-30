@@ -1,0 +1,10 @@
+{
+  "dimension_id": "04",
+  "name": "衍生品数据",
+  "min_coverage": 1.0,
+  "required_metrics": ["OI", "Funding"],
+  "metrics": [
+    {"id": "OI", "weight": 0.6, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
+    {"id": "Funding", "weight": 0.4, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+  ]
+}

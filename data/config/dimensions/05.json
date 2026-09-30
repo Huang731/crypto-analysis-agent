@@ -1,0 +1,9 @@
+{
+  "dimension_id": "05",
+  "name": "趋势与均线",
+  "min_coverage": 0.7,
+  "required_metrics": ["Trend"],
+  "metrics": [
+    {"id": "Trend", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+  ]
+}

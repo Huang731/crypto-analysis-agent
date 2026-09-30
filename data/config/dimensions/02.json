@@ -1,0 +1,11 @@
+{
+  "dimension_id": "02",
+  "name": "美联储政策与利率倾向",
+  "min_coverage": 0.7,
+  "required_metrics": [],
+  "metrics": [
+    {"id": "SEP_Policy_Stance", "weight": 0.5, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
+    {"id": "Fed_Communication", "weight": 0.3, "kind": "text", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
+    {"id": "QE_QT", "weight": 0.2, "kind": "text", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+  ]
+}

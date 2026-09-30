@@ -1,0 +1,9 @@
+{
+  "dimension_id": "06",
+  "name": "市场情绪",
+  "min_coverage": 0.7,
+  "required_metrics": ["Fear_Greed"],
+  "metrics": [
+    {"id": "Fear_Greed", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+  ]
+}

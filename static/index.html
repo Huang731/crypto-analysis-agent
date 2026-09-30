@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>研究分析 Agent</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2a2e3a;
+      --text: #e4e6eb;
+      --muted: #8b909c;
+      --accent: #5b8def;
+      --green: #4ade80;
+      --amber: #fbbf24;
+      --red: #f87171;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 24px 20px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      overflow-anchor: none;
+    }
+    .container { max-width: 800px; margin: 0 auto; }
+    h1 { margin: 0 0 4px; font-size: 1.4rem; }
+    .subtitle { margin: 0 0 20px; color: var(--muted); font-size: .85rem; line-height: 1.6; }
+    .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
+    #question {
+      flex: 1;
+      min-width: 0;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      outline: none;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+    #question:focus { border-color: var(--accent); }
+    #question::placeholder { color: var(--muted); }
+    button {
+      flex: none;
+      padding: 12px 20px;
+      border: 0;
+      border-radius: 8px;
+      background: var(--accent);
+      color: white;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:hover { opacity: .9; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #cancel { background: var(--red); }
+    [hidden] { display: none !important; }
+    .connection { margin-bottom: 12px; color: var(--muted); font-size: .8rem; }
+    .progress, .report {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+    .progress { padding: 12px 14px; margin-bottom: 16px; font-size: .85rem; }
+    .section-title { margin: 0 0 8px; color: var(--muted); font-size: .85rem; font-weight: 600; }
+    .progress-item { display: flex; gap: 8px; padding: 3px 0; line-height: 1.5; }
+    .progress-item .node { flex: none; color: var(--accent); font-weight: 600; }
+    .progress-item .status { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+    .progress-item.pass .status { color: var(--green); }
+    .progress-item.rework .status { color: var(--amber); }
+    .progress-item.failed .status { color: var(--red); }
+    #request-ids { margin-top: 10px; color: var(--muted); font-size: .76rem; overflow-wrap: anywhere; }
+    .report {
+      min-height: 100px;
+      max-height: 70vh;
+      padding: 20px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .report.placeholder { color: var(--muted); font-style: italic; }
+    .report.error { color: var(--red); }
+    .report.blink::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
+    .findings { margin-top: 16px; }
+    .findings summary { padding: 8px 0; color: var(--accent); font-size: .9rem; cursor: pointer; }
+    #findings-list {
+      max-height: min(52vh, 560px);
+      overflow-y: auto;
+      padding-right: 8px;
+      overscroll-behavior: contain;
+    }
+    .finding {
+      margin: 8px 0;
+      padding: 10px 14px;
+      border-left: 3px solid var(--accent);
+      border-radius: 4px;
+      background: var(--panel);
+      font-size: .85rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    @media (max-width: 600px) {
+      .input-row { flex-wrap: wrap; }
+      #question { flex-basis: 100%; }
+      .input-row button { flex: 1; }
+      .report { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <h1>研究分析 Agent</h1>
+    <p class="subtitle">加密货币问题进入维度分析，其他主题进入模型知识研究。</p>
+
+    <form id="ask-form" class="input-row">
+      <input id="question" type="text" maxlength="2000" required aria-label="分析问题" placeholder="例如：分析 BTC，或分析人工智能对教育的影响">
+      <button id="submit" type="submit">开始分析</button>
+      <button id="cancel" type="button" hidden>中断</button>
+    </form>
+
+    <div id="connection" class="connection" role="status">正在检查服务状态…</div>
+    <section id="progress" class="progress" aria-label="执行过程" hidden>
+      <h2 class="section-title">执行过程</h2>
+      <div id="progress-list" aria-live="polite"></div>
+      <div id="request-ids"></div>
+    </section>
+    <div id="report" class="report placeholder" aria-live="polite">报告将在此处显示…</div>
+    <details id="findings" class="findings" hidden>
+      <summary id="findings-title">研究发现（点击展开）</summary>
+      <div id="findings-list"></div>
+    </details>
+  </main>
+
+  <script>
+    const form = document.getElementById("ask-form");
+    const questionInput = document.getElementById("question");
+    const submitButton = document.getElementById("submit");
+    const cancelButton = document.getElementById("cancel");
+    const connectionEl = document.getElementById("connection");
+    const progressEl = document.getElementById("progress");
+    const progressList = document.getElementById("progress-list");
+    const requestIdsEl = document.getElementById("request-ids");
+    const reportEl = document.getElementById("report");
+    const findingsEl = document.getElementById("findings");
+    const findingsTitleEl = document.getElementById("findings-title"); // 根据完成类型设置发现列表标题。
+    const findingsList = document.getElementById("findings-list");
+    const savedThreadId = sessionStorage.getItem("crypto_analysis_thread_id");
+    const threadId = savedThreadId || "web-" + crypto.randomUUID().slice(0, 8);
+    const agentLabels = {
+      crypto_analysis_agent: "加密货币分析 Agent",
+      topic_research_agent: "主题研究 Agent", // 普通主题进入独立研究图。
+      rag_agent: "RAG Agent",
+      realtime_agent: "实时数据 Agent"
+    };
+    let controller = null;
+    sessionStorage.setItem("crypto_analysis_thread_id", threadId);
+
+    async function checkHealth() {
+      try {
+        const response = await fetch("/health", { cache: "no-store" });
+        if (!response.ok) throw new Error("服务状态不可用");
+        connectionEl.textContent = "服务已连接";
+      } catch (error) {
+        connectionEl.textContent = "无法连接后端服务";
+      }
+    }
+
+    function addProgress(label, status, kind = "") {
+      const item = document.createElement("div");
+      item.className = "progress-item" + (kind ? " " + kind : "");
+      const node = document.createElement("span");
+      node.className = "node";
+      node.textContent = "[" + label + "]";
+      const detail = document.createElement("span");
+      detail.className = "status";
+      detail.textContent = status;
+      item.append(node, detail);
+      progressList.appendChild(item);
+    }
+
+    function renderFindings(findings) {
+      findingsList.textContent = "";
+      findingsEl.hidden = !Array.isArray(findings) || findings.length === 0;
+      if (findingsEl.hidden) return;
+      for (const finding of findings) {
+        const item = document.createElement("div");
+        item.className = "finding";
+        item.textContent = typeof finding === "string" ? finding : JSON.stringify(finding, null, 2);
+        findingsList.appendChild(item);
+      }
+    }
+
+    function handleEvent(name, data, state) {
+      if (name === "progress") {
+        const label = data.label || data.node || "进度";
+        const status = data.status || data.detail || "处理中";
+        const kind = status.includes("不合格") || status.includes("rework")
+          ? "rework" : status.includes("合格") || status.includes("pass") ? "pass" : "";
+        addProgress(label, status, kind);
+        if (data.node === "writer") state.writerComplete = true;
+      } else if (name === "route") {
+        state.agents.push(data.agent);
+        addProgress("分派", "已交给 " + (agentLabels[data.agent] || data.agent));
+      } else if (name === "token") {
+        if (typeof data.content !== "string" || !data.content) return;
+        if (data.node === "writer") {
+          if (state.outputNode !== "writer" || state.writerComplete) {
+            reportEl.textContent = "";
+            state.outputNode = "writer";
+            state.writerComplete = false;
+          }
+        } else if (data.node === "supervisor") {
+          if (state.outputNode === "writer" || state.writerComplete) return;
+          state.outputNode = "supervisor";
+        } else {
+          return;
+        }
+        reportEl.classList.remove("placeholder");
+        reportEl.textContent += data.content;
+      } else if (name === "done") {
+        state.finished = true;
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "维度指标记录（点击展开）"; // 两条路径分别展示对应内容。
+        reportEl.classList.remove("blink");
+        if (typeof data.report === "string" && data.report) {
+          reportEl.classList.remove("placeholder");
+          reportEl.textContent = data.report;
+        }
+        const records = Array.isArray(data.indicators) ? data.indicators.slice() : []; // 先展示全部指标记录。
+        if (Array.isArray(data.dimensions)) { // 维度结果存在时补充维度汇总。
+          for (const dimension of data.dimensions) records.push({ dimension_result: dimension }); // 保留每维得分和缺失原因。
+        } // 结束维度汇总。
+        renderFindings(records.length ? records : data.findings); // 兼容既有发现展示入口。
+        if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
+        if (data.as_of) addProgress("截止时间", data.as_of); // 展示整轮共用的 UTC 截止时间。
+        if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
+        if (data.kind === "direct") addProgress("直接回复", "问题不需要研究，未分派 Agent"); // 闲聊或超出研究范围。
+        addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");
+      } else if (name === "error") {
+        state.finished = true;
+        reportEl.classList.remove("blink", "placeholder");
+        reportEl.classList.add("error");
+        reportEl.textContent = data.message || "请求失败";
+        addProgress("失败", "请使用追踪 ID 查看后端日志", "failed");
+      }
+    }
+
+    function parseBlock(block, state) {
+      let name = "";
+      const dataLines = [];
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event:")) name = line.slice(6).trim();
+        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
+      }
+      if (name && dataLines.length > 0) {
+        handleEvent(name, JSON.parse(dataLines.join("\n")), state);
+      }
+    }
+
+    async function readEvents(body, state) {
+      const reader = body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+        buffer = buffer.replaceAll("\r", "");
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop();
+        for (const block of blocks) parseBlock(block, state);
+        if (done) {
+          if (buffer.trim()) parseBlock(buffer, state);
+          break;
+        }
+      }
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const question = questionInput.value.trim();
+      if (!question || controller) return;
+
+      controller = new AbortController();
+      submitButton.disabled = true;
+      cancelButton.hidden = false;
+      progressEl.hidden = false;
+      progressList.textContent = "";
+      requestIdsEl.textContent = "会话 ID：" + threadId;
+      reportEl.className = "report blink";
+      reportEl.textContent = "";
+      findingsEl.hidden = true;
+      findingsList.textContent = "";
+      addProgress("提交", "请求已发送");
+      const state = { agents: [], finished: false, outputNode: null, writerComplete: false };
+
+      try {
+        const response = await fetch("/api/ask", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "X-Thread-Id": threadId
+          },
+          body: JSON.stringify({ question }),
+          signal: controller.signal
+        });
+        const traceId = response.headers.get("X-Trace-Id");
+        const responseThreadId = response.headers.get("X-Thread-Id") || threadId;
+        requestIdsEl.textContent = "会话 ID：" + responseThreadId
+          + (traceId ? " · 追踪 ID：" + traceId : "");
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || "HTTP " + response.status);
+        }
+        if (!response.body) throw new Error("浏览器未提供响应流");
+        await readEvents(response.body, state);
+        if (!state.finished) throw new Error("事件流提前结束");
+      } catch (error) {
+        if (error.name === "AbortError") {
+          addProgress("中断", "已停止接收本次回答");
+        } else {
+          reportEl.classList.remove("placeholder");
+          reportEl.classList.add("error");
+          reportEl.textContent = error.message;
+          addProgress("失败", "请求未完成", "failed");
+        }
+      } finally {
+        reportEl.classList.remove("blink");
+        submitButton.disabled = false;
+        cancelButton.hidden = true;
+        controller = null;
+      }
+    });
+
+    cancelButton.addEventListener("click", () => {
+      if (controller) controller.abort();
+    });
+
+    checkHealth();
+  </script>
+</body>
+</html>
