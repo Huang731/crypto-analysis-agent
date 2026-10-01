@@ -13,6 +13,7 @@ _CONFIG_ROOT = Path(__file__).resolve().parents[2] / "data" / "config"  # 配置
 class MetricConfig(BaseModel):  # 一项指标的机器配置。
     model_config = ConfigDict(extra="forbid")  # 拒绝拼错或未定义的字段。
     id: str  # 指标标识。
+    label: str = Field(min_length=1)  # 用于思想体系检索的指标显示名称。
     weight: float = Field(gt=0, le=1)  # 指标在本维度内的原权重。
     kind: Literal["numeric", "text"]  # 数值计算或文本判断。
     status: Literal["ready", "pending"]  # 工具是否已接入。

@@ -4,6 +4,6 @@
   "min_coverage": 0.7,
   "required_metrics": ["Fear_Greed"],
   "metrics": [
-    {"id": "Fear_Greed", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+    {"id": "Fear_Greed", "label": "Fear_Greed", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
   ]
 }

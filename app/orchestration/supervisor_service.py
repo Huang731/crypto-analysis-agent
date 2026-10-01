@@ -45,6 +45,7 @@ class SupervisorService:
     ) -> AsyncIterator[dict[str, str]]:
         """输出分派过程和 Supervisor 的最终回答。"""
         log_event(_LOG, "supervisor.start")
+        scope = {**scope, "original_question": request.question}  # 保留用户原文，供报告撰写者回应具体问题。
         question = request.question
         if self._rewriter_llm is not None:
             yield _event("progress", {"detail": "正在理解问题"})

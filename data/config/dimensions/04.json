@@ -4,7 +4,7 @@
   "min_coverage": 1.0,
   "required_metrics": ["OI", "Funding"],
   "metrics": [
-    {"id": "OI", "weight": 0.6, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
-    {"id": "Funding", "weight": 0.4, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+    {"id": "OI", "label": "OI", "weight": 0.6, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
+    {"id": "Funding", "label": "Funding", "weight": 0.4, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
   ]
 }

@@ -4,6 +4,6 @@
   "min_coverage": 0.7,
   "required_metrics": ["ETF_Flows"],
   "metrics": [
-    {"id": "ETF_Flows", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+    {"id": "ETF_Flows", "label": "ETF_Flows", "weight": 1.0, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
   ]
 }
