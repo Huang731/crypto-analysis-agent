@@ -13,6 +13,9 @@ from functools import lru_cache
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_HERE = Path(__file__).resolve().parent
+PROJECT_ROOT = _HERE.parents[1]
+
 def _env_files() -> tuple[str, ...]:
     """候选 .env 路径：当前工作目录、项目根目录及其上级。
 
@@ -45,11 +48,23 @@ class Settings(BaseSettings):
     # 默认空串：允许 import 时（.env 还没加载）不崩；运行前由 cli/app 校验非空。
     zhipuai_api_key: str = Field(default="", description="智谱 API Key，必填")
     model_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"  # ChatOpenAI 调用智谱的兼容接口。
+    docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
 
     # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
     smart_model: str = "glm-4.5-air"
     # 执行模型：免费快，用在并行量大、对质量要求不极致的节点（split/researcher）
     fast_model: str = "glm-4-flash"
+
+    # 百炼向量模型通过 DashScope SDK 调用，使用独立的 API Key。
+    dashscope_api_key: str = Field(default="sk-ws-H.PDMPHML.YRf1.MEQCIB1uZlBLpuHaPGQICan6bo3YokH41UETNoNUAKA2kGdzAiBOuh2mmfyqUkljcbWSlldwJeNRdNLMmcTV_NE3aZqNxg", description="百炼向量模型 API Key")
+    embedding_model: str = "text-embedding-v4"
+    # 仅配置 FAISS 索引维度，不传给 SDK；必须与模型默认输出维度一致。
+    embedding_dimensions: int = Field(default=1024, gt=0)
+    # 更换模型后使用新目录重新入库，避免混用旧模型的向量。
+    faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "text-embedding-v4-1024")
+    chunk_size: int = Field(default=1000, gt=0)
+    chunk_overlap: int = Field(default=150, ge=0)
+    embed_batch_size: int = Field(default=10, ge=1, le=10)
 
     dimensions: dict[str, list[str]] = {"美元流动性与加密内部流动性": ["DXY_Trend", "Stable_MCap", "M2_YoY", "Fed_Balance"]}
 
