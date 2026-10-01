@@ -16,12 +16,6 @@ class MetricConfig(BaseModel):  # 一项指标的机器配置。
     label: str = Field(min_length=1)  # 用于思想体系检索的指标显示名称。
     weight: float = Field(gt=0, le=1)  # 指标在本维度内的原权重。
     kind: Literal["numeric", "text"]  # 数值计算或文本判断。
-    status: Literal["ready", "pending"]  # 工具是否已接入。
-    allowed_tools: list[str]  # LLM 可选择的数据工具。
-    allowed_calculators: list[str]  # LLM 可选择的计算器。
-    raw_fields: list[str] = Field(default_factory=list)  # 报告需要保留的原始字段。
-    calculated_fields: list[str] = Field(default_factory=list)  # 报告需要保留的计算字段。
-    source_action: str | None = None  # 工具成功时记录的调用名。
 
 
 class DimensionConfig(BaseModel):  # 一个维度的执行配置。
@@ -63,10 +57,5 @@ def load_dimension_catalog() -> DimensionCatalog:  # 每轮读取一次总配置
             raise ValueError(f"config_error：维度 {dimension_id} 的指标权重总和不为 1")  # 停止错误评分。
         if not set(dimension.required_metrics) <= set(ids):  # 必需指标必须在指标清单内。
             raise ValueError(f"config_error：维度 {dimension_id} 的必需指标不存在")  # 防止门槛失效。
-        for metric in dimension.metrics:  # 分别校验已接入和未接入指标。
-            if metric.status == "ready" and (not metric.allowed_tools or not metric.allowed_calculators):  # 已接入须可执行。
-                raise ValueError(f"config_error：{dimension_id}.{metric.id} 缺少工具或计算器")  # 不虚构接入状态。
-            if metric.status == "pending" and (metric.allowed_tools or metric.allowed_calculators):  # 未接入不得给出伪选择。
-                raise ValueError(f"config_error：{dimension_id}.{metric.id} 的待接入配置不应列工具")  # 保留真实缺失。
         dimensions[dimension_id] = dimension  # 加入本轮配置快照。
     return DimensionCatalog(enabled_dimensions=enabled, dimension_weights=weights, dimensions=dimensions)  # 返回完整配置。

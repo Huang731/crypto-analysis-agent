@@ -11,8 +11,9 @@ from langgraph.graph import END, START, StateGraph  # 构建父图。
 from langgraph.graph.message import add_messages  # 合并消息列表。
 from langgraph.types import Send  # 动态分派不同维度。
 
-from app.crypto_analysis.crypto_analysis_planner import create_analysis_plan  # 让 LLM 生成受限计划。
-from app.crypto_analysis.crypto_metric_runtime import execute_dimension  # 执行维度内指标与聚合。
+from app.crypto_analysis.crypto_analysis_planner import create_analysis_plan  # 让 LLM 识别币种与研究重点。
+from app.crypto_analysis.crypto_metric_runtime import execute_dimension  # 执行工具 Agent 并保留程序聚合。
+from app.crypto_analysis.crypto_metric_tools import build_metric_agent  # 构建自主取证与计算的维度 Agent。
 from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog, load_dimension_catalog  # 加载维度配置。
 from app.observability import get_logger, log_event, timed_node  # 保留项目现有观测方式。
 from app.config.config import settings  # 读取报告模型配置。
@@ -34,6 +35,7 @@ class DynamicAnalysisState(TypedDict, total=False):  # 维度分析的共享状�
 
 
 def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复用的维度父图。
+    metric_agent = build_metric_agent(fast_llm)  # 复用工具图，每个维度使用独立状态。
     retriever: KBRetriever | None = None  # 图实例复用同一份知识库索引。
     retriever_lock = asyncio.Lock()  # 并发请求首次进入时只构建一次索引。
 
@@ -44,23 +46,22 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
         question = next((message.content for message in reversed(state["messages"]) if isinstance(message, HumanMessage)), None)  # 跳过 Supervisor 的工具交接消息。
         if not isinstance(question, str) or not question.strip():  # 规划只接受非空用户问题。
             raise ValueError("维度分析缺少有效用户问题")  # 不把工具交接信息当成币种问题。
-        selection = await create_analysis_plan(fast_llm, question, catalog)  # LLM 选择工具和计算器。
+        selection = await create_analysis_plan(fast_llm, question, catalog)  # LLM 识别目标与用户研究重点。
         async with retriever_lock:
             if retriever is None:
                 retriever = await asyncio.to_thread(KBRetriever)  # 延迟加载，不影响主题研究请求。
         scope = {**state["scope"], "target_asset": selection["target_asset"]}  # 把目标币种锁定到共享范围。
-        log_event(_LOG, "analysis.plan.ready", target_asset=selection["target_asset"], metrics=len(selection["metrics"]))  # 记录计划摘要。
+        log_event(_LOG, "analysis.plan.ready", target_asset=selection["target_asset"], dimensions=len(catalog.enabled_dimensions))  # 记录计划摘要。
         return {"catalog": catalog, "plan": selection, "scope": scope}  # 供维度节点统一使用。
 
     def send_dimensions(state: DynamicAnalysisState) -> list[Send]:  # 按配置动态分派六个维度。
         catalog = state["catalog"]  # 取本轮配置快照。
-        plan_metrics = state["plan"]["metrics"]  # 取校验通过的全部指标计划。
         return [  # 每个启用维度对应一个独立任务。
             Send(  # 向同一个通用维度节点发送不同输入。
                 "dimension_worker",  # 通用维度执行节点。
                 {  # 节点只接收所属维度的任务。
                     "dimension": catalog.dimensions[dimension_id],  # 本维配置。
-                    "selections": [item for item in plan_metrics if item["dimension_id"] == dimension_id],  # 本维计划。
+                    "analysis_focus": state["plan"]["analysis_focus"],  # 同一用户问题的研究重点。
                     "scope": state["scope"],  # 同一标的和截止时间。
                 },  # 结束节点输入。
             ) for dimension_id in catalog.enabled_dimensions  # 保持配置规定的维度范围。
@@ -69,7 +70,7 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
     @timed_node  # 记录维度执行耗时与异常。
     async def dimension_worker(state: dict[str, Any]) -> dict[str, Any]:  # 执行某个维度的可变数量指标。
         dimension = state["dimension"]  # 本节点负责的维度配置。
-        result = await execute_dimension(dimension, state["selections"], state["scope"])  # 取数、计算并聚合。
+        result = await execute_dimension(metric_agent, dimension, state["scope"], state["analysis_focus"])  # LLM 自主调用工具，程序校验并聚合。
         if retriever is None:
             raise RuntimeError("维度分析检索器尚未初始化")
         # 固定模板检索理论材料，不额外调用模型生成查询。

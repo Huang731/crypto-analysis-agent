@@ -4,8 +4,23 @@
   "min_coverage": 0.7,
   "required_metrics": [],
   "metrics": [
-    {"id": "SEP_Policy_Stance", "label": "SEP_Policy_Stance", "weight": 0.5, "kind": "numeric", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
-    {"id": "Fed_Communication", "label": "Fed_Communication", "weight": 0.3, "kind": "text", "status": "pending", "allowed_tools": [], "allowed_calculators": []},
-    {"id": "QE_QT", "label": "QE_QT", "weight": 0.2, "kind": "text", "status": "pending", "allowed_tools": [], "allowed_calculators": []}
+    {
+      "id": "SEP_Policy_Stance",
+      "label": "SEP_Policy_Stance",
+      "weight": 0.5,
+      "kind": "numeric"
+    },
+    {
+      "id": "Fed_Communication",
+      "label": "Fed_Communication",
+      "weight": 0.3,
+      "kind": "text"
+    },
+    {
+      "id": "QE_QT",
+      "label": "QE_QT",
+      "weight": 0.2,
+      "kind": "text"
+    }
   ]
 }
