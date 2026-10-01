@@ -27,7 +27,7 @@ def build_supervisor_system(smart: BaseChatModel, fast: BaseChatModel):  # 沿�
     topic_agent = build_topic_research_agent(smart, fast)  # 将主题研究 Agent 接入调度图。
     workflow = create_supervisor(  # 创建实际运行的中央分派图。
         agents=[crypto_agent, topic_agent],  # 注册两个独立的研究职责。
-        model=smart,  # 使用主模型判断用户问题意图。
+        model=fast,  # 使用主模型判断用户问题意图。
         prompt=(  # 要求每轮只交给一个专业 Agent。
             "你是研究任务调度员，按问题类型三选一：\n"
             "1. 涉及加密货币行情、币种、投资判断或维度指标的问题，交给 crypto_analysis_agent；\n"
