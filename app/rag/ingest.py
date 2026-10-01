@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import warnings
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import faiss
@@ -30,6 +30,7 @@ from langchain_core.documents import Document
 
 from app.config.config import settings
 from app.rag.loader import file_md5, list_documents, load_and_split
+from app.tracing import estimate_tokens, start_trace, trace_generation
 
 
 @contextmanager
@@ -143,13 +144,43 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
     """按配置分批入库，百炼 text-embedding-v4 单请求最多 10 条文本。"""
     step = settings.embed_batch_size
     for i in range(0, len(docs), step):
-        vs.add_documents(docs[i : i + step], ids=ids[i : i + step])
+        batch = docs[i : i + step]
+        with trace_generation(
+            "ingest.embedding",
+            model=settings.embedding_model,
+            batch_index=i // step + 1,
+            chunk_count=len(batch),
+        ) as generation:
+            try:
+                vs.add_documents(batch, ids=ids[i : i + step])
+            except Exception as exc:
+                generation.metadata.update(status="error", error_type=type(exc).__name__)
+                raise
+            # 向量化接口未返回用量，此处仅估算输入 token；向量不计为输出 token。
+            generation.usage = {
+                "input": sum(estimate_tokens(doc.page_content) for doc in batch),
+                "output": 0,
+                "unit": "TOKENS",
+            }
+            generation.metadata["status"] = "done"
 
 
 def ingest_directory(docs_dir: str | Path | None = None, prune: bool = True) -> IngestReport:
+    """同步文档目录，并用本地 tracing 记录入库和向量模型调用。"""
+    directory = Path(settings.docs_dir if docs_dir is None else docs_dir)
+    with start_trace("rag.ingest", docs_dir=str(directory), prune=prune) as trace:
+        try:
+            report = _ingest_directory(directory, prune=prune)
+        except Exception as exc:
+            trace.output = {"status": "error", "error_type": type(exc).__name__}
+            raise
+        trace.output = {"status": "done", **asdict(report)}
+        return report
+
+
+def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
     """把目录下所有文档同步进向量库，返回统计报告。幂等：重复跑不产生变化。
     """
-    docs_dir = Path(settings.docs_dir if docs_dir is None else docs_dir)
     files = list_documents(docs_dir)
     vs = get_vectorstore()
     source_ids, source_hashes = _existing_sources(vs)

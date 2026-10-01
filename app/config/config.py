@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     model_price_table: dict[str, dict[str, float]] = {
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
         "glm-4-flash": {"input": 0.0,  "output": 0.0},   # flash 当前免费档
-        "embedding-3": {"input": 0.5,  "output": 0.0},
+        "text-embedding-v4": {"input": 0.5,  "output": 0.0},
     }
 
 @lru_cache
