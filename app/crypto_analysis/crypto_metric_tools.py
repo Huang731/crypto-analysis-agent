@@ -17,12 +17,14 @@ from app.config.config import settings
 from app.crypto_analysis.crypto_metric_runtime import (
     MetricContext,
     _calculate_dxy,
+    _calculate_etf,
     _calculate_m2,
     _calculate_stable,
     _calculate_walcl,
     _normalize_result,
     missing_metric,
 )
+from app.crypto_analysis.sources.crypto_etf_source import get_crypto_etf_flows
 from app.crypto_analysis.sources.coinmarketcap_source import get_stablecoin_historical_market_cap
 from app.crypto_analysis.sources.eodhd_source import query_dxy_from_official_mcp
 from app.crypto_analysis.sources.fred_source import get_m2_yoy_change
@@ -74,16 +76,35 @@ async def _fetch_evidence(
             summary = {"evidence_id": evidence_id, **record}
             span.metadata["status"] = "error"
         else:
-            record = {"data_kind": data_kind, "source_action": source_action, "status": "ok", "raw": raw}
-            summary = {"evidence_id": evidence_id, "data_kind": data_kind, "status": "ok", "source": raw["source"]}
-            if data_kind == "dxy" and isinstance(raw["rows"], list):
-                summary["record_count"] = len(raw["rows"])
-            elif data_kind in {"m2", "walcl"}:
-                observations = raw["payload"].get("observations")
-                if isinstance(observations, list):
-                    summary["record_count"] = len(observations)
+            record = {
+                "data_kind": data_kind,
+                "source_action": source_action,
+                "status": "ok",
+                "raw": raw,
+            }
+            summary = {
+                "evidence_id": evidence_id,
+                "data_kind": data_kind,
+                "status": "ok",
+                "source": raw["source"],
+            }
             span.output = summary
     return Command(update={"evidence": {evidence_id: record}, "messages": [_tool_message(runtime, summary)]})
+
+
+@tool
+async def get_etf_flows(runtime: ToolRuntime[MetricContext]) -> Command:
+    """通过MCP取得目标资产ETF资金流，返回计算工具使用的evidence_id。"""
+    return await _fetch_evidence(
+        runtime, "etf", "crypto_etf.get_asset_flows", get_crypto_etf_flows,
+        {"target_asset": runtime.context["scope"]["target_asset"], "as_of": runtime.context["scope"]["as_of"]},
+    )
+
+
+@tool
+def calculate_etf_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
+    """读取ETF原始证据，按5日40%、20日60%的金额分档规则计算ETF_Flows。"""
+    return _compute_metric(runtime, evidence_id, "ETF_Flows", "etf", _calculate_etf)
 
 
 @tool
@@ -195,6 +216,8 @@ def build_metric_agent(llm: Any, extra_tools: Sequence[BaseTool] = ()):
     这些证据随维度结果交给报告撰写者，不从模型最终文本中反推数据。
     """
     tools = [
+        get_etf_flows,
+        calculate_etf_indicator,
         get_eodhd_dxy,
         get_cmc_stablecoin_market_cap,
         get_fred_observations,

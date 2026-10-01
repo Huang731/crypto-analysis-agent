@@ -51,7 +51,6 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
             if retriever is None:
                 retriever = await asyncio.to_thread(KBRetriever)  # 延迟加载，不影响主题研究请求。
         scope = {**state["scope"], "target_asset": selection["target_asset"]}  # 把目标币种锁定到共享范围。
-        log_event(_LOG, "analysis.plan.ready", target_asset=selection["target_asset"], dimensions=len(catalog.enabled_dimensions))  # 记录计划摘要。
         return {"catalog": catalog, "plan": selection, "scope": scope}  # 供维度节点统一使用。
 
     def send_dimensions(state: DynamicAnalysisState) -> list[Send]:  # 按配置动态分派六个维度。
@@ -92,11 +91,7 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
                 ],
             }
             span.output = {"document_count": len(documents)}
-        log_event(_LOG, "analysis.dimension.thoughts.ready", dimension_id=dimension.dimension_id, document_count=len(documents))
         findings = [json.dumps(item, ensure_ascii=False) for item in result["indicators"]]  # 保留每项原始事实。
-        from langgraph.config import get_stream_writer  # 按项目现有方式发送进度。
-        get_stream_writer()({"event": "dimension_completed", "dimension_id": dimension.dimension_id})  # 通知页面完成的维度。
-        log_event(_LOG, "analysis.dimension.done", dimension_id=dimension.dimension_id, status=result["status"])  # 记录维度状态。
         return {"dimension_results": [result], "findings": findings}  # 并行结果通过 reducer 合并。
 
     @timed_node  # 记录报告生成耗时与异常。

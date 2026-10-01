@@ -72,6 +72,7 @@ class Settings(BaseSettings):
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
         "glm-4-flash": {"input": 0.0,  "output": 0.0},   # flash 当前免费档
         "text-embedding-v4": {"input": 0.5,  "output": 0.0},
+        "gte-rerank-v2": {"input": 0.5, "output": 0.0},
     }
 
     # ── 检索层（阶段 2）───────────────────────────────────────

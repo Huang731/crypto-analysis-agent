@@ -187,7 +187,7 @@ def _summarize_update(node: str, delta: dict) -> dict:
         info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行维度"
     elif node == "dimension_worker":  # 维度执行完成时显示状态。
         item = delta["dimension_results"][0]  # 当前增量只对应一个维度。
-        info["status"] = f"维度 {item['dimension_id']}：{item['status']}"
+        info["status"] = f"维度 {item['name']}：{item['status']}"
     elif node == "reviewer":
         info["status"] = f"审稿：{delta.get('review_decision', '?')}"
         info["review_count"] = delta.get("review_count", 0)  # 展示当前审稿轮次。

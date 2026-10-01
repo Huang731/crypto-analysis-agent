@@ -9,6 +9,7 @@ from typing_extensions import TypedDict
 from langchain_core.messages import HumanMessage
 
 from app.crypto_analysis.crypto_dimension_catalog import DimensionConfig  # 读取维度配置类型。
+from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
 from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics  # DXY 程序计算器。
 from app.crypto_analysis.calculators.fred_calculator import calculate_m2_yoy_change, calculate_walcl_ma4  # FRED 程序计算器。
 from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics  # 稳定币程序计算器。
@@ -23,6 +24,10 @@ class MetricContext(TypedDict):
 
 # 结果字段属于计算器的代码契约，不再由 JSON 决定。
 _METRIC_FIELDS = {
+    "ETF_Flows": (
+        ("trading_dates", "daily_flows_usd_m", "latest_flow_usd_m", "previous_five_day_flow_usd_m"),
+        ("five_day_flow_usd_m", "twenty_day_flow_usd_m", "five_day_score", "twenty_day_score", "conflict_flag"),
+    ),
     "DXY_Trend": (
         ("dxy", "ma50", "ma200"),
         ("ma50_deviation_pct",),
@@ -41,6 +46,11 @@ _METRIC_FIELDS = {
         ("ma4_change_pct",),
     ),
 }
+
+
+def _calculate_etf(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
+    """按已确认的ETF金额分档计算，保留完整性缺失状态。"""
+    return calculate_etf_flows(raw, scope)
 
 
 def _calculate_dxy(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:  # 用程序计算 DXY 指标。
@@ -185,10 +195,6 @@ def aggregate_dimension(dimension: DimensionConfig, indicators: list[dict[str, A
             status = "calculation_error"  # 计算异常不写成普通缺数。
         else:  # 剩余情况均属于数据或门槛不足。
             status = "data_missing"  # 返回真实缺失状态。
-        if dimension.dimension_id == "01" and "Stable_MCap" not in valid:  # 保留维度 01 的专属门槛说明。
-            reason = "Stable_MCap 无效，Macro_Only；正式维度分不可用"  # 不把宏观参考分当正式分。
-        else:  # 其他维度沿用配置中的必需项和覆盖率门槛。
-            reason = "必需指标无效" if not required_valid else "有效指标权重覆盖率不足"  # 说明正式分缺失原因。
     return {  # 把维度及其指标一并交给父图。
         "dimension_id": dimension.dimension_id,  # 维度编号。
         "name": dimension.name,  # 维度名称。

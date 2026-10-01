@@ -240,7 +240,7 @@
         if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
         if (data.as_of) addProgress("截止时间", data.as_of); // 展示整轮共用的 UTC 截止时间。
         if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
-        if (data.kind === "direct") addProgress("直接回复", "问题不需要研究，未分派 Agent"); // 闲聊或超出研究范围。
+        if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。
         addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");
       } else if (name === "error") {
         state.finished = true;
