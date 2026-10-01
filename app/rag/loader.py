@@ -15,6 +15,7 @@ from langchain_text_splitters import (
 )
 
 from app.config.config import settings
+from app.tracing import trace_span
 
 SUPPORTED_SUFFIXES = (".md", ".txt")
 
@@ -76,22 +77,27 @@ def load_and_split(path: Path, *, src_hash: str | None = None) -> list[Document]
 
     入库流程可传入已计算的 src_hash，避免重复读取文件计算 hash。
     """
-    text = path.read_text(encoding="utf-8")
-    if path.suffix.lower() == ".md":
-        chunks = split_markdown(text)
-    else:
-        chunks = split_plain_text(text)
+    with trace_span("rag.document.load_split", source=path.name) as node_span:
+        try:
+            text = path.read_text(encoding="utf-8")
+            if path.suffix.lower() == ".md":
+                chunks = split_markdown(text)
+            else:
+                chunks = split_plain_text(text)
 
-    fhash = file_md5(path) if src_hash is None else src_hash
-    return [
-        Document(
-            page_content=c.page_content,
-            metadata={
-                "source": path.name,
-                "section": _breadcrumb(c.metadata),
-                "src_hash": fhash,
-                "chunk_idx": i,
-            },
-        )
-        for i, c in enumerate(chunks)
-    ]
+            fhash = file_md5(path) if src_hash is None else src_hash
+            return [
+                Document(
+                    page_content=c.page_content,
+                    metadata={
+                        "source": path.name,
+                        "section": _breadcrumb(c.metadata),
+                        "src_hash": fhash,
+                        "chunk_idx": i,
+                    },
+                )
+                for i, c in enumerate(chunks)
+            ]
+        except Exception:
+            node_span.metadata["status"] = "error"
+            raise

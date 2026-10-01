@@ -30,7 +30,7 @@ from langchain_core.documents import Document
 
 from app.config.config import settings
 from app.rag.loader import file_md5, list_documents, load_and_split
-from app.tracing import estimate_tokens, start_trace, trace_generation
+from app.tracing import estimate_tokens, start_trace, trace_generation, trace_span
 
 
 @contextmanager
@@ -64,33 +64,38 @@ def get_vectorstore() -> FAISS:
     文档向量与查询向量均归一化，内积即 cosine 相似度，越大越相似。
     similarity_search 返回文档，similarity_search_with_score 返回原始 cosine 分数。
     """
-    embeddings = get_embeddings()
-    index_dir = Path(settings.faiss_path)
-    # 已有任一索引文件时执行加载；文件缺失或损坏直接报错。
-    if (index_dir / "index.faiss").exists() or (index_dir / "index.pkl").exists():
-        with _ignore_ip_normalize_warning():
-            vs = FAISS.load_local(
-                str(index_dir),
-                embeddings,
-                allow_dangerous_deserialization=True,  # 仅加载本项目生成的可信索引。
-                normalize_L2=True,
-                distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
-            )
-        if vs.index.metric_type != faiss.METRIC_INNER_PRODUCT:
-            raise ValueError("已有 FAISS 索引不是内积索引，请使用新索引目录重新入库")
-        if vs.index.d != settings.embedding_dimensions:
-            raise ValueError("已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库")
-        return vs
+    with trace_span("rag.vectorstore.load") as node_span:
+        try:
+            embeddings = get_embeddings()
+            index_dir = Path(settings.faiss_path)
+            # 已有任一索引文件时执行加载；文件缺失或损坏直接报错。
+            if (index_dir / "index.faiss").exists() or (index_dir / "index.pkl").exists():
+                with _ignore_ip_normalize_warning():
+                    vs = FAISS.load_local(
+                        str(index_dir),
+                        embeddings,
+                        allow_dangerous_deserialization=True,  # 仅加载本项目生成的可信索引。
+                        normalize_L2=True,
+                        distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
+                    )
+                if vs.index.metric_type != faiss.METRIC_INNER_PRODUCT:
+                    raise ValueError("已有 FAISS 索引不是内积索引，请使用新索引目录重新入库")
+                if vs.index.d != settings.embedding_dimensions:
+                    raise ValueError("已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库")
+                return vs
 
-    with _ignore_ip_normalize_warning():
-        return FAISS(
-            embedding_function=embeddings,
-            index=faiss.IndexFlatIP(settings.embedding_dimensions),
-            docstore=InMemoryDocstore(),
-            index_to_docstore_id={},
-            normalize_L2=True,
-            distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
-        )
+            with _ignore_ip_normalize_warning():
+                return FAISS(
+                    embedding_function=embeddings,
+                    index=faiss.IndexFlatIP(settings.embedding_dimensions),
+                    docstore=InMemoryDocstore(),
+                    index_to_docstore_id={},
+                    normalize_L2=True,
+                    distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
+                )
+        except Exception:
+            node_span.metadata["status"] = "error"
+            raise
 
 
 @dataclass(frozen=True)
@@ -181,58 +186,64 @@ def ingest_directory(docs_dir: str | Path | None = None, prune: bool = True) -> 
 def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
     """把目录下所有文档同步进向量库，返回统计报告。幂等：重复跑不产生变化。
     """
-    files = list_documents(docs_dir)
-    vs = get_vectorstore()
-    source_ids, source_hashes = _existing_sources(vs)
+    with trace_span("rag.ingest.sync") as node_span:
+        try:
+            files = list_documents(docs_dir)
+            vs = get_vectorstore()
+            source_ids, source_hashes = _existing_sources(vs)
 
-    on_disk = {p.name for p in files}
+            on_disk = {p.name for p in files}
 
-    added: list[str] = []
-    updated: list[str] = []
-    skipped: list[str] = []
-    added_chunks = 0
+            added: list[str] = []
+            updated: list[str] = []
+            skipped: list[str] = []
+            added_chunks = 0
 
-    for path in files:
-        fname = path.name
-        fhash = file_md5(path)
-        if source_hashes.get(fname) == fhash:
-            skipped.append(fname)
-            continue
+            for path in files:
+                fname = path.name
+                fhash = file_md5(path)
+                if source_hashes.get(fname) == fhash:
+                    skipped.append(fname)
+                    continue
 
-        is_update = fname in source_ids
-        if is_update:
-            # 文件改过：先清旧块，避免新旧版本混存
-            _delete_source(vs, fname, source_ids, source_hashes)
+                is_update = fname in source_ids
+                if is_update:
+                    # 文件改过：先清旧块，避免新旧版本混存
+                    _delete_source(vs, fname, source_ids, source_hashes)
 
-        chunks = load_and_split(path, src_hash=fhash)
-        ids = [f"{fname}:{fhash[:8]}:{c.metadata['chunk_idx']}" for c in chunks]
-        _add_in_batches(vs, chunks, ids)
-        # 入库成功后更新映射，空文件不记录切片 ID。
-        if ids:
-            source_ids[fname] = ids
-            source_hashes[fname] = fhash
-        added_chunks += len(chunks)
-        if is_update:
-            updated.append(fname)
-        else:
-            added.append(fname)
+                chunks = load_and_split(path, src_hash=fhash)
+                ids = [f"{fname}:{fhash[:8]}:{c.metadata['chunk_idx']}" for c in chunks]
+                _add_in_batches(vs, chunks, ids)
+                # 入库成功后更新映射，空文件不记录切片 ID。
+                if ids:
+                    source_ids[fname] = ids
+                    source_hashes[fname] = fhash
+                added_chunks += len(chunks)
+                if is_update:
+                    updated.append(fname)
+                else:
+                    added.append(fname)
 
-    # 目录里已删除的文件，库里的孤儿块一并清掉
-    pruned: list[str] = []
-    if prune:
-        # 先收集待清理文件，避免遍历字典时修改字典。
-        pruned = [source for source in source_ids if source not in on_disk]
-        for fname in pruned:
-            _delete_source(vs, fname, source_ids, source_hashes)
+            # 目录里已删除的文件，库里的孤儿块一并清掉
+            pruned: list[str] = []
+            if prune:
+                # 先收集待清理文件，避免遍历字典时修改字典。
+                pruned = [source for source in source_ids if source not in on_disk]
+                for fname in pruned:
+                    _delete_source(vs, fname, source_ids, source_hashes)
 
-    # 映射来自文档及 ID 关联，下次加载时重建，无需额外保存 JSON。
-    vs.save_local(settings.faiss_path)
+            # 映射来自文档及 ID 关联，下次加载时重建，无需额外保存 JSON。
+            with trace_span("rag.vectorstore.save"):
+                vs.save_local(settings.faiss_path)
 
-    return IngestReport(
-        added_files=tuple(added),
-        updated_files=tuple(updated),
-        skipped_files=tuple(skipped),
-        pruned_files=tuple(pruned),
-        added_chunks=added_chunks,
-        total_chunks=vs.index.ntotal,
-    )
+            return IngestReport(
+                added_files=tuple(added),
+                updated_files=tuple(updated),
+                skipped_files=tuple(skipped),
+                pruned_files=tuple(pruned),
+                added_chunks=added_chunks,
+                total_chunks=vs.index.ntotal,
+            )
+        except Exception:
+            node_span.metadata["status"] = "error"
+            raise

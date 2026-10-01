@@ -8,6 +8,8 @@ from typing_extensions import TypedDict
 
 from langchain_core.messages import HumanMessage
 
+from app.tracing import trace_span
+
 from app.crypto_analysis.crypto_dimension_catalog import DimensionConfig  # 读取维度配置类型。
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
 from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics  # DXY 程序计算器。
@@ -142,33 +144,39 @@ async def execute_dimension(
     analysis_focus: str,
 ) -> dict[str, Any]:
     """让维度 Agent 自主调用工具，只接收工具写入的可核验指标结果。"""
-    metrics = [{"id": metric.id, "label": metric.label, "kind": metric.kind} for metric in dimension.metrics]
-    prompt = (
-        f"目标币种：{scope['target_asset']}；数据截止时间：{scope['as_of']}。"
-        f"\n用户原始问题：{scope['original_question']}"
-        f"\n研究重点：{analysis_focus}"
-        f"\n本维度：{dimension.dimension_id} {dimension.name}"
-        f"\n需取得证据的指标：{json.dumps(metrics, ensure_ascii=False)}"
-        "\n根据各工具的能力说明自行选择取数和计算步骤。"
-        "先查询真实数据，再用返回的 evidence_id 调用适用的计算工具。"
-        "各项指标都应取得工具结果或明确缺失原因。完成后简要说明证据是否齐全。"
-    )
-    state = await metric_agent.ainvoke(
-        {"messages": [HumanMessage(content=prompt)], "evidence": {}, "indicator_results": {}, "research_evidence": []},
-        context={"dimension": dimension, "scope": dict(scope)},
-        config={"recursion_limit": 60},
-    )
-    # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
-    records = state["indicator_results"]
-    indicators = [
-        records[metric.id] if metric.id in records else missing_metric(
-            dimension.dimension_id, metric.id, "data_missing", "维度 Agent 未取得该指标的可核验工具结果"
-        )
-        for metric in dimension.metrics
-    ]
-    result = aggregate_dimension(dimension, indicators)
-    result["research_evidence"] = state["research_evidence"]
-    return result
+    with trace_span("analysis.dimension.execute", dimension_id=dimension.dimension_id) as node_span:
+        try:
+            metrics = [{"id": metric.id, "label": metric.label, "kind": metric.kind} for metric in dimension.metrics]
+            prompt = (
+                f"目标币种：{scope['target_asset']}；数据截止时间：{scope['as_of']}。"
+                f"\n用户原始问题：{scope['original_question']}"
+                f"\n研究重点：{analysis_focus}"
+                f"\n本维度：{dimension.dimension_id} {dimension.name}"
+                f"\n需取得证据的指标：{json.dumps(metrics, ensure_ascii=False)}"
+                "\n根据各工具的能力说明自行选择取数和计算步骤。"
+                "先查询真实数据，再用返回的 evidence_id 调用适用的计算工具。"
+                "各项指标都应取得工具结果或明确缺失原因。完成后简要说明证据是否齐全。"
+            )
+            with trace_span("analysis.metric_agent.graph", dimension_id=dimension.dimension_id):
+                state = await metric_agent.ainvoke(
+                    {"messages": [HumanMessage(content=prompt)], "evidence": {}, "indicator_results": {}, "research_evidence": []},
+                    context={"dimension": dimension, "scope": dict(scope)},
+                    config={"recursion_limit": 60},
+                )
+            # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
+            records = state["indicator_results"]
+            indicators = [
+                records[metric.id] if metric.id in records else missing_metric(
+                    dimension.dimension_id, metric.id, "data_missing", "维度 Agent 未取得该指标的可核验工具结果"
+                )
+                for metric in dimension.metrics
+            ]
+            result = aggregate_dimension(dimension, indicators)
+            result["research_evidence"] = state["research_evidence"]
+            return result
+        except Exception:
+            node_span.metadata["status"] = "error"
+            raise
 
 
 def aggregate_dimension(dimension: DimensionConfig, indicators: list[dict[str, Any]]) -> dict[str, Any]:
