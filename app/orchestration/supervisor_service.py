@@ -1,15 +1,21 @@
 """把 Supervisor 的路由和回答输出为 SSE 事件。"""
 
 import json
+import time
+from uuid import UUID
 from collections.abc import AsyncIterator
 from typing import Any
 
+from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.messages import BaseMessage
+from langchain_core.outputs import LLMResult
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from api.schemas import AskRequest
 from app.observability import get_logger, log_event
-from app.tracing import trace_span
+from app.config.config import settings
+from app.tracing import estimate_tokens, trace_generation, trace_span
 from app.orchestration.query_rewriter import rewrite_question
 
 
@@ -32,6 +38,59 @@ _NODE_LABELS = {
     "calculate_metrics": "计算指标",
     "summarize": "汇总发现",
 }
+
+class SupervisorDecisionTrace(AsyncCallbackHandler):
+    """图级回调只记录调度模型，子Agent继续使用已有追踪。"""
+
+    run_inline = True
+
+    def __init__(self) -> None:
+        self._calls: dict[UUID, tuple[float, int, str]] = {}
+
+    async def on_chat_model_start(
+        self, serialized: dict[str, Any], messages: list[list[BaseMessage]],
+        *, run_id: UUID, metadata: dict[str, Any] | None = None, **kwargs: Any,
+    ) -> None:
+        metadata = metadata or {}
+        namespace = metadata.get("langgraph_checkpoint_ns", "").split("|")
+        # Supervisor内部模型节点为agent，其他子图也可能同名，必须同时限定命名空间。
+        if (
+            metadata.get("langgraph_node") != "agent"
+            or len(namespace) != 2
+            or namespace[0].split(":", 1)[0] != "supervisor"
+            or namespace[1].split(":", 1)[0] != "agent"
+        ):
+            return
+        input_text = json.dumps(
+            [[message.model_dump(mode="json") for message in batch] for batch in messages],
+            ensure_ascii=False,
+        )
+        self._calls[run_id] = (
+            time.perf_counter(), estimate_tokens(input_text),
+            metadata.get("ls_model_name", settings.smart_model),
+        )
+
+    async def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
+        if run_id not in self._calls:
+            return
+        started, input_tokens, model = self._calls.pop(run_id)
+        # 包含交接工具调用，不只统计回复正文；用量沿用项目估算口径。
+        output_text = json.dumps(
+            [[item.model_dump(mode="json") for item in batch] for batch in response.generations],
+            ensure_ascii=False,
+        )
+        with trace_generation("supervisor_decision", model=model) as generation:
+            generation.start = started
+            generation.usage = {"input": input_tokens, "output": estimate_tokens(output_text)}
+
+    async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
+        if run_id not in self._calls:
+            return
+        started, _, model = self._calls.pop(run_id)
+        with trace_generation("supervisor_decision", model=model) as generation:
+            generation.start = started
+            generation.metadata.update(status="error", error_type=type(error).__name__)
+
 
 class SupervisorService:
     """将用户问题交给 Supervisor，并报告实际分派的 Agent。"""
@@ -61,10 +120,14 @@ class SupervisorService:
 
         async def traced_supervisor_stream():
             with trace_span("supervisor_graph"):
-                config = {"configurable": {"thread_id": thread_id}}
+                config = {
+                    "configurable": {"thread_id": thread_id},
+                    # 每个请求创建独立回调，只补充缺失的Supervisor决策追踪。
+                    "callbacks": [SupervisorDecisionTrace()],
+                }
                 async for event in self._supervisor.astream(
                     {"messages": [HumanMessage(content=question)], "scope": scope},
-                    stream_mode=["updates", "messages", "custom"],
+                    stream_mode=["updates", "messages"],
                     subgraphs=True,
                     config=config,
                 ):
@@ -88,14 +151,12 @@ class SupervisorService:
                                         raise ValueError("Supervisor 一轮请求分派了多个 Agent")  # 避免混合两类报告。
                                     if routed_agent is None:  # 首次识别交接时通知前端。
                                         routed_agent = agent_name  # 固定本轮路由。
-                                        log_event(_LOG, "supervisor.route", agent=agent_name)  # 记录实际分派。
                                         yield _event("route", {"agent": agent_name})  # 推送分派事件。
                     if not namespace and node in {"crypto_analysis_agent", "topic_research_agent"}:  # 再根据实际执行节点确认分派。
                         if routed_agent is not None and routed_agent != node:  # 工具交接与实际节点不得冲突。
                             raise ValueError("Supervisor 实际分派与计划目标不一致")  # 防止展示错误类型。
                         if routed_agent is None:  # 某些更新模式只显示已执行的节点。
                             routed_agent = node  # 以实际执行节点确定本轮类型。
-                            log_event(_LOG, "supervisor.route", agent=node)  # 记录分派结果。
                             yield _event("route", {"agent": node})  # 通知前端分派对象。
                     if (
                         not isinstance(delta, dict)
@@ -125,16 +186,6 @@ class SupervisorService:
                 if content:  # 空 chunk 跳过
                     node = meta.get("langgraph_node", "?") if isinstance(meta, dict) else "?"
                     yield _event("token", {"node": node, "content": content})
-            elif mode == "custom" and payload.get("event") == "dimension_completed":
-                dimension_id = payload.get("dimension_id", "")  # 读取完成的维度编号。
-                yield _event(
-                    "progress",
-                    {
-                        "node": "dimension_worker",
-                        "label": _NODE_LABELS["dimension_worker"],
-                        "status": f"维度 {dimension_id} 已完成",
-                    },
-                )
 
         if routed_agent == "crypto_analysis_agent":  # 维度路径沿用原有完成事件字段。
             dimensions = sorted(final_state["dimension_results"], key=lambda item: item["dimension_id"])  # 固定维度展示顺序。
@@ -162,7 +213,6 @@ class SupervisorService:
                 },  # 结束主题研究数据结构。
             )  # 完成主题研究输出。
         elif direct_reply.strip():  # 闲聊或超出研究范围的问题，由 Supervisor 直接回复。
-            log_event(_LOG, "supervisor.direct_reply", reply_chars=len(direct_reply))
             # 以独立 kind 返回，前端不会把它当作研究报告展示。
             yield _event("done", {"kind": "direct", "report": direct_reply.strip()})
         else:  # 既未分派也没有回复内容。

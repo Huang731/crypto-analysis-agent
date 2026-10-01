@@ -1,63 +1,15 @@
 """使用 Supervisor 在维度分析与通用主题研究之间分派问题。"""
 
-import json
-import time
-from uuid import UUID
-
 from typing import Annotated, Any  # 声明 Supervisor 共享状态。
 
-from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.messages import BaseMessage
-from langchain_core.outputs import LLMResult
 from langchain_core.language_models.chat_models import BaseChatModel  # 标注模型接口。
 from langgraph.graph.message import add_messages  # 累积 Supervisor 交接消息。
 from langgraph.managed import RemainingSteps  # 提供 Supervisor 工具循环所需的剩余步数。
 from langgraph_supervisor import create_supervisor  # 创建双 Agent 调度图。
 from typing_extensions import NotRequired, TypedDict  # 声明跨 Agent 的状态字段。
 
-from app.config.config import settings
-from app.tracing import estimate_tokens, trace_generation
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent  # 创建维度加密货币分析图。
 from app.topic_research.topic_research_agent import build_topic_research_agent  # 创建通用主题研究图。
-
-
-class SupervisorModelTrace(AsyncCallbackHandler):
-    """只记录调度模型调用，不修改消息、工具调用或流式输出。"""
-
-    run_inline = True
-
-    def __init__(self) -> None:
-        self._calls: dict[UUID, tuple[float, int, str]] = {}
-
-    async def on_chat_model_start(
-        self, serialized: dict[str, Any], messages: list[list[BaseMessage]],
-        *, run_id: UUID, metadata: dict[str, Any] | None = None, **kwargs: Any,
-    ) -> None:
-        # 按调用标识保存计时与估算输入量，避免并发请求互相覆盖。
-        input_tokens = estimate_tokens(json.dumps(
-            [[message.model_dump(mode="json") for message in batch] for batch in messages],
-            ensure_ascii=False,
-        ))
-        model = (metadata or {}).get("ls_model_name", settings.smart_model)
-        self._calls[run_id] = (time.perf_counter(), input_tokens, model)
-
-    async def on_llm_end(self, response: LLMResult, *, run_id: UUID, **kwargs: Any) -> None:
-        started, input_tokens, model = self._calls.pop(run_id)
-        # 完整响应包含交接工具调用，不能只统计回复正文。
-        output_tokens = estimate_tokens(json.dumps(
-            [[generation.model_dump(mode="json") for generation in batch] for batch in response.generations],
-            ensure_ascii=False,
-        ))
-        with trace_generation("supervisor_decision", model=model) as generation:
-            generation.start = started
-            generation.usage = {"input": input_tokens, "output": output_tokens}
-
-    async def on_llm_error(self, error: BaseException, *, run_id: UUID, **kwargs: Any) -> None:
-        started, _, model = self._calls.pop(run_id)
-        with trace_generation("supervisor_decision", model=model) as generation:
-            generation.start = started
-            generation.metadata["status"] = "error"
-            generation.metadata["error_type"] = type(error).__name__
 
 
 class SupervisorState(TypedDict, total=False):  # 两个 Agent 共用的外层状态。
@@ -73,18 +25,9 @@ def build_supervisor_system(smart: BaseChatModel, fast: BaseChatModel):  # 沿�
     """让 Supervisor 只在维度分析和主题研究之间分派。"""
     crypto_agent = build_dynamic_analysis_agent(smart, fast)  # 保留已实现的维度图。
     topic_agent = build_topic_research_agent(smart, fast)  # 将主题研究 Agent 接入调度图。
-    # 复制模型配置，只为Supervisor增加回调，保留子Agent原有追踪与回调。
-    if smart.callbacks is None:
-        callbacks = [SupervisorModelTrace()]
-    elif isinstance(smart.callbacks, list):
-        callbacks = [*smart.callbacks, SupervisorModelTrace()]
-    else:
-        callbacks = smart.callbacks.copy()
-        callbacks.add_handler(SupervisorModelTrace(), inherit=False)
-    supervisor_model = smart.model_copy(update={"callbacks": callbacks})
     workflow = create_supervisor(  # 创建实际运行的中央分派图。
         agents=[crypto_agent, topic_agent],  # 注册两个独立的研究职责。
-        model=supervisor_model,  # 使用主模型判断用户问题意图。
+        model=smart,  # 使用主模型判断用户问题意图。
         prompt=(  # 要求每轮只交给一个专业 Agent。
             "你是研究任务调度员，按问题类型三选一：\n"
             "1. 涉及加密货币行情、币种、投资判断或维度指标的问题，交给 crypto_analysis_agent；\n"
