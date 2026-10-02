@@ -7,7 +7,6 @@ from langchain_core.tools import tool
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.observability import timed_node
 from app.mcp_client.manager import MCPClientManager
 
 
@@ -23,7 +22,6 @@ class CryptoETFSettings(BaseSettings):
 
 
 @tool
-@timed_node
 async def get_crypto_etf_flows(target_asset: str, as_of: str) -> dict[str, Any]:
     """通过MCP的get_asset_flows取得原始ETF流量，历史窗口由计算器按as_of校验。"""
     asset = target_asset.lower()

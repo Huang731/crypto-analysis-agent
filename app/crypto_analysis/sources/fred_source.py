@@ -8,7 +8,6 @@ import httpx
 from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.observability import timed_node
 from app.crypto_analysis.source_time_utils import (
     shift_month,  # 只用于构造 FRED 月度请求窗口。
 )
@@ -28,7 +27,6 @@ class FREDSettings(BaseSettings):
 
 
 @tool
-@timed_node
 async def get_m2_yoy_change(series_id: Literal["M2SL", "WALCL"], as_of: str) -> dict[str, Any]:  # 获取固定序列的原始观测。
     """查询 FRED 的 M2SL 或 WALCL 序列，返回原始观测与来源。"""
     api_key = FREDSettings().fred_api_key

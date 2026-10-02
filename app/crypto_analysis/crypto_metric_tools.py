@@ -17,7 +17,6 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
-from app.observability import timed_node
 from app.config.config import settings
 from app.crypto_analysis.calculators.derivatives_calculator import calculate_derivatives
 from app.crypto_analysis.crypto_metric_runtime import (
@@ -105,7 +104,6 @@ async def _fetch_evidence(
 
 
 @tool
-@timed_node
 async def get_etf_flows(runtime: ToolRuntime[MetricContext]) -> Command:
     """通过MCP取得目标资产ETF资金流，返回计算工具使用的evidence_id。"""
     return await _fetch_evidence(
@@ -115,14 +113,12 @@ async def get_etf_flows(runtime: ToolRuntime[MetricContext]) -> Command:
 
 
 @tool
-@timed_node
 def calculate_etf_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """读取ETF原始证据，按5日40%、20日60%的金额分档规则计算ETF_Flows。"""
     return _compute_metric(runtime, evidence_id, "ETF_Flows", "etf", _calculate_etf)
 
 
 @tool
-@timed_node
 async def get_eodhd_dxy(runtime: ToolRuntime[MetricContext]) -> Command:
     """从 EODHD 官方 MCP 获取 DXY 历史日线。返回 evidence_id，供 calculate_dxy_indicator 计算。"""
     return await _fetch_evidence(
@@ -132,7 +128,6 @@ async def get_eodhd_dxy(runtime: ToolRuntime[MetricContext]) -> Command:
 
 
 @tool
-@timed_node
 async def get_cmc_stablecoin_market_cap(runtime: ToolRuntime[MetricContext]) -> Command:
     """获取 CMC 的 USDT 与 USDC 历史市值。返回 evidence_id，供 calculate_stablecoin_indicator 计算。"""
     return await _fetch_evidence(
@@ -142,7 +137,6 @@ async def get_cmc_stablecoin_market_cap(runtime: ToolRuntime[MetricContext]) -> 
 
 
 @tool
-@timed_node
 async def get_fred_observations(
     series_id: Literal["M2SL", "WALCL"], runtime: ToolRuntime[MetricContext]
 ) -> Command:
@@ -185,35 +179,30 @@ def _compute_metric(
 
 
 @tool
-@timed_node
 def calculate_dxy_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """用 get_eodhd_dxy 返回的 evidence_id 计算 DXY_Trend：MA50、MA200、偏离比例与固定评分。"""
     return _compute_metric(runtime, evidence_id, "DXY_Trend", "dxy", _calculate_dxy)
 
 
 @tool
-@timed_node
 def calculate_stablecoin_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """用稳定币证据计算 Stable_MCap：USDT+USDC、MA30、7日及30日变化、分歧和固定评分。"""
     return _compute_metric(runtime, evidence_id, "Stable_MCap", "stablecoin", _calculate_stable)
 
 
 @tool
-@timed_node
 def calculate_m2_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """用 FRED M2SL 证据计算 M2_YoY：最新与上月同比、同比变化百分点和固定评分。"""
     return _compute_metric(runtime, evidence_id, "M2_YoY", "m2", _calculate_m2)
 
 
 @tool
-@timed_node
 def calculate_fed_balance_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """用 FRED WALCL 证据计算 Fed_Balance：连续四周 MA4、偏离比例和固定评分。"""
     return _compute_metric(runtime, evidence_id, "Fed_Balance", "walcl", _calculate_walcl)
 
 
 @tool
-@timed_node
 async def get_binance_derivatives_data(runtime: ToolRuntime[MetricContext]) -> Command:
     """通过Binance官方SDK取得同合约OI、Funding及现货小时线，返回计算用evidence_id。"""
     return await _fetch_evidence(
@@ -223,21 +212,18 @@ async def get_binance_derivatives_data(runtime: ToolRuntime[MetricContext]) -> C
 
 
 @tool
-@timed_node
 def calculate_oi_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """读取衍生品证据，按维度04的7日OI、价格及Funding拥挤规则计算OI。"""
     return _compute_metric(runtime, evidence_id, "OI", "derivatives", lambda raw, scope: calculate_derivatives(raw, scope, "OI"))
 
 
 @tool
-@timed_node
 def calculate_funding_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """读取衍生品证据，核验完整7日结算记录并计算8小时等效Funding及固定评分。"""
     return _compute_metric(runtime, evidence_id, "Funding", "derivatives", lambda raw, scope: calculate_derivatives(raw, scope, "Funding"))
 
 
 @tool
-@timed_node
 async def get_binance_trend_data(runtime: ToolRuntime[MetricContext]) -> Command:
     """通过官方SDK获取维度05完整UTC日线，返回交给calculate_trend_indicator的evidence_id。"""
     return await _fetch_evidence(
@@ -247,14 +233,12 @@ async def get_binance_trend_data(runtime: ToolRuntime[MetricContext]) -> Command
 
 
 @tool
-@timed_node
 def calculate_trend_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """按维度05公式用代码计算300根日线的均线、Wilder ADX、DI及固定评分。"""
     return _compute_metric(runtime, evidence_id, "Trend", "trend", _calculate_trend)
 
 
 @tool
-@timed_node
 async def get_cmc_fear_greed(runtime: ToolRuntime[MetricContext]) -> Command:
     """复用CMC工具获取最新市场恐惧贪婪指数，返回计算所需的evidence_id。"""
     return await _fetch_evidence(
@@ -264,7 +248,6 @@ async def get_cmc_fear_greed(runtime: ToolRuntime[MetricContext]) -> Command:
 
 
 @tool
-@timed_node
 def calculate_fear_greed_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
     """按维度06指数区间计算Fear_Greed固定分档，记录时间仅用于展示。"""
     return _compute_metric(runtime, evidence_id, "Fear_Greed", "fear_greed", _calculate_fear_greed)

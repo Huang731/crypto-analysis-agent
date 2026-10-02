@@ -12,7 +12,7 @@ from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.mcp_client.manager import MCPClientManager
-from app.observability import get_logger, log_event, timed_node
+from app.observability import get_logger, log_event
 
 _ROOT = Path(__file__).resolve().parents[3]  # 数据源目录比项目根目录多一层。
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"
@@ -29,7 +29,6 @@ class AnalysisMCPSettings(BaseSettings):
 
 
 @tool
-@timed_node
 async def query_dxy_from_official_mcp(as_of: str) -> dict[str, Any]:  # 只获取并解析 EODHD 原始日线。
     """调用 EODHD 官方 MCP 日线工具，返回原始日线与来源。"""
     api_key = AnalysisMCPSettings().eodhd_api_key
