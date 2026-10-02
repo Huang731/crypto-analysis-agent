@@ -107,6 +107,7 @@ def make_researcher(fast_llm: Any):  # 创建单个子问题的研究节点。
     return researcher  # 返回可注册到子图的节点。
 
 
+@timed_node
 def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全部问题。
     return [  # 每个问题交给同一个研究节点独立执行。
         Send("researcher", {"question": state["question"], "subquestion": item})  # 传入原主题和子问题。
@@ -241,6 +242,7 @@ def make_reviewer(smart_llm: Any):  # 创建研究报告审稿节点。
     return reviewer  # 返回父图审稿节点。
 
 
+@timed_node
 def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有条件边。
     if state["review_decision"] == "pass":  # 审稿通过后结束。
         return END  # 返回报告。

@@ -76,6 +76,7 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any):  # 构建可复
                 node_span.metadata["status"] = "error"
                 raise
 
+    @timed_node
     def send_dimensions(state: DynamicAnalysisState) -> list[Send]:  # 按配置动态分派六个维度。
         catalog = state["catalog"]  # 取本轮配置快照。
         return [  # 每个启用维度对应一个独立任务。
