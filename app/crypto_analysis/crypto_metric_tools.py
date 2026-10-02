@@ -23,6 +23,7 @@ from app.crypto_analysis.crypto_metric_runtime import (
     MetricContext,
     _calculate_dxy,
     _calculate_etf,
+    _calculate_fear_greed,
     _calculate_m2,
     _calculate_stable,
     _calculate_trend,
@@ -33,6 +34,7 @@ from app.crypto_analysis.crypto_metric_runtime import (
 from app.crypto_analysis.sources.binance_source import get_binance_derivatives, get_binance_trend_klines
 from app.crypto_analysis.sources.coinmarketcap_source import (
     get_stablecoin_historical_market_cap,
+    get_fear_and_greed,
 )
 from app.crypto_analysis.sources.crypto_etf_source import get_crypto_etf_flows
 from app.crypto_analysis.sources.eodhd_source import query_dxy_from_official_mcp
@@ -236,6 +238,21 @@ def calculate_trend_indicator(evidence_id: str, runtime: ToolRuntime[MetricConte
     return _compute_metric(runtime, evidence_id, "Trend", "trend", _calculate_trend)
 
 
+@tool
+async def get_cmc_fear_greed(runtime: ToolRuntime[MetricContext]) -> Command:
+    """复用CMC工具获取最新市场恐惧贪婪指数，返回计算所需的evidence_id。"""
+    return await _fetch_evidence(
+        runtime, "fear_greed", "cmc.get_fear_and_greed(latest)", get_fear_and_greed,
+        {"mode": "latest"},
+    )
+
+
+@tool
+def calculate_fear_greed_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
+    """按维度06指数区间计算Fear_Greed固定分档，记录时间仅用于展示。"""
+    return _compute_metric(runtime, evidence_id, "Fear_Greed", "fear_greed", _calculate_fear_greed)
+
+
 class MetricModelTrace(AgentMiddleware):
     """把每轮工具决策模型调用接入项目已有的上下文追踪。"""
 
@@ -261,6 +278,8 @@ def build_metric_agent(llm: Any, extra_tools: Sequence[BaseTool] = ()):
     这些证据随维度结果交给报告撰写者，不从模型最终文本中反推数据。
     """
     tools = [
+        get_cmc_fear_greed,
+        calculate_fear_greed_indicator,
         get_binance_trend_data,
         calculate_trend_indicator,
         get_binance_derivatives_data,

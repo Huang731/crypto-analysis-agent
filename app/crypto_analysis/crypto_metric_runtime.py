@@ -12,6 +12,7 @@ from app.crypto_analysis.calculators.dxy_calculator import (
     calculate_dxy_metrics,  # DXY 程序计算器。
 )
 from app.crypto_analysis.calculators.trend_calculator import calculate_trend
+from app.crypto_analysis.calculators.fear_greed_calculator import calculate_fear_and_greed
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
 from app.crypto_analysis.calculators.fred_calculator import (  # FRED 程序计算器。
     calculate_m2_yoy_change,
@@ -35,6 +36,10 @@ class MetricContext(TypedDict):
 
 # 结果字段属于计算器的代码契约，不再由 JSON 决定。
 _METRIC_FIELDS = {
+    "Fear_Greed": (
+        ("value", "value_classification", "record_timestamp"),
+        ("signal_reference",),
+    ),
     "Trend": (
         ("symbol", "kline_count", "first_open_time", "last_close_time", "close"),
         ("ma50", "ma200", "ma50_20_days_ago", "ma200_20_days_ago", "adx14", "plus_di", "minus_di",
@@ -70,6 +75,11 @@ _METRIC_FIELDS = {
         ("ma4_change_pct",),
     ),
 }
+
+
+def _calculate_fear_greed(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
+    """按维度06分档计算市场情绪，保留缺失状态。"""
+    return calculate_fear_and_greed(raw, scope)
 
 
 def _calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:

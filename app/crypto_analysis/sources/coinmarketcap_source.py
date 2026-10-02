@@ -42,7 +42,7 @@ async def _get_cmc(path: str, params: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("status"), dict):
         raise TypeError("CMC 响应缺少 status")
     status = payload["status"]
-    if status.get("error_code") != 0:
+    if status.get("error_code") not in (0, "0"):
         raise RuntimeError(f"CMC API 错误 {status.get('error_code')}: {status.get('error_message')}")
     return payload
 
@@ -73,7 +73,7 @@ async def get_fear_and_greed(
     data = payload.get("data")
     records = [data] if mode == "latest" else data
     if not isinstance(records, list) or not records:
-        return {"status": "data_missing", "reason": "CMC 未返回恐惧贪婪指数记录"}
+        return {"status": "data_missing", "reason": "CMC 未返回恐惧贪婪指数记录", "source": f"{_BASE_URL}{path}"}
     normalized = []
     for record in records:
         if not isinstance(record, dict):
