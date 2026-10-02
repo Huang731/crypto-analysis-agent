@@ -73,7 +73,7 @@ async def get_fear_and_greed(
     data = payload.get("data")
     records = [data] if mode == "latest" else data
     if not isinstance(records, list) or not records:
-        return {"status": "data_missing", "reason": "CMC 未返回恐惧贪婪指数记录", "source": f"{_BASE_URL}{path}"}
+        return {"status": "data_missing", "reason": "CMC 未返回恐惧贪婪指数记录"}
     normalized = []
     for record in records:
         if not isinstance(record, dict):

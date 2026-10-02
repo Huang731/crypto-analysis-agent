@@ -16,14 +16,14 @@ def validate_trend_klines(raw: dict[str, Any], scope: dict[str, str]) -> list[li
         raise ValueError("现货日线交易对与目标不一致")
     rows = raw["rows"]
     if not isinstance(rows, list):
-        raise ValueError("现货日线响应不是数组")
+        raise TypeError("现货日线响应不是数组")
     cutoff_ms = int(cutoff.timestamp() * 1000)
     selected = []
     for row in rows:
         if not isinstance(row, list) or len(row) < 7:
             raise ValueError("现货日线字段缺失或响应截断")
         if not isinstance(row[0], int) or not isinstance(row[6], int):
-            raise ValueError("现货日线时间戳必须为整数毫秒")
+            raise TypeError("现货日线时间戳必须为整数毫秒")
         if row[6] < cutoff_ms:
             selected.append(row)
     selected = sorted(selected, key=lambda row: row[0])[-300:]
@@ -92,11 +92,11 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
                                  f"smoothed_minus_dm_{i}": smooth_minus, f"adx_{i}": adx, f"dx_{i}": dx})
     ma50, ma200 = ma(50, 299), ma(200, 299)
     ma50_before, ma200_before = ma(50, 279), ma(200, 279)
-    admission = close[-1] > ma200 and ma200 > ma200_before
+    admission = close[-1] > ma200 > ma200_before
     timing = adx > 25 and pdi > mdi
     confirmation = ma50 > ma200 and ma50 > ma50_before
     if not admission:
-        score = 0 if close[-1] < ma200 and ma200 < ma200_before else 2.5
+        score = 0 if close[-1] < ma200 < ma200_before else 2.5
     else:
         score = 5 if not timing else 7.5 if not confirmation else 10
     return {

@@ -62,7 +62,7 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
                 if not isinstance(rows, list):
                     raise TypeError(f"{kind}响应不是数组")
                 payload[kind] = [row.to_dict() for row in rows] if kind == "oi" else rows
-            except Exception as exc:  # noqa: BLE001 - 单个行情接口失败只记录该序列缺失，不中断其余接口。
+            except Exception as exc:  # noqa: BLE001 - 各接口失败类型不固定，记为缺失后继续请求其余接口。
                 payload[kind] = {"status": "data_missing", "reason": f"Binance SDK {kind}：{exc}"}
     finally:
         # 关闭SDK持有的HTTP连接，不在请求之间共享状态。

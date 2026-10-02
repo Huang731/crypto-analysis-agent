@@ -11,9 +11,10 @@ from typing_extensions import TypedDict
 from app.crypto_analysis.calculators.dxy_calculator import (
     calculate_dxy_metrics,  # DXY 程序计算器。
 )
-from app.crypto_analysis.calculators.trend_calculator import calculate_trend
-from app.crypto_analysis.calculators.fear_greed_calculator import calculate_fear_and_greed
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
+from app.crypto_analysis.calculators.fear_greed_calculator import (
+    calculate_fear_and_greed,
+)
 from app.crypto_analysis.calculators.fred_calculator import (  # FRED 程序计算器。
     calculate_m2_yoy_change,
     calculate_walcl_ma4,
@@ -21,6 +22,7 @@ from app.crypto_analysis.calculators.fred_calculator import (  # FRED 程序计�
 from app.crypto_analysis.calculators.stablecoin_calculator import (
     _stablecoin_metrics,  # 稳定币程序计算器。
 )
+from app.crypto_analysis.calculators.trend_calculator import calculate_trend
 from app.crypto_analysis.crypto_dimension_catalog import (
     DimensionConfig,  # 读取维度配置类型。
 )

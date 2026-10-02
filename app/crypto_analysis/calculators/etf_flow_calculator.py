@@ -26,8 +26,6 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
         raise ValueError("as_of 必须包含时区")
     if payload["symbol"].upper() != scope["target_asset"].upper():
         raise ValueError("ETF响应资产与目标资产不一致")
-    if scope["target_asset"].upper() != "BTC":
-        return {"status": "data_missing", "reason": "当前金额评分阈值仅确认适用于BTC，其他资产阈值未确定"}
     days = payload["days"]
     if not isinstance(days, list):
         raise TypeError("ETF days 必须为数组")
