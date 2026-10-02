@@ -6,7 +6,6 @@ from typing import Literal  # 限定指标类型和接入状态。
 
 from pydantic import BaseModel, ConfigDict, Field  # 校验配置字段。
 
-
 _CONFIG_ROOT = Path(__file__).resolve().parents[2] / "data" / "config"  # 配置目录。
 
 

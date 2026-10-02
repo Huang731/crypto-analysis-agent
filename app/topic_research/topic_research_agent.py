@@ -14,8 +14,16 @@ from langgraph.types import Send  # 并行分派研究子问题。
 from app.config.config import settings  # 读取模型配置用于成本估算。
 from app.llm.model import make_fast_llm, make_smart_llm  # 复用项目现有模型工厂。
 from app.observability import get_logger, log_event, timed_node  # 保留请求观测。
-from app.tracing import estimate_tokens, start_trace, trace_generation, trace_span  # 记录请求与模型调用。
-from app.topic_research.topic_research_state import AnalysisState, SystemState  # 使用主题研究专属状态。
+from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
+    AnalysisState,
+    SystemState,
+)
+from app.tracing import (  # 记录请求与模型调用。
+    estimate_tokens,
+    start_trace,
+    trace_generation,
+    trace_span,
+)
 
 _LOG = get_logger("crypto_analysis.crypto_analysis_agent")  # 沿用原有日志名称。
 _NUMBER_PREFIX = re.compile(r"^\s*(?:\d+[.)、]\s*|[-*]\s+)")  # 识别模型偶尔生成的行首编号。
@@ -49,7 +57,7 @@ def make_split(fast_llm: Any):  # 创建研究主题拆解节点。
                     if isinstance(response.content, str):  # 仅文本输出可估算 token 用量。
                         generation.usage = {"input": estimate_tokens(prompt), "output": estimate_tokens(response.content)}  # 估算输入输出用量。
                 if not isinstance(response.content, str):  # 消息内容必须是文本。
-                    raise ValueError("主题拆解模型未返回文本")  # 不猜测非文本内容。
+                    raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
                 subquestions = [  # 按行读取研究任务。
                     _NUMBER_PREFIX.sub("", line).strip()  # 只清理编号和空白。
                     for line in response.content.splitlines()  # 遍历模型返回的每一行。

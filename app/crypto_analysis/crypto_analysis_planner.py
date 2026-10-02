@@ -12,7 +12,6 @@ from app.crypto_analysis.crypto_analysis_contract import _HISTORICAL
 from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog
 from app.tracing import estimate_tokens, trace_generation
 
-
 _ASSET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
@@ -76,5 +75,5 @@ async def create_analysis_plan(llm: Any, question: str, catalog: DimensionCatalo
                 "output": estimate_tokens(plan.model_dump_json()),
             }
     if not isinstance(plan, AnalysisPlan):
-        raise ValueError("规划模型未返回 AnalysisPlan 结构化结果")
+        raise TypeError("规划模型未返回 AnalysisPlan 结构化结果")
     return validate_plan(plan)

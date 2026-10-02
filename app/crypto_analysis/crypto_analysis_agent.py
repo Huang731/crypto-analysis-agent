@@ -4,22 +4,40 @@ import asyncio  # 在线程中运行同步检索，避免阻塞异步维度执�
 import json  # 将结构化事实交给报告模型并记录发现。
 import operator  # 合并并行维度节点返回的列表。
 from typing import Annotated, Any  # 声明图状态与模型类型。
-from typing_extensions import TypedDict  # 定义 LangGraph 共享状态。
 
-from langchain_core.messages import AIMessage, HumanMessage  # 读取用户问题并追加最终报告。
+from langchain_core.messages import (  # 读取用户问题并追加最终报告。
+    AIMessage,
+    HumanMessage,
+)
 from langgraph.graph import END, START, StateGraph  # 构建父图。
 from langgraph.graph.message import add_messages  # 合并消息列表。
 from langgraph.types import Send  # 动态分派不同维度。
+from typing_extensions import TypedDict  # 定义 LangGraph 共享状态。
 
-from app.crypto_analysis.crypto_analysis_planner import create_analysis_plan  # 让 LLM 识别币种与研究重点。
-from app.crypto_analysis.crypto_metric_runtime import execute_dimension  # 执行工具 Agent 并保留程序聚合。
-from app.crypto_analysis.crypto_metric_tools import build_metric_agent  # 构建自主取证与计算的维度 Agent。
-from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog, load_dimension_catalog  # 加载维度配置。
-from app.observability import get_logger, log_event, timed_node  # 保留项目现有观测方式。
 from app.config.config import settings  # 读取报告模型配置。
+from app.crypto_analysis.crypto_analysis_planner import (
+    create_analysis_plan,  # 让 LLM 识别币种与研究重点。
+)
+from app.crypto_analysis.crypto_dimension_catalog import (  # 加载维度配置。
+    DimensionCatalog,
+    load_dimension_catalog,
+)
+from app.crypto_analysis.crypto_metric_runtime import (
+    execute_dimension,  # 执行工具 Agent 并保留程序聚合。
+)
+from app.crypto_analysis.crypto_metric_tools import (
+    build_metric_agent,  # 构建自主取证与计算的维度 Agent。
+)
+from app.observability import (  # 保留项目现有观测方式。
+    get_logger,
+    timed_node,
+)
 from app.rag.retriever import KBRetriever  # 复用混合检索与百炼重排。
-from app.tracing import estimate_tokens, trace_generation, trace_span  # 记录模型调用与检索耗时。
-
+from app.tracing import (  # 记录模型调用与检索耗时。
+    estimate_tokens,
+    trace_generation,
+    trace_span,
+)
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")  # 当前图使用的结构化日志器。
 

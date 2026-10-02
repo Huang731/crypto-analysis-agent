@@ -1,10 +1,9 @@
 """维度 01 的请求范围、指标记录和维度结果契约。"""
 
+import re
 from datetime import date, datetime, timezone
 from math import isfinite
-import re
 from typing import Any
-
 
 INDICATOR_WEIGHTS = {
     "DXY_Trend": 0.35,

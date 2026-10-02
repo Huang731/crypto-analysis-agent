@@ -8,8 +8,9 @@ import httpx
 from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.crypto_analysis.source_time_utils import shift_month  # 只用于构造 FRED 月度请求窗口。
-
+from app.crypto_analysis.source_time_utils import (
+    shift_month,  # 只用于构造 FRED 月度请求窗口。
+)
 
 _ROOT = Path(__file__).resolve().parents[3]  # 数据源目录比项目根目录多一层。
 _FRED_SOURCE = "https://api.stlouisfed.org/fred/series/observations"
@@ -56,5 +57,5 @@ async def get_m2_yoy_change(series_id: Literal["M2SL", "WALCL"], as_of: str) -> 
         raise RuntimeError(f"FRED API HTTP {response.status_code}")
     payload = response.json()
     if not isinstance(payload, dict):
-        raise ValueError("FRED 响应不是 JSON 对象")
+        raise TypeError("FRED 响应不是 JSON 对象")
     return {"payload": payload, "source": _FRED_SOURCE}  # 交由程序计算器校验并评分。

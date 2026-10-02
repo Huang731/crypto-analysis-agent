@@ -1,10 +1,10 @@
 """EODHD 官方 MCP 数据接口。"""
 
-from datetime import datetime, timedelta, timezone
 import json
 import logging
-from pathlib import Path
 import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -13,7 +13,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.mcp_client.manager import MCPClientManager
 from app.observability import get_logger, log_event
-
 
 _ROOT = Path(__file__).resolve().parents[3]  # 数据源目录比项目根目录多一层。
 _LOG = get_logger("crypto_analysis.crypto_analysis_agent")
@@ -60,11 +59,11 @@ async def query_dxy_from_official_mcp(as_of: str) -> dict[str, Any]:  # 只获�
             response = await mcp_client.call_tool(
                 "eodhd", "get_historical_stock_prices", arguments
             )
-    except Exception:
+    except Exception:  # noqa: BLE001 - MCP 连接失败类型不固定，统一转成稳定的 RuntimeError。
         raise RuntimeError("EODHD 官方 MCP 连接或工具调用失败") from None
     raw_data = response.get("result")
     if not isinstance(raw_data, str):
-        raise ValueError("EODHD 官方 MCP 未返回日线 JSON 字符串")
+        raise TypeError("EODHD 官方 MCP 未返回日线 JSON 字符串")
     try:
         rows = json.loads(raw_data)
     except json.JSONDecodeError as exc:

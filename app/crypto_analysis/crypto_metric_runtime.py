@@ -4,17 +4,25 @@ import json  # 把维度业务任务传给工具决策模型。
 from datetime import date, datetime, timezone  # 统一解析请求的 UTC 截止时间和观测日期。
 from math import isfinite  # 校验分数是否为有限数值。
 from typing import Any  # 表示各工具不同的原始响应。
-from typing_extensions import TypedDict
 
 from langchain_core.messages import HumanMessage
+from typing_extensions import TypedDict
 
-from app.tracing import trace_span
-
-from app.crypto_analysis.crypto_dimension_catalog import DimensionConfig  # 读取维度配置类型。
+from app.crypto_analysis.calculators.dxy_calculator import (
+    calculate_dxy_metrics,  # DXY 程序计算器。
+)
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
-from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics  # DXY 程序计算器。
-from app.crypto_analysis.calculators.fred_calculator import calculate_m2_yoy_change, calculate_walcl_ma4  # FRED 程序计算器。
-from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics  # 稳定币程序计算器。
+from app.crypto_analysis.calculators.fred_calculator import (  # FRED 程序计算器。
+    calculate_m2_yoy_change,
+    calculate_walcl_ma4,
+)
+from app.crypto_analysis.calculators.stablecoin_calculator import (
+    _stablecoin_metrics,  # 稳定币程序计算器。
+)
+from app.crypto_analysis.crypto_dimension_catalog import (
+    DimensionConfig,  # 读取维度配置类型。
+)
+from app.tracing import trace_span
 
 
 class MetricContext(TypedDict):

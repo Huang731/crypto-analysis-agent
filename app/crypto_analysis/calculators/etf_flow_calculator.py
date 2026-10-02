@@ -30,7 +30,7 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
         return {"status": "data_missing", "reason": "当前金额评分阈值仅确认适用于BTC，其他资产阈值未确定"}
     days = payload["days"]
     if not isinstance(days, list):
-        raise ValueError("ETF days 必须为数组")
+        raise TypeError("ETF days 必须为数组")
     rows: dict[date, Decimal] = {}
     for point in days:
         day = date.fromisoformat(point["date"])
@@ -38,7 +38,7 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
             raise ValueError("ETF数据存在重复日期")
         value = point["netFlowUsdM"]
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("ETF净流量必须为有效数值")
+            raise TypeError("ETF净流量必须为有效数值")
         try:
             amount = Decimal(str(value))
         except InvalidOperation as exc:

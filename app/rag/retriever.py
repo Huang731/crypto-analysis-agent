@@ -11,9 +11,9 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from app.rag.ingest import get_vectorstore
 from app.config.config import settings
 from app.llm.model import make_fast_llm
+from app.rag.ingest import get_vectorstore
 from app.tracing import trace_generation, trace_span
 
 

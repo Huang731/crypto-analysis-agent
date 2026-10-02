@@ -8,8 +8,9 @@ import httpx
 from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.crypto_analysis.source_time_utils import utc_time  # 只解析恐惧贪婪接口的时间字段。
-
+from app.crypto_analysis.source_time_utils import (
+    utc_time,  # 只解析恐惧贪婪接口的时间字段。
+)
 
 _ROOT = Path(__file__).resolve().parents[3]  # 数据源目录比项目根目录多一层。
 _BASE_URL = "https://pro-api.coinmarketcap.com"
@@ -39,7 +40,7 @@ async def _get_cmc(path: str, params: dict[str, Any]) -> dict[str, Any]:
     response.raise_for_status()
     payload = response.json()
     if not isinstance(payload, dict) or not isinstance(payload.get("status"), dict):
-        raise ValueError("CMC 响应缺少 status")
+        raise TypeError("CMC 响应缺少 status")
     status = payload["status"]
     if status.get("error_code") != 0:
         raise RuntimeError(f"CMC API 错误 {status.get('error_code')}: {status.get('error_message')}")
@@ -76,7 +77,7 @@ async def get_fear_and_greed(
     normalized = []
     for record in records:
         if not isinstance(record, dict):
-            raise ValueError("CMC 恐惧贪婪指数记录格式无效")
+            raise TypeError("CMC 恐惧贪婪指数记录格式无效")
         value = record.get("value")
         if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
             raise ValueError("CMC 恐惧贪婪指数必须是 0 到 100 的整数")

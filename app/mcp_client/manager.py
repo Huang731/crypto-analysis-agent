@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import AsyncExitStack
-from typing import Any
+from typing import Any, Self
 
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
@@ -24,7 +24,7 @@ class MCPClientManager:
         self._stack = AsyncExitStack()
         self._clients: dict[str, Client] = {}
 
-    async def __aenter__(self) -> "MCPClientManager":
+    async def __aenter__(self) -> Self:
         for name, url in self._server_urls.items():
             if name in self._server_headers:
                 # 认证只用于指定服务，不把ETF密钥发送给其他MCP。

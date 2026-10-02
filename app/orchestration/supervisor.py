@@ -8,8 +8,12 @@ from langgraph.managed import RemainingSteps  # 提供 Supervisor 工具循环�
 from langgraph_supervisor import create_supervisor  # 创建双 Agent 调度图。
 from typing_extensions import NotRequired, TypedDict  # 声明跨 Agent 的状态字段。
 
-from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent  # 创建维度加密货币分析图。
-from app.topic_research.topic_research_agent import build_topic_research_agent  # 创建通用主题研究图。
+from app.crypto_analysis.crypto_analysis_agent import (
+    build_dynamic_analysis_agent,  # 创建维度加密货币分析图。
+)
+from app.topic_research.topic_research_agent import (
+    build_topic_research_agent,  # 创建通用主题研究图。
+)
 
 
 class SupervisorState(TypedDict, total=False):  # 两个 Agent 共用的外层状态。

@@ -5,8 +5,12 @@ from datetime import date, timedelta  # 计算月度与周度窗口。
 from decimal import Decimal, InvalidOperation  # 保留原有精度和格式校验。
 from typing import Any  # 接收 FRED 原始响应。
 
-from app.crypto_analysis.calculators.score_calculator import linear_score  # 使用原有线性评分口径。
-from app.crypto_analysis.source_time_utils import shift_month  # 与 FRED 请求共享自然月换算规则。
+from app.crypto_analysis.calculators.score_calculator import (
+    linear_score,  # 使用原有线性评分口径。
+)
+from app.crypto_analysis.source_time_utils import (
+    shift_month,  # 与 FRED 请求共享自然月换算规则。
+)
 
 _FRED_SOURCE = "https://api.stlouisfed.org/fred/series/observations"  # 保留原有结果来源标识。
 
@@ -14,11 +18,11 @@ def calculate_m2_yoy_change(payload: dict[str, Any], as_of: date) -> dict[str, A
     """用 M2SL 原始月值计算最新月同比与上月同比之差。"""
     rows = payload.get("observations")  # 计算或保存原始观测列表。
     if not isinstance(rows, list):  # 校验当前条件并决定后续计算。
-        raise ValueError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
+        raise TypeError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
     values: dict[date, Decimal] = {}  # 计算或保存按日期整理的有效观测。
     for row in rows:  # 依次处理原始数据中的记录。
         if not isinstance(row, dict):  # 校验当前条件并决定后续计算。
-            raise ValueError("FRED 月度观测格式无效")  # 拒绝无效或不足的数据。
+            raise TypeError("FRED 月度观测格式无效")  # 拒绝无效或不足的数据。
         try:  # 开始解析外部数据字段。
             observed_month = date.fromisoformat(row["date"])  # 计算或保存当前观测月份。
             raw_value = row["value"]  # 计算或保存接口返回的原始数值。
@@ -31,7 +35,7 @@ def calculate_m2_yoy_change(payload: dict[str, Any], as_of: date) -> dict[str, A
         if raw_value == ".":  # 校验当前条件并决定后续计算。
             continue  # 跳过该无效观测。
         if not isinstance(raw_value, str):  # 校验当前条件并决定后续计算。
-            raise ValueError("M2SL 观测值不是字符串")  # 拒绝无效或不足的数据。
+            raise TypeError("M2SL 观测值不是字符串")  # 拒绝无效或不足的数据。
         try:  # 开始解析外部数据字段。
             value = Decimal(raw_value)  # 计算或保存已解析的有效数值。
         except InvalidOperation as exc:  # 捕获格式错误并保留明确原因。
@@ -83,11 +87,11 @@ def calculate_walcl_ma4(payload: dict[str, Any], as_of: date) -> dict[str, Any]:
     """用最近四个连续周三的 WALCL 原始值计算 MA4 与偏离百分比。"""
     rows = payload.get("observations")  # 计算或保存原始观测列表。
     if not isinstance(rows, list):  # 校验当前条件并决定后续计算。
-        raise ValueError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
+        raise TypeError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
     values: dict[date, Decimal] = {}  # 计算或保存按日期整理的有效观测。
     for row in rows:  # 依次处理原始数据中的记录。
         if not isinstance(row, dict):  # 校验当前条件并决定后续计算。
-            raise ValueError("WALCL 周度观测格式无效")  # 拒绝无效或不足的数据。
+            raise TypeError("WALCL 周度观测格式无效")  # 拒绝无效或不足的数据。
         try:  # 开始解析外部数据字段。
             observed_at = date.fromisoformat(row["date"])  # 计算或保存实际观测时间。
             raw_value = row["value"]  # 计算或保存接口返回的原始数值。
@@ -100,7 +104,7 @@ def calculate_walcl_ma4(payload: dict[str, Any], as_of: date) -> dict[str, Any]:
         if raw_value == ".":  # 校验当前条件并决定后续计算。
             continue  # 跳过该无效观测。
         if not isinstance(raw_value, str):  # 校验当前条件并决定后续计算。
-            raise ValueError("WALCL 观测值不是字符串")  # 拒绝无效或不足的数据。
+            raise TypeError("WALCL 观测值不是字符串")  # 拒绝无效或不足的数据。
         try:  # 开始解析外部数据字段。
             value = Decimal(raw_value)  # 计算或保存已解析的有效数值。
         except InvalidOperation as exc:  # 捕获格式错误并保留明确原因。

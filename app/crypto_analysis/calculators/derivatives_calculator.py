@@ -21,7 +21,7 @@ def _rows(payload: dict[str, Any], key: str) -> list:
     """接口缺失不能转换为空值或零分。"""
     rows = payload[key]
     if isinstance(rows, dict):
-        raise ValueError(rows["reason"])
+        raise TypeError(rows["reason"])
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"{key} 原始记录缺失")
     return rows

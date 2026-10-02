@@ -6,16 +6,19 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Annotated, Any, Literal
 
 from langchain.agents import AgentState, create_agent
-from langchain.agents.middleware import AgentMiddleware, ModelCallLimitMiddleware, ToolCallLimitMiddleware
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelCallLimitMiddleware,
+    ToolCallLimitMiddleware,
+)
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
-from app.crypto_analysis.calculators.derivatives_calculator import calculate_derivatives
-from app.crypto_analysis.sources.binance_source import get_binance_derivatives
 from app.config.config import settings
+from app.crypto_analysis.calculators.derivatives_calculator import calculate_derivatives
 from app.crypto_analysis.crypto_metric_runtime import (
     MetricContext,
     _calculate_dxy,
@@ -26,8 +29,11 @@ from app.crypto_analysis.crypto_metric_runtime import (
     _normalize_result,
     missing_metric,
 )
+from app.crypto_analysis.sources.binance_source import get_binance_derivatives
+from app.crypto_analysis.sources.coinmarketcap_source import (
+    get_stablecoin_historical_market_cap,
+)
 from app.crypto_analysis.sources.crypto_etf_source import get_crypto_etf_flows
-from app.crypto_analysis.sources.coinmarketcap_source import get_stablecoin_historical_market_cap
 from app.crypto_analysis.sources.eodhd_source import query_dxy_from_official_mcp
 from app.crypto_analysis.sources.fred_source import get_m2_yoy_change
 from app.tracing import estimate_tokens, trace_generation, trace_span
@@ -71,9 +77,9 @@ async def _fetch_evidence(
     with trace_span("analysis.metric.fetch", data_kind=data_kind, source_action=source_action) as span:
         try:
             raw = await source_tool.ainvoke(arguments, config=runtime.config)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - 取数失败类型不固定，作为缺失证据交还 Agent。
             # 取数失败作为真实缺失证据交还 Agent，不返回其他来源或缓存数据。
-            reason = str(exc) if isinstance(exc, (RuntimeError, ValueError)) else type(exc).__name__
+            reason = str(exc) if isinstance(exc, (RuntimeError, TypeError, ValueError)) else type(exc).__name__
             record = {"data_kind": data_kind, "source_action": source_action, "status": "data_missing", "reason": reason}
             summary = {"evidence_id": evidence_id, **record}
             span.metadata["status"] = "error"
@@ -161,9 +167,9 @@ def _compute_metric(
             try:
                 calculated = calculator(evidence["raw"], runtime.context["scope"])
                 result = _normalize_result(dimension.dimension_id, metric_id, calculated, evidence["source_action"])
-            except ValueError as exc:
+            except (TypeError, ValueError) as exc:
                 result = missing_metric(dimension.dimension_id, metric_id, "data_missing", str(exc))
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断维度。
                 result = missing_metric(dimension.dimension_id, metric_id, "calculation_error", str(exc))
         span.output = {"status": result["status"], "score": result["score"]}
     return Command(update={"indicator_results": {metric_id: result}, "messages": [_tool_message(runtime, result)]})

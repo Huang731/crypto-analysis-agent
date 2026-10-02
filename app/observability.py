@@ -1,16 +1,17 @@
 """请求上下文与结构化日志，贯通 FastAPI、Supervisor 和分析任务。"""
 from __future__ import annotations
+
+import functools
 import json
 import logging
 import sys
+import time
 import uuid
+from collections.abc import Callable
 from contextvars import ContextVar, Token
 from pathlib import Path
 from typing import Any
 
-import functools
-import time
-from typing import Callable
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT = Path(__file__).resolve().parents[1]

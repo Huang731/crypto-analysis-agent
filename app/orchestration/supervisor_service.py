@@ -2,21 +2,20 @@
 
 import json
 import time
-from uuid import UUID
 from collections.abc import AsyncIterator
 from typing import Any
+from uuid import UUID
 
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.messages import BaseMessage
-from langchain_core.outputs import LLMResult
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.outputs import LLMResult
 
 from api.schemas import AskRequest
-from app.observability import get_logger, log_event
 from app.config.config import settings
-from app.tracing import estimate_tokens, trace_generation, trace_span
+from app.observability import get_logger, log_event
 from app.orchestration.query_rewriter import rewrite_question
+from app.tracing import estimate_tokens, trace_generation, trace_span
 
 
 def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, str]:

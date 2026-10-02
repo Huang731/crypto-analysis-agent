@@ -4,7 +4,9 @@ from datetime import date, datetime, timedelta  # 对齐 UTC 日期并检查有�
 from math import isfinite  # 排除无效市值。
 from typing import Any  # 接收 CMC 原始响应。
 
-from app.crypto_analysis.calculators.score_calculator import linear_score  # 使用原有线性评分口径。
+from app.crypto_analysis.calculators.score_calculator import (
+    linear_score,  # 使用原有线性评分口径。
+)
 from app.crypto_analysis.source_time_utils import utc_time  # 复用数据源时间解析规则。
 
 _BASE_URL = "https://pro-api.coinmarketcap.com"  # 保留原有结果来源标识。
@@ -13,7 +15,7 @@ def _stablecoin_metrics(payload: dict[str, Any], as_of: datetime) -> dict[str, A
     """按两个币种的 UTC 日期对齐，计算维度 01 所需指标。"""
     data = payload.get("data")  # 计算或保存接口中的币种数据。
     if not isinstance(data, dict):  # 校验当前条件并决定后续计算。
-        raise ValueError("CMC 稳定币响应缺少 data 对象")  # 拒绝无效或不足的数据。
+        raise TypeError("CMC 稳定币响应缺少 data 对象")  # 拒绝无效或不足的数据。
     by_coin: dict[str, dict[date, tuple[float | None, datetime]]] = {}  # 计算或保存各稳定币按日期索引的报价。
     for coin_id, symbol in (("825", "USDT"), ("3408", "USDC")):  # 依次处理原始数据中的记录。
         coin = data.get(coin_id)  # 计算或保存当前稳定币原始报价。
@@ -22,11 +24,11 @@ def _stablecoin_metrics(payload: dict[str, Any], as_of: datetime) -> dict[str, A
         values: dict[date, tuple[float | None, datetime]] = {}  # 计算或保存按日期整理的有效观测。
         for row in coin["quotes"]:  # 依次处理原始数据中的记录。
             if not isinstance(row, dict):  # 校验当前条件并决定后续计算。
-                raise ValueError(f"{symbol} 历史报价格式无效")  # 拒绝无效或不足的数据。
+                raise TypeError(f"{symbol} 历史报价格式无效")  # 拒绝无效或不足的数据。
             quote = row.get("quote")  # 计算或保存当前报价对象。
             usd = quote.get("USD") if isinstance(quote, dict) else None  # 计算或保存美元计价报价。
             if not isinstance(usd, dict):  # 校验当前条件并决定后续计算。
-                raise ValueError(f"{symbol} 缺少 USD 报价")  # 拒绝无效或不足的数据。
+                raise TypeError(f"{symbol} 缺少 USD 报价")  # 拒绝无效或不足的数据。
             observed_at = utc_time(usd.get("timestamp"))  # 计算或保存实际观测时间。
             market_cap = usd.get("market_cap")  # 计算或保存原始市值字段。
             if market_cap is None:  # 校验当前条件并决定后续计算。

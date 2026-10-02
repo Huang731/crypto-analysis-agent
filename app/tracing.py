@@ -8,13 +8,15 @@ from __future__ import annotations
 
 import sys
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Iterator
+from typing import Any
+
+from app.config.config import settings
 
 from .observability import get_logger
-from app.config.config import settings
 
 _log = get_logger("crypto-analysis-agent.tracing")
 _current_trace: ContextVar[_Trace | None] = ContextVar("crypto_current_trace", default=None)
@@ -55,7 +57,7 @@ class _Span:
     model: str | None = None
     usage: dict | None = None
     cost: float | None = None
-    children: list["_Span"] = field(default_factory=list)
+    children: list[_Span] = field(default_factory=list)
 
     @property
     def duration_ms(self) -> int:

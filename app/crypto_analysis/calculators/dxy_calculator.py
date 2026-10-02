@@ -4,18 +4,20 @@ from datetime import date, timedelta  # 校验日线日期和有效期。
 from math import isfinite  # 排除无效收盘价。
 from typing import Any  # 接收工具返回的原始记录。
 
-from app.crypto_analysis.calculators.score_calculator import linear_score  # 使用原有线性评分口径。
+from app.crypto_analysis.calculators.score_calculator import (
+    linear_score,  # 使用原有线性评分口径。
+)
 
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"  # 保留原有结果来源标识。
 
 def calculate_dxy_metrics(rows: Any, end_date: date) -> dict[str, Any]:  # 定义该指标的程序计算函数。
     """用日线 close 计算 DXY、MA50、MA200 及均线方向。"""
     if not isinstance(rows, list):  # 校验当前条件并决定后续计算。
-        raise ValueError("EODHD 日线响应必须是数组")  # 拒绝无效或不足的数据。
+        raise TypeError("EODHD 日线响应必须是数组")  # 拒绝无效或不足的数据。
     bars: list[tuple[date, float]] = []  # 计算或保存已校验的日线列表。
     for row in rows:  # 依次处理原始数据中的记录。
         if not isinstance(row, dict):  # 校验当前条件并决定后续计算。
-            raise ValueError("EODHD 日线记录格式无效")  # 拒绝无效或不足的数据。
+            raise TypeError("EODHD 日线记录格式无效")  # 拒绝无效或不足的数据。
         try:  # 开始解析外部数据字段。
             trading_date = date.fromisoformat(row["date"])  # 计算或保存当前交易日期。
             close = float(row["close"])  # 计算或保存当前收盘价。

@@ -5,8 +5,10 @@ from datetime import datetime
 from typing import Any
 
 from binance_common.configuration import ConfigurationRestAPI
+from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
+    DerivativesTradingUsdsFutures,
+)
 from binance_sdk_spot.spot import Spot
-from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import DerivativesTradingUsdsFutures
 from langchain_core.tools import tool
 
 _HOUR = 3_600_000
@@ -37,7 +39,7 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
         while True:
             page = [row.to_dict() for row in futures.rest_api.get_funding_rate_history(symbol=symbol, start_time=start, end_time=end, limit=1000).data()]
             if not isinstance(page, list):
-                raise ValueError("Funding响应不是数组")
+                raise TypeError("Funding响应不是数组")
             rows.extend(page)
             if len(page) < 1000:
                 return rows
@@ -58,9 +60,9 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
             try:
                 rows = fetch()
                 if not isinstance(rows, list):
-                    raise ValueError(f"{kind}响应不是数组")
+                    raise TypeError(f"{kind}响应不是数组")
                 payload[kind] = [row.to_dict() for row in rows] if kind == "oi" else rows
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - 单个行情接口失败只记录该序列缺失，不中断其余接口。
                 payload[kind] = {"status": "data_missing", "reason": f"Binance SDK {kind}：{exc}"}
     finally:
         # 关闭SDK持有的HTTP连接，不在请求之间共享状态。
