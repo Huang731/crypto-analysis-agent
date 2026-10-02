@@ -29,9 +29,9 @@ from app.observability import (
     new_trace_id,
     reset_request_context,
 )
-from app.tracing import start_trace
 from app.orchestration.supervisor import build_supervisor_system
 from app.orchestration.supervisor_service import SupervisorService
+from app.tracing import start_trace
 
 _INDEX = Path(__file__).resolve().parents[1] / "static" / "index.html"
 _LOG = get_logger("crypto_analysis.api")
@@ -130,49 +130,51 @@ async def ask(
 
     async def event_generator():
         # 生成器在响应阶段才执行，需要在这里重新绑定日志上下文。
-        with start_trace(
-            "api.ask",
-            trace_id=trace_id,
-            thread_id=thread_id,
-            question_chars=len(req.question),
-        ) as trace:
-            with _request_context(trace_id, thread_id):
-                started = time.perf_counter()
-                log_event(_LOG, "request.start", question_chars=len(req.question))
-                try:
-                    async for item in service.stream_ask(req, thread_id, trace_id, scope):
-                        # 客户端断开后立即停止，避免继续消耗 LLM 调用。
-                        if await request.is_disconnected():
-                            log_event(_LOG, "request.disconnected")
-                            trace.output = {"status": "disconnected"}
-                            return
-                        if item.get("event") == "done":
-                            payload = json.loads(item["data"])
-                            trace.output = {
-                                "status": "done",
-                                "kind": payload.get("kind"),
-                                "report_chars": len(payload.get("report", "")),
-                            }
-                        yield item
-                    log_event(_LOG, "request.done", duration_ms=_elapsed_ms(started))
-                    if trace.output is None:
-                        trace.output = {"status": "done"}
-                except Exception as exc:  # noqa: BLE001 - SSE 已开始推送，任何异常都必须转成 error 事件返回给前端。
-                    _LOG.exception(
-                        "request.failed",
-                        extra={
-                            "event": "request.failed",
-                            "duration_ms": _elapsed_ms(started),
-                        },
-                    )
-                    trace.output = {"status": "error", "error_type": type(exc).__name__}
-                    error = {
-                        "code": "supervisor_failed",
-                        "message": "问答执行失败，请根据 trace_id 检查服务日志。",
-                        "thread_id": thread_id,
-                        "trace_id": trace_id,
-                    }
-                    yield {"event": "error", "data": json.dumps(error, ensure_ascii=False)}
+        with (
+            start_trace(
+                "api.ask",
+                trace_id=trace_id,
+                thread_id=thread_id,
+                question_chars=len(req.question),
+            ) as trace,
+            _request_context(trace_id, thread_id),
+        ):
+            started = time.perf_counter()
+            log_event(_LOG, "request.start", question_chars=len(req.question))
+            try:
+                async for item in service.stream_ask(req, thread_id, trace_id, scope):
+                    # 客户端断开后立即停止，避免继续消耗 LLM 调用。
+                    if await request.is_disconnected():
+                        log_event(_LOG, "request.disconnected")
+                        trace.output = {"status": "disconnected"}
+                        return
+                    if item.get("event") == "done":
+                        payload = json.loads(item["data"])
+                        trace.output = {
+                            "status": "done",
+                            "kind": payload.get("kind"),
+                            "report_chars": len(payload.get("report", "")),
+                        }
+                    yield item
+                log_event(_LOG, "request.done", duration_ms=_elapsed_ms(started))
+                if trace.output is None:
+                    trace.output = {"status": "done"}
+            except Exception as exc:  # noqa: BLE001 - SSE 已开始推送，任何异常都必须转成 error 事件返回给前端。
+                _LOG.exception(
+                    "request.failed",
+                    extra={
+                        "event": "request.failed",
+                        "duration_ms": _elapsed_ms(started),
+                    },
+                )
+                trace.output = {"status": "error", "error_type": type(exc).__name__}
+                error = {
+                    "code": "supervisor_failed",
+                    "message": "问答执行失败，请根据 trace_id 检查服务日志。",
+                    "thread_id": thread_id,
+                    "trace_id": trace_id,
+                }
+                yield {"event": "error", "data": json.dumps(error, ensure_ascii=False)}
 
     return EventSourceResponse(
         event_generator(), headers=_id_headers(trace_id, thread_id)

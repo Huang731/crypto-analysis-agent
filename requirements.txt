@@ -42,3 +42,7 @@ pytest-asyncio>=0.24
 pytest-cov>=5.0
 respx>=0.21
 ruff>=0.6
+
+# Binance官方行情SDK
+binance-sdk-spot==13.0.0
+binance-sdk-derivatives-trading-usds-futures==17.5.0

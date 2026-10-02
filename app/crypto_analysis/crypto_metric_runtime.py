@@ -26,6 +26,14 @@ class MetricContext(TypedDict):
 
 # 结果字段属于计算器的代码契约，不再由 JSON 决定。
 _METRIC_FIELDS = {
+    "Funding": (
+        ("symbol", "funding_times", "funding_rates", "funding_timestamp", "price_source", "funding_source"),
+        ("funding_average_pct", "funding_price_change_pct"),
+    ),
+    "OI": (
+        ("symbol", "oi_timestamp", "latest_oi", "baseline_oi", "latest_price", "baseline_price", "price_source", "funding_source"),
+        ("oi_change_pct", "price_change_pct", "funding_average_pct", "funding_score", "market_state"),
+    ),
     "ETF_Flows": (
         ("trading_dates", "daily_flows_usd_m", "latest_flow_usd_m", "previous_five_day_flow_usd_m"),
         ("five_day_flow_usd_m", "twenty_day_flow_usd_m", "five_day_score", "twenty_day_score", "conflict_flag"),
@@ -128,7 +136,7 @@ def _normalize_result(dimension_id: str, metric_id: str, result: dict[str, Any],
         "status": "ok",  # 已取得并校验数据。
         "reason": None,  # 有效结果无缺失原因。
         "raw_values": {field: result[field] for field in raw_fields},  # 保留必要原始值。
-        "calculated_values": {field: result[field] for field in calculated_fields},  # 保留必要计算值。
+        "calculated_values": {field: result[field] for field in calculated_fields} | ({field: result[field] for field in ("oi_24h_change_pct", "price_24h_change_pct")} if metric_id == "OI" else {}),  # 保留必要计算值。
         "unit": result["unit"],  # 使用工具返回单位。
         "observed_at": result["observed_at"],  # 使用实际观测日期。
         "source": {"action": source_action, "url": result["source"]},  # 记录实际成功的数据源。
