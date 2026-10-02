@@ -8,6 +8,7 @@ import httpx
 from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.observability import timed_node
 from app.crypto_analysis.source_time_utils import (
     utc_time,  # 只解析恐惧贪婪接口的时间字段。
 )
@@ -48,6 +49,7 @@ async def _get_cmc(path: str, params: dict[str, Any]) -> dict[str, Any]:
 
 
 @tool
+@timed_node
 async def get_stablecoin_historical_market_cap(as_of: str) -> dict[str, Any]:  # 获取稳定币历史原始报价。
     """查询 CMC 的 USDT 和 USDC 日频历史市值，返回原始报价与来源。"""
     cutoff = datetime.fromisoformat(as_of)
@@ -61,6 +63,7 @@ async def get_stablecoin_historical_market_cap(as_of: str) -> dict[str, Any]:  #
 
 
 @tool
+@timed_node
 async def get_fear_and_greed(
     mode: Literal["latest", "historical"] = "latest", start: int = 1, limit: int = 30
 ) -> dict[str, Any]:

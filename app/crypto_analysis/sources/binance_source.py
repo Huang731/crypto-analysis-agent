@@ -9,6 +9,7 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
     DerivativesTradingUsdsFutures,
 )
 from binance_sdk_spot.spot import Spot
+from app.observability import timed_node
 from langchain_core.tools import tool
 
 _HOUR = 3_600_000
@@ -72,6 +73,7 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
 
 
 @tool
+@timed_node
 async def get_binance_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
     """用官方SDK获取目标USDT永续合约小时OI、Funding及对应现货小时线。"""
     return await asyncio.to_thread(_fetch_derivatives, target_asset, as_of)
@@ -98,6 +100,7 @@ def _fetch_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
 
 
 @tool
+@timed_node
 async def get_binance_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
     """用官方SDK获取维度05所需的完整UTC现货日线，不计算技术指标。"""
     return await asyncio.to_thread(_fetch_trend_klines, target_asset, as_of)
