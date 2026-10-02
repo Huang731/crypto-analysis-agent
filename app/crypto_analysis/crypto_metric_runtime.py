@@ -11,6 +11,7 @@ from typing_extensions import TypedDict
 from app.crypto_analysis.calculators.dxy_calculator import (
     calculate_dxy_metrics,  # DXY 程序计算器。
 )
+from app.crypto_analysis.calculators.trend_calculator import calculate_trend
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
 from app.crypto_analysis.calculators.fred_calculator import (  # FRED 程序计算器。
     calculate_m2_yoy_change,
@@ -34,6 +35,11 @@ class MetricContext(TypedDict):
 
 # 结果字段属于计算器的代码契约，不再由 JSON 决定。
 _METRIC_FIELDS = {
+    "Trend": (
+        ("symbol", "kline_count", "first_open_time", "last_close_time", "close"),
+        ("ma50", "ma200", "ma50_20_days_ago", "ma200_20_days_ago", "adx14", "plus_di", "minus_di",
+         "admission", "timing", "confirmation", "intermediate_values", "calculation_method"),
+    ),
     "Funding": (
         ("symbol", "funding_times", "funding_rates", "funding_timestamp", "price_source", "funding_source"),
         ("funding_average_pct", "funding_price_change_pct"),
@@ -64,6 +70,11 @@ _METRIC_FIELDS = {
         ("ma4_change_pct",),
     ),
 }
+
+
+def _calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
+    """按维度05文档公式计算均线和趋势，保留原始数据缺失状态。"""
+    return calculate_trend(raw, scope)
 
 
 def _calculate_etf(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -213,6 +224,9 @@ def aggregate_dimension(dimension: DimensionConfig, indicators: list[dict[str, A
     else:  # 没有正式分时保留具体状态。
         score = None  # 不把缺失计算为零分。
         confidence = 0  # 无正式维度分时归零。
+        reason = "；".join(item["reason"] for item in indicators if item["status"] != "ok" and item.get("reason"))
+        if not reason:
+            reason = "有效指标覆盖率或必需指标未达到正式评分条件"
         if all(item["status"] == "not_applicable" for item in indicators):  # 整维不适用时保留独立状态。
             status = "not_applicable"  # 沿用既有维度状态约定。
         elif any(item["status"] == "calculation_error" for item in indicators):  # 检查是否发生计算失败。

@@ -75,3 +75,29 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
 async def get_binance_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
     """用官方SDK获取目标USDT永续合约小时OI、Funding及对应现货小时线。"""
     return await asyncio.to_thread(_fetch_derivatives, target_asset, as_of)
+
+
+def _fetch_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
+    """获取截至UTC前一日收盘的301根原始现货日线。"""
+    from datetime import timezone
+
+    cutoff = datetime.fromisoformat(as_of)
+    if cutoff.tzinfo is None:
+        raise ValueError("as_of 必须包含时区")
+    asset = target_asset.upper()
+    if not asset.isascii() or not asset.isalnum():
+        raise ValueError("目标资产代码无效")
+    day = cutoff.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = int(day.timestamp() * 1000) - 1
+    client = Spot(config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0))
+    try:
+        rows = client.rest_api.klines(symbol=f"{asset}USDT", interval="1d", limit=301, time_zone="0", end_time=end).data()
+    finally:
+        client.rest_api._session.close()
+    return {"symbol": f"{asset}USDT", "rows": rows, "source": _SOURCES["klines"]}
+
+
+@tool
+async def get_binance_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
+    """用官方SDK获取维度05所需的完整UTC现货日线，不计算技术指标。"""
+    return await asyncio.to_thread(_fetch_trend_klines, target_asset, as_of)

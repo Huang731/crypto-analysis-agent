@@ -25,11 +25,12 @@ from app.crypto_analysis.crypto_metric_runtime import (
     _calculate_etf,
     _calculate_m2,
     _calculate_stable,
+    _calculate_trend,
     _calculate_walcl,
     _normalize_result,
     missing_metric,
 )
-from app.crypto_analysis.sources.binance_source import get_binance_derivatives
+from app.crypto_analysis.sources.binance_source import get_binance_derivatives, get_binance_trend_klines
 from app.crypto_analysis.sources.coinmarketcap_source import (
     get_stablecoin_historical_market_cap,
 )
@@ -220,6 +221,21 @@ def calculate_funding_indicator(evidence_id: str, runtime: ToolRuntime[MetricCon
     return _compute_metric(runtime, evidence_id, "Funding", "derivatives", lambda raw, scope: calculate_derivatives(raw, scope, "Funding"))
 
 
+@tool
+async def get_binance_trend_data(runtime: ToolRuntime[MetricContext]) -> Command:
+    """通过官方SDK获取维度05完整UTC日线，返回交给calculate_trend_indicator的evidence_id。"""
+    return await _fetch_evidence(
+        runtime, "trend", "binance_sdk.klines(1d)", get_binance_trend_klines,
+        {"target_asset": runtime.context["scope"]["target_asset"], "as_of": runtime.context["scope"]["as_of"]},
+    )
+
+
+@tool
+def calculate_trend_indicator(evidence_id: str, runtime: ToolRuntime[MetricContext]) -> Command | ToolMessage:
+    """按维度05公式用代码计算300根日线的均线、Wilder ADX、DI及固定评分。"""
+    return _compute_metric(runtime, evidence_id, "Trend", "trend", _calculate_trend)
+
+
 class MetricModelTrace(AgentMiddleware):
     """把每轮工具决策模型调用接入项目已有的上下文追踪。"""
 
@@ -245,6 +261,8 @@ def build_metric_agent(llm: Any, extra_tools: Sequence[BaseTool] = ()):
     这些证据随维度结果交给报告撰写者，不从模型最终文本中反推数据。
     """
     tools = [
+        get_binance_trend_data,
+        calculate_trend_indicator,
         get_binance_derivatives_data,
         calculate_oi_indicator,
         calculate_funding_indicator,
