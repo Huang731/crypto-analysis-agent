@@ -50,7 +50,6 @@ from prompts.crypto_analysis import (
     METRIC_AGENT_SYSTEM_PROMPT,
     analysis_plan_prompt,
     analysis_report_prompt,
-    dimension_02_prompt_suffix,
     dimension_execution_prompt,
 )
 
@@ -701,8 +700,6 @@ async def execute_dimension(
                 dimension.name,
                 json.dumps(metrics, ensure_ascii=False),
             )
-            if dimension.dimension_id == "02":
-                prompt += dimension_02_prompt_suffix()
             with trace_span(
                 "analysis.metric_agent.graph", dimension_id=dimension.dimension_id
             ):
