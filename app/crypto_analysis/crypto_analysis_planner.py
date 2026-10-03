@@ -8,7 +8,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.config.config import settings
-from app.crypto_analysis.crypto_analysis_contract import _HISTORICAL
 from app.crypto_analysis.crypto_dimension_catalog import DimensionCatalog
 from app.tracing import estimate_tokens, trace_generation
 
@@ -43,8 +42,6 @@ def validate_plan(plan: AnalysisPlan) -> dict[str, str]:
 
 async def create_analysis_plan(llm: Any, question: str, catalog: DimensionCatalog) -> dict[str, str]:
     """让模型识别币种与研究重点，后续由维度 Agent 实时选择工具。"""
-    if _HISTORICAL.search(question):
-        raise ValueError("当前仅支持当前时点分析，暂不支持历史截止时间")
     overview = [
         {
             "dimension_id": dimension_id,
