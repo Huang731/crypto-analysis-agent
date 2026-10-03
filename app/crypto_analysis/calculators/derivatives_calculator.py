@@ -17,7 +17,7 @@ def _number(value: Any) -> float:
     return number
 
 
-def _rows(payload: dict[str, Any], key: str) -> list:
+def _rows(payload: dict[str, Any], key: str) -> list[Any]:
     """接口缺失不能转换为空值或零分。"""
     rows = payload[key]
     if isinstance(rows, dict):
@@ -47,10 +47,16 @@ def _price(payload: dict[str, Any], cutoff: int) -> dict[int, float]:
 def _change(values: dict[int, float], latest: int, hours: int) -> float | None:
     """按精确时间戳比较，不以相邻记录替代基准。"""
     base = values.get(latest - hours * _HOUR)
-    return None if base is None else float((Decimal(str(values[latest])) / Decimal(str(base)) - 1) * 100)
+    return (
+        None
+        if base is None
+        else float((Decimal(str(values[latest])) / Decimal(str(base)) - 1) * 100)
+    )
 
 
-def _funding(payload: dict[str, Any], cutoff: int, prices: dict[int, float]) -> dict[str, Any]:
+def _funding(
+    payload: dict[str, Any], cutoff: int, prices: dict[int, float]
+) -> dict[str, Any]:
     """按最新已返回结算记录取168小时窗口，起点记录不计入累计值。"""
     records = {}
     actual_times = {}
@@ -83,7 +89,9 @@ def _funding(payload: dict[str, Any], cutoff: int, prices: dict[int, float]) -> 
         raise ValueError("Funding 评分缺少同时间戳7日现货价格")
     price_change = _change(prices, latest, 168)
     # 使用十进制保留分档边界，不把0.03%误判到相邻档。
-    average = sum((Decimal(str(records[t])) for t in window), Decimal(0)) * 100 * 8 / 168
+    average = (
+        sum((Decimal(str(records[t])) for t in window), Decimal(0)) * 100 * 8 / 168
+    )
     if average <= Decimal("-0.03") or average >= Decimal("0.05"):
         score = 0
     elif average < Decimal("-0.01") or average > Decimal("0.03"):
@@ -93,13 +101,18 @@ def _funding(payload: dict[str, Any], cutoff: int, prices: dict[int, float]) -> 
     else:
         score = 5
     return {
-        "funding_times": [actual_times[t] for t in window], "funding_rates": [records[t] for t in window],
-        "funding_average_pct": float(average), "funding_score": score,
-        "funding_timestamp": latest, "funding_price_change_pct": price_change,
+        "funding_times": [actual_times[t] for t in window],
+        "funding_rates": [records[t] for t in window],
+        "funding_average_pct": float(average),
+        "funding_score": score,
+        "funding_timestamp": latest,
+        "funding_price_change_pct": price_change,
     }
 
 
-def calculate_derivatives(raw: dict[str, Any], scope: dict[str, str], metric_id: str) -> dict[str, Any]:
+def calculate_derivatives(
+    raw: dict[str, Any], scope: dict[str, str], metric_id: str
+) -> dict[str, Any]:
     """Funding独立评分；OI依赖Funding和同时间戳价格，缺失时不给分。"""
     if metric_id not in {"OI", "Funding"}:
         raise ValueError("不支持的衍生品指标")
@@ -109,7 +122,7 @@ def calculate_derivatives(raw: dict[str, Any], scope: dict[str, str], metric_id:
     cutoff = int(cutoff_dt.timestamp() * 1000)
     payload = raw["payload"]
     try:
-        if payload["symbol"] != f'{scope["target_asset"].upper()}USDT':
+        if payload["symbol"] != f"{scope['target_asset'].upper()}USDT":
             raise ValueError("原始证据目标合约不一致")
         prices = _price(payload, cutoff)
         if not prices or cutoff - max(prices) > 24 * _HOUR:
@@ -152,17 +165,40 @@ def calculate_derivatives(raw: dict[str, Any], scope: dict[str, str], metric_id:
                 score = 10
             else:
                 score = 5
-            state = "杠杆压力" if funding["funding_score"] < 5 else "去杠杆" if oi_change < -5 else "健康扩张候选" if price_change > 2 and oi_change > 5 else "未见明确方向"
+            state = (
+                "杠杆压力"
+                if funding["funding_score"] < 5
+                else "去杠杆"
+                if oi_change < -5
+                else "健康扩张候选"
+                if price_change > 2 and oi_change > 5
+                else "未见明确方向"
+            )
             result.update(
-                oi_timestamp=latest, latest_oi=oi[latest], baseline_oi=oi[latest - _WEEK],
-                latest_price=prices[latest], baseline_price=prices[latest - _WEEK],
-                oi_change_pct=oi_change, price_change_pct=price_change,
+                oi_timestamp=latest,
+                latest_oi=oi[latest],
+                baseline_oi=oi[latest - _WEEK],
+                latest_price=prices[latest],
+                baseline_price=prices[latest - _WEEK],
+                oi_change_pct=oi_change,
+                price_change_pct=price_change,
                 oi_24h_change_pct=_change(oi, latest, 24),
-                price_24h_change_pct=_change(prices, latest, 24), market_state=state,
+                price_24h_change_pct=_change(prices, latest, 24),
+                market_state=state,
             )
             source = raw["sources"]["oi"]
-        return {**result, "status": "ok", "score": score, "confidence": 1,
-                "unit": "%", "observed_at": datetime.fromtimestamp(latest / 1000, timezone.utc).date().isoformat(),
-                "source": source, "price_source": raw["sources"]["klines"], "funding_source": raw["sources"]["funding"]}
+        return {
+            **result,
+            "status": "ok",
+            "score": score,
+            "confidence": 1,
+            "unit": "%",
+            "observed_at": datetime.fromtimestamp(latest / 1000, timezone.utc)
+            .date()
+            .isoformat(),
+            "source": source,
+            "price_source": raw["sources"]["klines"],
+            "funding_source": raw["sources"]["funding"],
+        }
     except (ValueError, KeyError, TypeError, IndexError) as exc:
         return {"status": "data_missing", "reason": str(exc)}

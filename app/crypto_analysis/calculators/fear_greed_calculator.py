@@ -5,16 +5,25 @@ from typing import Any
 from app.crypto_analysis.source_time_utils import utc_time
 
 
-def calculate_fear_and_greed(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
+def calculate_fear_and_greed(
+    raw: dict[str, Any], scope: dict[str, str]
+) -> dict[str, Any]:
     """按指数固定分档评分，记录时间只用于展示。"""
     if raw.get("status") != "ok":
-        return {"status": "data_missing", "reason": raw.get("reason") or "CMC未返回有效情绪记录"}
+        return {
+            "status": "data_missing",
+            "reason": raw.get("reason") or "CMC未返回有效情绪记录",
+        }
     try:
         if raw["mode"] != "latest":
             raise ValueError("维度06只使用latest情绪记录")
         record = raw["data"]
         value = record["value"]
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 100
+        ):
             raise ValueError("恐惧贪婪指数必须为0至100的整数")
         classification = record["value_classification"]
         if not isinstance(classification, str) or not classification.strip():
@@ -33,8 +42,14 @@ def calculate_fear_and_greed(raw: dict[str, Any], scope: dict[str, str]) -> dict
     else:
         score, signal = 0, "减仓区域"
     return {
-        "status": "ok", "value": value, "value_classification": classification,
-        "record_timestamp": observed.isoformat(), "signal_reference": signal,
-        "score": score, "confidence": 1, "unit": "index (0-100)",
-        "observed_at": observed.date().isoformat(), "source": raw["source"],
+        "status": "ok",
+        "value": value,
+        "value_classification": classification,
+        "record_timestamp": observed.isoformat(),
+        "signal_reference": signal,
+        "score": score,
+        "confidence": 1,
+        "unit": "index (0-100)",
+        "observed_at": observed.date().isoformat(),
+        "source": raw["source"],
     }

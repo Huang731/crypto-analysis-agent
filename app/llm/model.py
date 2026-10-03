@@ -27,11 +27,17 @@ class LoggedChatOpenAI(ChatOpenAI):  # 在 ChatOpenAI 的流式调用外记录�
         **kwargs: Any,  # 原样透传其他调用参数。
     ) -> AsyncIterator[ChatGenerationChunk]:  # 返回 LangChain 的消息块。
         try:  # 正常数据流交给 ChatOpenAI 解析。
-            async for chunk in super()._astream(messages, stop=stop, run_manager=run_manager, **kwargs):  # 不改动流式回调行为。
+            async for chunk in super()._astream(
+                messages, stop=stop, run_manager=run_manager, **kwargs
+            ):  # 不改动流式回调行为。
                 yield chunk  # 向原有分析图交付消息块。
         except openai.APIStatusError as exc:  # 保留原有的 HTTP 错误记录入口。
-            code, reason = self._response_error(exc.response.content)  # 从响应体读取智谱错误码和原因。
-            reason = reason.replace(settings.zhipuai_api_key, "[已隐藏]")  # 避免密钥进入日志。
+            code, reason = self._response_error(
+                exc.response.content
+            )  # 从响应体读取智谱错误码和原因。
+            reason = reason.replace(
+                settings.zhipuai_api_key, "[已隐藏]"
+            )  # 避免密钥进入日志。
             _LOG.error(  # 维持原有的结构化错误事件。
                 "llm.provider.error",  # 日志消息与事件名一致。
                 extra={  # 保留现有日志字段。
@@ -41,23 +47,35 @@ class LoggedChatOpenAI(ChatOpenAI):  # 在 ChatOpenAI 的流式调用外记录�
                     "http_status": exc.status_code,  # 记录 HTTP 状态码。
                     "provider_code": code,  # 记录智谱错误码。
                     "provider_message": reason,  # 记录脱敏后的原因。
-                    "content_type": exc.response.headers.get("content-type", "<缺失>"),  # 记录响应类型。
+                    "content_type": exc.response.headers.get(
+                        "content-type", "<缺失>"
+                    ),  # 记录响应类型。
                 },  # 结束结构化日志字段。
             )  # 完成错误日志。
-            raise RuntimeError(f"智谱 API HTTP {exc.status_code}，错误码 {code}：{reason}") from exc  # 保留原有错误形式。
+            raise RuntimeError(
+                f"智谱 API HTTP {exc.status_code}，错误码 {code}：{reason}"
+            ) from exc  # 保留原有错误形式。
 
     @staticmethod  # 错误体解析不依赖模型实例。
     def _response_error(body: bytes) -> tuple[str, str]:  # 沿用原有智谱错误格式解析。
         try:  # 先尝试读取 JSON 响应。
             payload = json.loads(body)  # 解码服务商返回的错误体。
-        except (UnicodeDecodeError, json.JSONDecodeError):  # 非 JSON 响应没有可解析错误码。
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+        ):  # 非 JSON 响应没有可解析错误码。
             return "unknown", "上游返回非 JSON 响应"  # 保留原有错误说明。
-        if not isinstance(payload, dict) or not isinstance(payload.get("error"), dict):  # 检查智谱错误结构。
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("error"), dict
+        ):  # 检查智谱错误结构。
             return "unknown", "上游响应缺少错误详情"  # 保留原有缺失说明。
         error = payload["error"]  # 获取智谱错误对象。
-        return str(error.get("code", "unknown")), str(  # 返回字符串错误码和限长消息。
-            error.get("message", "上游未提供错误说明")  # 消息缺失时给出明确说明。
-        )[:200]  # 限制日志中的错误消息长度。
+        return (
+            str(error.get("code", "unknown")),
+            str(  # 返回字符串错误码和限长消息。
+                error.get("message", "上游未提供错误说明")  # 消息缺失时给出明确说明。
+            )[:200],
+        )  # 限制日志中的错误消息长度。
 
 
 def _make_model(model_name: str) -> LoggedChatOpenAI:  # 为快模型和主模型共用连接配置。
@@ -73,7 +91,9 @@ def _make_model(model_name: str) -> LoggedChatOpenAI:  # 为快模型和主模�
         base_url=base_url,  # 将请求发送到智谱兼容接口。
         max_retries=0,  # 遵循示例，不在 SDK 层重试请求。
         timeout=60,  # 保留原有流式请求的 60 秒超时。
-        disabled_params={"parallel_tool_calls": None},  # 智谱接口未声明此参数，避免结构化调用附带发送。
+        disabled_params={
+            "parallel_tool_calls": None
+        },  # 智谱接口未声明此参数，避免结构化调用附带发送。
     )  # 返回带原有错误日志的聊天模型。
 
 

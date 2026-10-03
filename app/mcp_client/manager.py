@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from contextlib import AsyncExitStack
+from types import TracebackType
 from typing import Any, Self
 
 from mcp import Client
@@ -18,7 +19,11 @@ class MCPToolError(RuntimeError):
 class MCPClientManager:
     """在应用生命周期内维护到各 MCP Server 的异步连接。"""
 
-    def __init__(self, server_urls: dict[str, str], server_headers: dict[str, dict[str, str]] | None = None) -> None:
+    def __init__(
+        self,
+        server_urls: dict[str, str],
+        server_headers: dict[str, dict[str, str]] | None = None,
+    ) -> None:
         self._server_urls = server_urls
         self._server_headers = server_headers or {}
         self._stack = AsyncExitStack()
@@ -32,15 +37,24 @@ class MCPClientManager:
                     create_mcp_http_client(headers=self._server_headers[name])
                 )
                 transport = streamable_http_client(url, http_client=http_client)
-                self._clients[name] = await self._stack.enter_async_context(Client(transport))
+                self._clients[name] = await self._stack.enter_async_context(
+                    Client(transport)
+                )
             else:
                 self._clients[name] = await self._stack.enter_async_context(Client(url))
         return self
 
-    async def __aexit__(self, exc_type, exc, traceback) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         await self._stack.aclose()
 
-    async def call_tool(self, server: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def call_tool(
+        self, server: str, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         client = self._clients.get(server)
         if client is None:
             raise MCPToolError(f"MCP Server未连接：{server}")
@@ -51,7 +65,9 @@ class MCPClientManager:
             raise MCPToolError(f"MCP工具未返回structured_content：{server}.{tool_name}")
         return result.structured_content
 
-    async def call_json_tool(self, server: str, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def call_json_tool(
+        self, server: str, tool_name: str, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
         """调用已确认以单个文本块返回JSON的工具，保留原结构化调用契约。"""
         client = self._clients.get(server)
         if client is None:

@@ -9,7 +9,6 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
     DerivativesTradingUsdsFutures,
 )
 from binance_sdk_spot.spot import Spot
-from langchain_core.tools import tool
 
 _HOUR = 3_600_000
 _SOURCES = {
@@ -29,15 +28,22 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
         raise ValueError("目标资产代码无效")
     symbol = f"{asset}USDT"
     end = int(cutoff.timestamp() * 1000)
-    futures = DerivativesTradingUsdsFutures(config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0))
+    futures = DerivativesTradingUsdsFutures(
+        config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0)
+    )
     spot = Spot(config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0))
     payload: dict[str, Any] = {"symbol": symbol}
 
-    def funding_history():
+    def funding_history() -> list[dict[str, Any]]:
         rows = []
         start = end - 200 * _HOUR
         while True:
-            page = [row.to_dict() for row in futures.rest_api.get_funding_rate_history(symbol=symbol, start_time=start, end_time=end, limit=1000).data()]
+            page = [
+                row.to_dict()
+                for row in futures.rest_api.get_funding_rate_history(
+                    symbol=symbol, start_time=start, end_time=end, limit=1000
+                ).data()
+            ]
             if not isinstance(page, list):
                 raise TypeError("Funding响应不是数组")
             rows.extend(page)
@@ -51,9 +57,13 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
             start = next_start
 
     calls = {
-        "oi": lambda: futures.rest_api.open_interest_statistics(symbol=symbol, period="1h", limit=200, end_time=end).data(),
+        "oi": lambda: futures.rest_api.open_interest_statistics(
+            symbol=symbol, period="1h", limit=200, end_time=end
+        ).data(),
         "funding": funding_history,
-        "klines": lambda: spot.rest_api.klines(symbol=symbol, interval="1h", limit=200, end_time=end, time_zone="0").data(),
+        "klines": lambda: spot.rest_api.klines(
+            symbol=symbol, interval="1h", limit=200, end_time=end, time_zone="0"
+        ).data(),
     }
     try:
         for kind, fetch in calls.items():
@@ -61,17 +71,25 @@ def _fetch_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
                 rows = fetch()
                 if not isinstance(rows, list):
                     raise TypeError(f"{kind}响应不是数组")
-                payload[kind] = [row.to_dict() for row in rows] if kind == "oi" else rows
+                payload[kind] = (
+                    [row.to_dict() for row in rows] if kind == "oi" else rows
+                )
             except Exception as exc:  # noqa: BLE001 - 各接口失败类型不固定，记为缺失后继续请求其余接口。
-                payload[kind] = {"status": "data_missing", "reason": f"Binance SDK {kind}：{exc}"}
+                payload[kind] = {
+                    "status": "data_missing",
+                    "reason": f"Binance SDK {kind}：{exc}",
+                }
     finally:
         # 关闭SDK持有的HTTP连接，不在请求之间共享状态。
         futures.rest_api._session.close()
         spot.rest_api._session.close()
-    return {"payload": payload, "sources": _SOURCES.copy(), "source": "https://fapi.binance.com"}
+    return {
+        "payload": payload,
+        "sources": _SOURCES.copy(),
+        "source": "https://fapi.binance.com",
+    }
 
 
-@tool
 async def get_binance_derivatives(target_asset: str, as_of: str) -> dict[str, Any]:
     """用官方SDK获取目标USDT永续合约小时OI、Funding及对应现货小时线。"""
     return await asyncio.to_thread(_fetch_derivatives, target_asset, as_of)
@@ -87,17 +105,20 @@ def _fetch_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
     asset = target_asset.upper()
     if not asset.isascii() or not asset.isalnum():
         raise ValueError("目标资产代码无效")
-    day = cutoff.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    day = cutoff.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     end = int(day.timestamp() * 1000) - 1
     client = Spot(config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0))
     try:
-        rows = client.rest_api.klines(symbol=f"{asset}USDT", interval="1d", limit=301, time_zone="0", end_time=end).data()
+        rows = client.rest_api.klines(
+            symbol=f"{asset}USDT", interval="1d", limit=301, time_zone="0", end_time=end
+        ).data()
     finally:
         client.rest_api._session.close()
     return {"symbol": f"{asset}USDT", "rows": rows, "source": _SOURCES["klines"]}
 
 
-@tool
 async def get_binance_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
     """用官方SDK获取维度05所需的完整UTC现货日线，不计算技术指标。"""
     return await asyncio.to_thread(_fetch_trend_klines, target_asset, as_of)

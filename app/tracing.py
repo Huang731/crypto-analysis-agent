@@ -4,6 +4,7 @@
 ``start_trace`` 会在上下文退出时打印 trace；``trace_span`` 和
 ``trace_generation`` 会加入当前异步上下文中的 trace，并按父子关系组织。
 """
+
 from __future__ import annotations
 
 import sys
@@ -19,8 +20,13 @@ from app.config.config import settings
 from .observability import get_logger
 
 _log = get_logger("crypto-analysis-agent.tracing")
-_current_trace: ContextVar[_Trace | None] = ContextVar("crypto_current_trace", default=None)
-_current_span: ContextVar[_Span | None] = ContextVar("crypto_current_span", default=None)
+_current_trace: ContextVar[_Trace | None] = ContextVar(
+    "crypto_current_trace", default=None
+)
+_current_span: ContextVar[_Span | None] = ContextVar(
+    "crypto_current_span", default=None
+)
+
 
 def compute_cost(model: str, usage: dict[str, int]) -> float | None:
     """按 token 用量 + 模型单价算成本（元）。generation 退出时自动调用。
@@ -48,7 +54,7 @@ def estimate_tokens(text: str) -> int:
 @dataclass
 class _Span:
     name: str
-    kind: str = "span"            # "span" | "generation"
+    kind: str = "span"  # "span" | "generation"
     input: Any = None
     output: Any = None
     start: float = 0.0
@@ -101,7 +107,7 @@ class _ConsoleBackend:
     """自写控制台后端：在异步上下文中关联父子 span，并打印 trace 树。"""
 
     @contextmanager
-    def trace(self, name: str, **meta) -> Iterator[_Trace]:
+    def trace(self, name: str, **meta: Any) -> Iterator[_Trace]:
         trace = _Trace(name=name, metadata=meta)
         trace_token = _current_trace.set(trace)
         span_token = _current_span.set(None)
@@ -113,7 +119,7 @@ class _ConsoleBackend:
             _current_trace.reset(trace_token)
 
     @contextmanager
-    def span(self, name: str, **meta) -> Iterator[_Span]:
+    def span(self, name: str, **meta: Any) -> Iterator[_Span]:
         s = _Span(name=name, kind="span", metadata=meta, start=time.perf_counter())
         self._attach(s)
         token = _current_span.set(s)
@@ -124,9 +130,14 @@ class _ConsoleBackend:
             _current_span.reset(token)
 
     @contextmanager
-    def generation(self, name: str, model: str, **meta) -> Iterator[_Span]:
-        g = _Span(name=name, kind="generation", model=model, metadata=meta,
-                  start=time.perf_counter())
+    def generation(self, name: str, model: str, **meta: Any) -> Iterator[_Span]:
+        g = _Span(
+            name=name,
+            kind="generation",
+            model=model,
+            metadata=meta,
+            start=time.perf_counter(),
+        )
         self._attach(g)
         token = _current_span.set(g)
         try:
@@ -155,9 +166,11 @@ class _ConsoleBackend:
 
         def walk(spans: list[_Span], prefix: str = "│") -> None:
             for i, s in enumerate(spans):
-                last = (i == len(spans) - 1)
+                last = i == len(spans) - 1
                 branch = "└─" if last else "├─"
-                child_prefix = prefix.replace("├", "│").replace("└", " ") + ("  " if last else "│ ")
+                child_prefix = prefix.replace("├", "│").replace("└", " ") + (
+                    "  " if last else "│ "
+                )
                 tag = s.kind.upper()
                 extra = ""
                 if s.kind == "generation":
@@ -172,8 +185,10 @@ class _ConsoleBackend:
                         )
                 if s.metadata.get("status") == "error":
                     extra += " | status=error"
-                print(f"{prefix}{branch} {tag} {s.name} ({s.duration_ms}ms){extra}",
-                      file=sys.stderr)
+                print(
+                    f"{prefix}{branch} {tag} {s.name} ({s.duration_ms}ms){extra}",
+                    file=sys.stderr,
+                )
                 if s.children:
                     walk(s.children, child_prefix)
 
@@ -189,14 +204,14 @@ class _ConsoleBackend:
 
 
 @contextmanager
-def trace_span(name: str, **meta) -> Iterator[Any]:
+def trace_span(name: str, **meta: Any) -> Iterator[Any]:
     """创建普通 span，并自动挂到当前 trace 或父 span 下。"""
     with _ConsoleBackend().span(name, **meta) as s:
         yield s
 
 
 @contextmanager
-def trace_generation(name: str, model: str, **meta) -> Iterator[Any]:
+def trace_generation(name: str, model: str, **meta: Any) -> Iterator[Any]:
     """创建并返回一个本地 generation span，记录模型名及可选 token 用量。
 
     退出上下文时，如果 ``usage`` 已设置，会按配置中的模型单价估算成本；
@@ -207,7 +222,7 @@ def trace_generation(name: str, model: str, **meta) -> Iterator[Any]:
 
 
 @contextmanager
-def start_trace(name: str, **meta) -> Iterator[Any]:
+def start_trace(name: str, **meta: Any) -> Iterator[Any]:
     """创建本地 trace，并在上下文退出时打印它当前包含的 span 树。"""
     with _ConsoleBackend().trace(name, **meta) as t:
         yield t

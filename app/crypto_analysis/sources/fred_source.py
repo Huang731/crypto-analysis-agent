@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.crypto_analysis.calculators.fed_policy_calculator import comparison_date
@@ -27,8 +26,9 @@ class FREDSettings(BaseSettings):
     fred_api_key: str = ""
 
 
-@tool
-async def get_m2_yoy_change(series_id: Literal["M2SL", "WALCL"], as_of: str) -> dict[str, Any]:  # 获取固定序列的原始观测。
+async def get_m2_yoy_change(
+    series_id: Literal["M2SL", "WALCL"], as_of: str
+) -> dict[str, Any]:  # 获取固定序列的原始观测。
     """查询 FRED 的 M2SL 或 WALCL 序列，返回原始观测与来源。"""
     api_key = FREDSettings().fred_api_key
     if not api_key:
@@ -73,23 +73,37 @@ async def get_fed_dff_background(as_of: str) -> dict[str, Any]:
     today = cutoff.astimezone(timezone.utc).date()
     baseline = comparison_date(as_of)
     params = {
-        "series_id": "DFF", "api_key": api_key, "file_type": "json",
+        "series_id": "DFF",
+        "api_key": api_key,
+        "file_type": "json",
         "observation_start": (baseline - timedelta(days=14)).isoformat(),
-        "observation_end": today.isoformat(), "units": "lin", "sort_order": "asc",
-        "realtime_start": today.isoformat(), "realtime_end": today.isoformat(),
+        "observation_end": today.isoformat(),
+        "units": "lin",
+        "sort_order": "asc",
+        "realtime_start": today.isoformat(),
+        "realtime_end": today.isoformat(),
     }
     async with httpx.AsyncClient(timeout=30) as client:
         response = await client.get(_FRED_SOURCE, params=params)
     if response.status_code != 200:
         raise RuntimeError(f"FRED DFF HTTP {response.status_code}")
     payload = response.json()
-    rows = [(date.fromisoformat(row["date"]), float(row["value"])) for row in payload["observations"] if row["value"] != "."]
+    rows = [
+        (date.fromisoformat(row["date"]), float(row["value"]))
+        for row in payload["observations"]
+        if row["value"] != "."
+    ]
     current = [(day, value) for day, value in rows if day <= today]
     past = [(day, value) for day, value in rows if day <= baseline]
     if not current or not past:
         raise ValueError("DFF 缺少当前或三个月前的可用观测")
     current_day, current_value = max(current)
     past_day, past_value = max(past)
-    return {"source": _FRED_SOURCE, "series_id": "DFF", "unit": "percent", "comparison_date": baseline.isoformat(),
-            "current": {"date": current_day.isoformat(), "value": current_value},
-            "three_months_ago": {"date": past_day.isoformat(), "value": past_value}}
+    return {
+        "source": _FRED_SOURCE,
+        "series_id": "DFF",
+        "unit": "percent",
+        "comparison_date": baseline.isoformat(),
+        "current": {"date": current_day.isoformat(), "value": current_value},
+        "three_months_ago": {"date": past_day.isoformat(), "value": past_value},
+    }

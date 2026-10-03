@@ -34,27 +34,55 @@ class DimensionCatalog(BaseModel):  # 一轮分析使用的完整配置快照。
 
 def load_dimension_catalog() -> DimensionCatalog:  # 每轮读取一次总配置和维度配置。
     global_path = _CONFIG_ROOT / "analysis.json"  # 总配置沿用项目现有文件。
-    global_data = json.loads(global_path.read_text(encoding="utf-8"))  # UTF-8 读取总配置。
+    global_data = json.loads(
+        global_path.read_text(encoding="utf-8")
+    )  # UTF-8 读取总配置。
     enabled = global_data["enabled_dimensions"]  # 取得本轮启用的维度编号。
     weights = global_data["dimension_weights"]  # 取得本轮固定的维度权重。
-    if not isinstance(enabled, list) or not enabled or len(enabled) != len(set(enabled)):  # 检查编号列表。
-        raise ValueError("config_error：enabled_dimensions 必须非空且无重复")  # 配置无效时停止。
+    if (
+        not isinstance(enabled, list)
+        or not enabled
+        or len(enabled) != len(set(enabled))
+    ):  # 检查编号列表。
+        raise ValueError(
+            "config_error：enabled_dimensions 必须非空且无重复"
+        )  # 配置无效时停止。
     if set(enabled) != set(weights):  # 检查总权重与启用维度是否一致。
-        raise ValueError("config_error：dimension_weights 与启用维度不一致")  # 不猜测缺失权重。
+        raise ValueError(
+            "config_error：dimension_weights 与启用维度不一致"
+        )  # 不猜测缺失权重。
     if abs(sum(weights.values()) - 1.0) > 0.000001:  # 维度权重须合计为一。
         raise ValueError("config_error：维度权重总和不为 1")  # 不临时归一化配置错误。
     dimensions: dict[str, DimensionConfig] = {}  # 收集本轮维度配置。
     for dimension_id in enabled:  # 按总配置顺序读取每维文件。
-        path = _CONFIG_ROOT / "dimensions" / f"{dimension_id}.json"  # 每维独立配置路径。
-        dimension = DimensionConfig.model_validate_json(path.read_text(encoding="utf-8"))  # 校验字段类型。
+        path = (
+            _CONFIG_ROOT / "dimensions" / f"{dimension_id}.json"
+        )  # 每维独立配置路径。
+        dimension = DimensionConfig.model_validate_json(
+            path.read_text(encoding="utf-8")
+        )  # 校验字段类型。
         if dimension.dimension_id != dimension_id:  # 文件编号必须与索引相同。
-            raise ValueError(f"config_error：维度 {dimension_id} 的配置编号不一致")  # 防止串维。
+            raise ValueError(
+                f"config_error：维度 {dimension_id} 的配置编号不一致"
+            )  # 防止串维。
         ids = [metric.id for metric in dimension.metrics]  # 提取本维指标标识。
         if len(ids) != len(set(ids)):  # 指标不能重复。
-            raise ValueError(f"config_error：维度 {dimension_id} 的指标重复")  # 防止重复计权。
-        if abs(sum(metric.weight for metric in dimension.metrics) - 1.0) > 0.000001:  # 指标权重合计为一。
-            raise ValueError(f"config_error：维度 {dimension_id} 的指标权重总和不为 1")  # 停止错误评分。
-        if not set(dimension.required_metrics) <= set(ids):  # 必需指标必须在指标清单内。
-            raise ValueError(f"config_error：维度 {dimension_id} 的必需指标不存在")  # 防止门槛失效。
+            raise ValueError(
+                f"config_error：维度 {dimension_id} 的指标重复"
+            )  # 防止重复计权。
+        if (
+            abs(sum(metric.weight for metric in dimension.metrics) - 1.0) > 0.000001
+        ):  # 指标权重合计为一。
+            raise ValueError(
+                f"config_error：维度 {dimension_id} 的指标权重总和不为 1"
+            )  # 停止错误评分。
+        if not set(dimension.required_metrics) <= set(
+            ids
+        ):  # 必需指标必须在指标清单内。
+            raise ValueError(
+                f"config_error：维度 {dimension_id} 的必需指标不存在"
+            )  # 防止门槛失效。
         dimensions[dimension_id] = dimension  # 加入本轮配置快照。
-    return DimensionCatalog(enabled_dimensions=enabled, dimension_weights=weights, dimensions=dimensions)  # 返回完整配置。
+    return DimensionCatalog(
+        enabled_dimensions=enabled, dimension_weights=weights, dimensions=dimensions
+    )  # 返回完整配置。

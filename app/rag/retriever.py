@@ -21,10 +21,12 @@ def _tokenize_zh(text: str) -> list[str]:
     """jieba 中文分词，过滤空白 token。"""
     return [t for t in jieba.lcut(text) if t.strip()]
 
+
 def load_corpus(vs: FAISS) -> list[Document]:
     """读取 FAISS 中的全部文档块，供 BM25 在内存中建立索引。"""
     ids = list(vs.index_to_docstore_id.values())
     return vs.get_by_ids(ids)
+
 
 def build_hybrid_retriever() -> BaseRetriever:
     """构建混合检索器：BM25 + 向量，加权 RRF 融合。
@@ -66,6 +68,7 @@ def build_hybrid_retriever() -> BaseRetriever:
             node_span.metadata["status"] = "error"
             raise
 
+
 def rerank_documents(
     query: str,
     docs: list[Document],
@@ -103,14 +106,19 @@ def rerank_documents(
                 # 重排只产生相关性分数，用量采用接口返回的总输入 token。
                 generation.usage = {"input": resp.usage.total_tokens, "output": 0}
                 generation.output = {"result_count": len(results)}
-            ordered = sorted(results, key=lambda r: (-r.relevance_score, r.index))[:top_n]
+            ordered = sorted(results, key=lambda r: (-r.relevance_score, r.index))[
+                :top_n
+            ]
 
             # 不可变：不改原 Document，构造新对象带上 rerank_score
             return [
                 Document(
                     id=docs[r.index].id,
                     page_content=docs[r.index].page_content,
-                    metadata={**docs[r.index].metadata, "rerank_score": r.relevance_score},
+                    metadata={
+                        **docs[r.index].metadata,
+                        "rerank_score": r.relevance_score,
+                    },
                 )
                 for r in ordered
             ]
@@ -118,20 +126,24 @@ def rerank_documents(
             node_span.metadata["status"] = "error"
             raise
 
+
 class KBRetriever:
     """检索层门面：建一次索引，答多次问题（BM25 建索引有成本，不能每问重建）。
 
-        rerank —— 混合检索 + 百炼重排。
+    rerank —— 混合检索 + 百炼重排。
     """
 
     MODES = ("vector", "hybrid", "rerank")
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.hybrid = build_hybrid_retriever()
 
     def retrieve(self, question: str) -> list[Document]:
         with trace_span("rag.retrieve", retrieve_k=settings.retrieve_k) as span:
             candidates = self.hybrid.invoke(question)[: settings.retrieve_k]
             documents = rerank_documents(question, candidates, top_n=settings.final_k)
-            span.output = {"candidate_count": len(candidates), "document_count": len(documents)}
+            span.output = {
+                "candidate_count": len(candidates),
+                "document_count": len(documents),
+            }
             return documents

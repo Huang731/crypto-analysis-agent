@@ -3,7 +3,6 @@
 from pathlib import Path
 from typing import Any
 
-from langchain_core.tools import tool
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -15,19 +14,35 @@ class CryptoETFSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=Path(__file__).resolve().parents[3] / ".env",
-        env_file_encoding="utf-8", extra="ignore",
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
     crypto_etf_mcp_api_key: SecretStr = SecretStr("")
     crypto_etf_mcp_url: str = "https://mcp.cryptoetf.today/api/mcp"
 
 
-@tool
 async def get_crypto_etf_flows(target_asset: str, as_of: str) -> dict[str, Any]:
     """通过MCP的get_asset_flows取得原始ETF流量，历史窗口由计算器按as_of校验。"""
     asset = target_asset.lower()
-    supported = {"btc", "eth", "sol", "xrp", "hyp", "doge", "link", "avax", "hbar", "ltc", "bnb", "dot", "sui"}
+    supported = {
+        "btc",
+        "eth",
+        "sol",
+        "xrp",
+        "hyp",
+        "doge",
+        "link",
+        "avax",
+        "hbar",
+        "ltc",
+        "bnb",
+        "dot",
+        "sui",
+    }
     if asset not in supported:
-        raise ValueError("目标资产不在ETF服务支持列表中，不能据此认定该资产不存在现货ETF")
+        raise ValueError(
+            "目标资产不在ETF服务支持列表中，不能据此认定该资产不存在现货ETF"
+        )
     config = CryptoETFSettings()
     endpoint = config.crypto_etf_mcp_url
     api_key = config.crypto_etf_mcp_api_key.get_secret_value()
@@ -35,8 +50,13 @@ async def get_crypto_etf_flows(target_asset: str, as_of: str) -> dict[str, Any]:
         raise RuntimeError("未配置 CRYPTO_ETF_MCP_API_KEY")
     if not endpoint:
         raise RuntimeError("未配置 CRYPTO_ETF_MCP_URL")
-    async with MCPClientManager({"crypto_etf": endpoint}, {"crypto_etf": {"Authorization": f"Bearer {api_key}"}}) as client:
-        payload = await client.call_json_tool("crypto_etf", "get_asset_flows", {"asset": asset})
+    async with MCPClientManager(
+        {"crypto_etf": endpoint}, {"crypto_etf": {"Authorization": f"Bearer {api_key}"}}
+    ) as client:
+        payload = await client.call_json_tool(
+            "crypto_etf", "get_asset_flows", {"asset": asset}
+        )
     return {
-        "payload": payload, "source": f"https://api.cryptoetf.today/api/v1/flows/{asset}",
+        "payload": payload,
+        "source": f"https://api.cryptoetf.today/api/v1/flows/{asset}",
     }

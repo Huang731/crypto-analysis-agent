@@ -9,7 +9,9 @@ def utc_time(value: Any) -> datetime:  # 将 CMC 原始时间规范化为 UTC。
     if isinstance(value, str) and value.isdigit():  # 纯数字字符串表示 Unix 秒。
         result = datetime.fromtimestamp(int(value), timezone.utc)  # 转成带时区的时间。
     elif isinstance(value, str):  # 其他字符串按 ISO 时间处理。
-        result = datetime.fromisoformat(value.replace("Z", "+00:00"))  # 接受 Z 形式的 UTC 后缀。
+        result = datetime.fromisoformat(
+            value.replace("Z", "+00:00")
+        )  # 接受 Z 形式的 UTC 后缀。
     else:  # 非字符串不是约定的时间格式。
         raise ValueError("CMC 观测时间格式无效")  # 明确拒绝错误响应。
     if result.tzinfo is None:  # 接口时间必须带时区。

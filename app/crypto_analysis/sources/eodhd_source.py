@@ -2,17 +2,14 @@
 
 import json
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.mcp_client.manager import MCPClientManager
-from app.observability import get_logger, log_event
 
 _ROOT = Path(__file__).resolve().parents[3]  # 数据源目录比项目根目录多一层。
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"
@@ -28,8 +25,9 @@ class AnalysisMCPSettings(BaseSettings):
     eodhd_api_key: str = ""
 
 
-@tool
-async def query_dxy_from_official_mcp(as_of: str) -> dict[str, Any]:  # 只获取并解析 EODHD 原始日线。
+async def query_dxy_from_official_mcp(
+    as_of: str,
+) -> dict[str, Any]:  # 只获取并解析 EODHD 原始日线。
     """调用 EODHD 官方 MCP 日线工具，返回原始日线与来源。"""
     api_key = AnalysisMCPSettings().eodhd_api_key
     if not api_key:

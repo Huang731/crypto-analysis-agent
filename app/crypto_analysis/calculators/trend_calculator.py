@@ -7,12 +7,14 @@ from typing import Any
 _DAY = 86_400_000
 
 
-def validate_trend_klines(raw: dict[str, Any], scope: dict[str, str]) -> list[list[Any]]:
+def validate_trend_klines(
+    raw: dict[str, Any], scope: dict[str, str]
+) -> list[list[Any]]:
     """检查完整原始数组，只选最近300根完整且连续的UTC日线。"""
     cutoff = datetime.fromisoformat(scope["as_of"])
     if cutoff.tzinfo is None:
         raise ValueError("as_of 必须包含时区")
-    if raw["symbol"] != f'{scope["target_asset"].upper()}USDT':
+    if raw["symbol"] != f"{scope['target_asset'].upper()}USDT":
         raise ValueError("现货日线交易对与目标不一致")
     rows = raw["rows"]
     if not isinstance(rows, list):
@@ -42,11 +44,12 @@ def validate_trend_klines(raw: dict[str, Any], scope: dict[str, str]) -> list[li
             raise ValueError("日线价格不是有限正数")
         if not low <= close <= high:
             raise ValueError("日线最高、最低及收盘价格不一致")
-    day = cutoff.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    day = cutoff.astimezone(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
     if selected[-1][6] != int(day.timestamp() * 1000) - 1:
         raise ValueError("最新完整日线过期")
     return selected
-
 
 
 def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -60,17 +63,31 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
     close = [float(row[4]) for row in rows]
 
     def ma(period: int, index: int) -> float:
-        return sum(close[index - period + 1:index + 1]) / period
+        return sum(close[index - period + 1 : index + 1]) / period
 
     tr, plus_dm, minus_dm = [], [], []
     for i in range(1, 300):
         up = high[i] - high[i - 1]
         down = low[i - 1] - low[i]
-        tr.append(max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1])))
+        tr.append(
+            max(
+                high[i] - low[i],
+                abs(high[i] - close[i - 1]),
+                abs(low[i] - close[i - 1]),
+            )
+        )
         plus_dm.append(up if up > down and up > 0 else 0.0)
         minus_dm.append(down if down > up and down > 0 else 0.0)
-    smooth_tr, smooth_plus, smooth_minus = sum(tr[:14]), sum(plus_dm[:14]), sum(minus_dm[:14])
-    intermediate = {"smoothed_tr_14": smooth_tr, "smoothed_plus_dm_14": smooth_plus, "smoothed_minus_dm_14": smooth_minus}
+    smooth_tr, smooth_plus, smooth_minus = (
+        sum(tr[:14]),
+        sum(plus_dm[:14]),
+        sum(minus_dm[:14]),
+    )
+    intermediate = {
+        "smoothed_tr_14": smooth_tr,
+        "smoothed_plus_dm_14": smooth_plus,
+        "smoothed_minus_dm_14": smooth_minus,
+    }
     dx_values = []
     adx = 0.0
     for i in range(14, 300):
@@ -88,8 +105,15 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
         elif i > 27:
             adx = (13 * adx + dx) / 14
         if i in (298, 299):
-            intermediate.update({f"smoothed_tr_{i}": smooth_tr, f"smoothed_plus_dm_{i}": smooth_plus,
-                                 f"smoothed_minus_dm_{i}": smooth_minus, f"adx_{i}": adx, f"dx_{i}": dx})
+            intermediate.update(
+                {
+                    f"smoothed_tr_{i}": smooth_tr,
+                    f"smoothed_plus_dm_{i}": smooth_plus,
+                    f"smoothed_minus_dm_{i}": smooth_minus,
+                    f"adx_{i}": adx,
+                    f"dx_{i}": dx,
+                }
+            )
     ma50, ma200 = ma(50, 299), ma(200, 299)
     ma50_before, ma200_before = ma(50, 279), ma(200, 279)
     admission = close[-1] > ma200 > ma200_before
@@ -100,12 +124,29 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
     else:
         score = 5 if not timing else 7.5 if not confirmation else 10
     return {
-        "status": "ok", "score": score, "confidence": 1, "unit": "price / ADX / DI",
-        "observed_at": datetime.fromtimestamp(rows[-1][6] / 1000, timezone.utc).date().isoformat(),
-        "source": raw["source"], "symbol": raw["symbol"], "kline_count": len(rows),
-        "first_open_time": rows[0][0], "last_close_time": rows[-1][6], "close": close[-1],
-        "ma50": ma50, "ma200": ma200, "ma50_20_days_ago": ma50_before, "ma200_20_days_ago": ma200_before,
-        "adx14": adx, "plus_di": pdi, "minus_di": mdi,
-        "admission": admission, "timing": timing, "confirmation": confirmation,
-        "intermediate_values": intermediate, "calculation_method": "python",
+        "status": "ok",
+        "score": score,
+        "confidence": 1,
+        "unit": "price / ADX / DI",
+        "observed_at": datetime.fromtimestamp(rows[-1][6] / 1000, timezone.utc)
+        .date()
+        .isoformat(),
+        "source": raw["source"],
+        "symbol": raw["symbol"],
+        "kline_count": len(rows),
+        "first_open_time": rows[0][0],
+        "last_close_time": rows[-1][6],
+        "close": close[-1],
+        "ma50": ma50,
+        "ma200": ma200,
+        "ma50_20_days_ago": ma50_before,
+        "ma200_20_days_ago": ma200_before,
+        "adx14": adx,
+        "plus_di": pdi,
+        "minus_di": mdi,
+        "admission": admission,
+        "timing": timing,
+        "confirmation": confirmation,
+        "intermediate_values": intermediate,
+        "calculation_method": "python",
     }

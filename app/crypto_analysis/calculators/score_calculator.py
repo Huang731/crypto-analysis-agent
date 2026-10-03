@@ -3,7 +3,9 @@
 from decimal import Decimal  # 保留原有十进制计算精度。
 
 
-def linear_score(value: float | Decimal, low: float, high: float) -> float:  # 定义该指标的程序计算函数。
+def linear_score(
+    value: float | Decimal, low: float, high: float
+) -> float:  # 定义该指标的程序计算函数。
     """把未舍入的指标百分数映射为 0 到 10 分。"""
     number = Decimal(str(value))  # 计算或保存待评分的十进制数。
     lower = Decimal(str(low))  # 计算或保存评分下界。

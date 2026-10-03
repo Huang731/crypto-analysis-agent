@@ -5,7 +5,7 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -128,7 +128,7 @@ async def ask(
     # 在请求入口固定一次 UTC 截止时间，保证六个分析维度使用同一时间点的数据。
     scope = create_request_scope(req.question, thread_id, trace_id)
 
-    async def event_generator():
+    async def event_generator() -> AsyncIterator[dict[str, str]]:
         # 生成器在响应阶段才执行，需要在这里重新绑定日志上下文。
         with (
             start_trace(

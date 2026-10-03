@@ -6,9 +6,11 @@
     文件被删除  → prune 时清掉库里的孤儿块
 开启 prune 时，清理目录中已不存在的文件对应的切片。
 """
+
 from __future__ import annotations
 
 import warnings
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -34,7 +36,7 @@ from app.tracing import estimate_tokens, start_trace, trace_generation, trace_sp
 
 
 @contextmanager
-def _ignore_ip_normalize_warning():
+def _ignore_ip_normalize_warning() -> Iterator[None]:
     """LangChain 认为 L2 归一化只适用于欧氏距离，因此会警告。
 
     内积索引配合单位向量时，归一化后的内积就是 cosine，警告不成立，归一化仍会执行。
@@ -69,7 +71,9 @@ def get_vectorstore() -> FAISS:
             embeddings = get_embeddings()
             index_dir = Path(settings.faiss_path)
             # 已有任一索引文件时执行加载；文件缺失或损坏直接报错。
-            if (index_dir / "index.faiss").exists() or (index_dir / "index.pkl").exists():
+            if (index_dir / "index.faiss").exists() or (
+                index_dir / "index.pkl"
+            ).exists():
                 with _ignore_ip_normalize_warning():
                     vs = FAISS.load_local(
                         str(index_dir),
@@ -79,9 +83,13 @@ def get_vectorstore() -> FAISS:
                         distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
                     )
                 if vs.index.metric_type != faiss.METRIC_INNER_PRODUCT:
-                    raise ValueError("已有 FAISS 索引不是内积索引，请使用新索引目录重新入库")
+                    raise ValueError(
+                        "已有 FAISS 索引不是内积索引，请使用新索引目录重新入库"
+                    )
                 if vs.index.d != settings.embedding_dimensions:
-                    raise ValueError("已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库")
+                    raise ValueError(
+                        "已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库"
+                    )
                 return vs
 
             with _ignore_ip_normalize_warning():
@@ -159,7 +167,9 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
             try:
                 vs.add_documents(batch, ids=ids[i : i + step])
             except Exception as exc:
-                generation.metadata.update(status="error", error_type=type(exc).__name__)
+                generation.metadata.update(
+                    status="error", error_type=type(exc).__name__
+                )
                 raise
             # 向量化接口未返回用量，此处仅估算输入 token；向量不计为输出 token。
             generation.usage = {
@@ -170,7 +180,9 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
             generation.metadata["status"] = "done"
 
 
-def ingest_directory(docs_dir: str | Path | None = None, prune: bool = True) -> IngestReport:
+def ingest_directory(
+    docs_dir: str | Path | None = None, prune: bool = True
+) -> IngestReport:
     """同步文档目录，并用本地 tracing 记录入库和向量模型调用。"""
     directory = Path(settings.docs_dir if docs_dir is None else docs_dir)
     with start_trace("rag.ingest", docs_dir=str(directory), prune=prune) as trace:
@@ -184,8 +196,7 @@ def ingest_directory(docs_dir: str | Path | None = None, prune: bool = True) -> 
 
 
 def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
-    """把目录下所有文档同步进向量库，返回统计报告。幂等：重复跑不产生变化。
-    """
+    """把目录下所有文档同步进向量库，返回统计报告。幂等：重复跑不产生变化。"""
     with trace_span("rag.ingest.sync") as node_span:
         try:
             files = list_documents(docs_dir)

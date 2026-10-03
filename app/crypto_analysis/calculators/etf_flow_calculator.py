@@ -53,14 +53,22 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
     five_score = _flow_score(five, 500, 1500)
     twenty_score = _flow_score(twenty, 1500, 5000)
     return {
-        "status": "ok", "source": raw["source"], "unit": "USD million",
+        "status": "ok",
+        "source": raw["source"],
+        "unit": "USD million",
         "observed_at": window_dates[-1].isoformat(),
-        "trading_dates": [day.isoformat() for day in window_dates], "daily_flows_usd_m": [float(value) for value in values],
+        "trading_dates": [day.isoformat() for day in window_dates],
+        "daily_flows_usd_m": [float(value) for value in values],
         "latest_flow_usd_m": float(values[-1]),
         "previous_five_day_flow_usd_m": float(sum(values[-10:-5], Decimal(0))),
-        "five_day_flow_usd_m": float(five), "twenty_day_flow_usd_m": float(twenty),
-        "five_day_score": five_score, "twenty_day_score": twenty_score,
+        "five_day_flow_usd_m": float(five),
+        "twenty_day_flow_usd_m": float(twenty),
+        "five_day_score": five_score,
+        "twenty_day_score": twenty_score,
         "conflict_flag": five * twenty < 0,
-        "score": float(Decimal(str(five_score)) * Decimal("0.4") + Decimal(str(twenty_score)) * Decimal("0.6")),
+        "score": float(
+            Decimal(str(five_score)) * Decimal("0.4")
+            + Decimal(str(twenty_score)) * Decimal("0.6")
+        ),
         "confidence": 0.75,
     }

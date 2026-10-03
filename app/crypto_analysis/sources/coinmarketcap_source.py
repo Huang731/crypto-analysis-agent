@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.crypto_analysis.source_time_utils import (
@@ -43,12 +42,15 @@ async def _get_cmc(path: str, params: dict[str, Any]) -> dict[str, Any]:
         raise TypeError("CMC 响应缺少 status")
     status = payload["status"]
     if status.get("error_code") not in (0, "0"):
-        raise RuntimeError(f"CMC API 错误 {status.get('error_code')}: {status.get('error_message')}")
+        raise RuntimeError(
+            f"CMC API 错误 {status.get('error_code')}: {status.get('error_message')}"
+        )
     return payload
 
 
-@tool
-async def get_stablecoin_historical_market_cap(as_of: str) -> dict[str, Any]:  # 获取稳定币历史原始报价。
+async def get_stablecoin_historical_market_cap(
+    as_of: str,
+) -> dict[str, Any]:  # 获取稳定币历史原始报价。
     """查询 CMC 的 USDT 和 USDC 日频历史市值，返回原始报价与来源。"""
     cutoff = datetime.fromisoformat(as_of)
     if cutoff.tzinfo is None:
@@ -57,10 +59,12 @@ async def get_stablecoin_historical_market_cap(as_of: str) -> dict[str, Any]:  #
         "/v3/cryptocurrency/quotes/historical",
         {"id": "825,3408", "count": 100, "interval": "daily", "convert": "USD"},
     )
-    return {"payload": payload, "source": f"{_BASE_URL}/v3/cryptocurrency/quotes/historical"}  # 原样交给程序计算器。
+    return {
+        "payload": payload,
+        "source": f"{_BASE_URL}/v3/cryptocurrency/quotes/historical",
+    }  # 原样交给程序计算器。
 
 
-@tool
 async def get_fear_and_greed(
     mode: Literal["latest", "historical"] = "latest", start: int = 1, limit: int = 30
 ) -> dict[str, Any]:
@@ -79,18 +83,26 @@ async def get_fear_and_greed(
         if not isinstance(record, dict):
             raise TypeError("CMC 恐惧贪婪指数记录格式无效")
         value = record.get("value")
-        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 100:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or not 0 <= value <= 100
+        ):
             raise ValueError("CMC 恐惧贪婪指数必须是 0 到 100 的整数")
         classification = record.get("value_classification")
         if not isinstance(classification, str) or not classification:
             raise ValueError("CMC 恐惧贪婪指数缺少分类")
-        timestamp = record.get("update_time") if mode == "latest" else record.get("timestamp")
+        timestamp = (
+            record.get("update_time") if mode == "latest" else record.get("timestamp")
+        )
         observed_at = utc_time(timestamp)  # 将数据源时间转为 UTC。
-        normalized.append({
-            "value": value,
-            "value_classification": classification,
-            "observed_at": observed_at.isoformat(),
-        })
+        normalized.append(
+            {
+                "value": value,
+                "value_classification": classification,
+                "observed_at": observed_at.isoformat(),
+            }
+        )
     return {
         "status": "ok",
         "source": f"{_BASE_URL}{path}",

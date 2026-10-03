@@ -3,6 +3,7 @@
 Markdown 先按标题保留章节信息，再按长度切分；纯文本直接按长度切分。
 每个切片带有文件名、章节路径、内容 hash 和块序号，用于引用与增量入库。
 """
+
 from __future__ import annotations
 
 import hashlib
