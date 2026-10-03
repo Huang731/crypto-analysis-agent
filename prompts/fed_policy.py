@@ -4,7 +4,6 @@
 def evaluation_prompt(
     as_of: str,
     comparison_day: object,
-    rules: str,
     shape_json: str,
     materials_json: str,
 ) -> str:
@@ -12,7 +11,6 @@ def evaluation_prompt(
     return (
         "你是美联储官方材料的证据抽取与文本比较模型。只能读取下面已保存的页面，不能搜索、补数据或填写分数。"
         f"\n固定截止时间：{as_of}；资产负债表比较日：{comparison_day}。"
-        f"\n严格执行维度规则：\n{rules}"
         "\nSEP 只绑定最新 SEP 页面和当前生效目标区间；利率值由代码读取表格，不由你填写。"
         "目标区间选择包含 target range for the federal funds rate 与上下限的段落。"
         "每个引用只给出真实 evidence_id、原文 paragraph_index、材料发布日期与材料类型。"

@@ -716,9 +716,7 @@ async def execute_dimension(
                 json.dumps(metrics, ensure_ascii=False),
             )
             if dimension.dimension_id == "02":
-                from app.crypto_analysis.fed_policy_tools import load_fed_policy_rules
-
-                prompt += dimension_02_prompt_suffix(load_fed_policy_rules())
+                prompt += dimension_02_prompt_suffix()
             with trace_span(
                 "analysis.metric_agent.graph", dimension_id=dimension.dimension_id
             ):
@@ -748,7 +746,6 @@ async def execute_dimension(
             result = aggregate_dimension(dimension, indicators)
             result["research_evidence"] = state["research_evidence"]
             if dimension.dimension_id == "02":
-                result["rules_context"] = fed_rules
                 score = result["score"]
                 result["policy_stance"] = (
                     None

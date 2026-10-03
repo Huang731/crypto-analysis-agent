@@ -51,10 +51,9 @@ def dimension_execution_prompt(
     )
 
 
-def dimension_02_prompt_suffix(fed_rules: str) -> str:
-    """维度 02 在通用任务说明后追加的规则原文。"""
+def dimension_02_prompt_suffix() -> str:
+    """维度 02 在通用任务说明后追加的取证流程。"""
     return (
-        f"\n维度02规则原文：\n{fed_rules}"
         "\n先用 search_web 找官方候选材料，再用 browse_fed_evidence 收集实际原文。"
         "保存最新 SEP、当前生效目标区间、最新和上一可比沟通，以及当前和三个月前生效的 QE/QT 政策。"
         "用页面 evidence_ids 调用 evaluate_fed_policy，把三个指标写入 indicator_results；"

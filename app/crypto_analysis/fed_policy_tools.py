@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import asdict
 from datetime import date
-from pathlib import Path
 from typing import Any
 
 from langchain.tools import ToolRuntime, tool
@@ -36,18 +35,6 @@ from app.crypto_analysis.sources.fred_source import (
 from app.crypto_analysis.sources.web_search_source import search_duckduckgo
 from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.fed_policy import evaluation_prompt
-
-_RULE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "data"
-    / "rules"
-    / "加密货币分析系统_维度02.md"
-)
-
-
-def load_fed_policy_rules() -> str:
-    """加载用户维护的维度02规则，不复制评分配置。"""
-    return _RULE_PATH.read_text(encoding="utf-8")
 
 
 def _check_dimension(runtime: ToolRuntime[MetricContext]) -> ToolMessage | None:
@@ -204,7 +191,6 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
             "只收集截止时已发布材料，优先最新版 SEP、当前生效目标区间、最新与上一可比沟通，"
             "以及当前和比较日已生效的资产负债表政策与操作速度。"
             "保存完整的发布日期、生效日期、利率表格表头与原文；需要多份证据时分别 extract。"
-            f"\n本维度规则：\n{load_fed_policy_rules()}"
         )
         call_id = runtime.tool_call_id
         with trace_span("analysis.fed.browse") as span:
@@ -341,7 +327,6 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
         prompt = evaluation_prompt(
             scope["as_of"],
             comparison_date(scope["as_of"]),
-            load_fed_policy_rules(),
             json.dumps(shape, ensure_ascii=False),
             json.dumps(materials, ensure_ascii=False),
         )
