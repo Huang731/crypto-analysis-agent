@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -73,13 +74,104 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=150, ge=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
 
-    dimensions: dict[str, list[str]] = {
-        "美元流动性与加密内部流动性": [
-            "DXY_Trend",
-            "Stable_MCap",
-            "M2_YoY",
-            "Fed_Balance",
-        ]
+    # 分析维度配置；当前仅启用维度02，便于单独测试。
+    enabled_dimensions: list[str] = ["02"]
+    dimension_weights: dict[str, float] = {"02": 1.0}
+    dimensions: dict[str, dict[str, Any]] = {
+        "01": {
+            "dimension_id": "01",
+            "name": "美元流动性与加密内部流动性",
+            "min_coverage": 0.7,
+            "metrics": [
+                {
+                    "id": "DXY_Trend",
+                    "label": "美元指数 DXY",
+                    "weight": 0.35,
+                    "kind": "numeric",
+                },
+                {
+                    "id": "Stable_MCap",
+                    "label": "稳定币总市值 Stable_MCap",
+                    "weight": 0.3,
+                    "kind": "numeric",
+                },
+                {
+                    "id": "M2_YoY",
+                    "label": "M2 同比变化 M2_YoY",
+                    "weight": 0.2,
+                    "kind": "numeric",
+                },
+                {
+                    "id": "Fed_Balance",
+                    "label": "美联储资产负债表 WALCL",
+                    "weight": 0.15,
+                    "kind": "numeric",
+                },
+            ],
+        },
+        "02": {
+            "dimension_id": "02",
+            "name": "美联储政策与利率倾向",
+            "min_coverage": 0.7,
+            "metrics": [
+                {
+                    "id": "SEP_Policy_Stance",
+                    "label": "SEP_Policy_Stance",
+                    "weight": 0.5,
+                    "kind": "numeric",
+                },
+                {
+                    "id": "Fed_Communication",
+                    "label": "Fed_Communication",
+                    "weight": 0.3,
+                    "kind": "text",
+                },
+                {"id": "QE_QT", "label": "QE_QT", "weight": 0.2, "kind": "text"},
+            ],
+        },
+        "03": {
+            "dimension_id": "03",
+            "name": "ETF资金流",
+            "min_coverage": 0.7,
+            "metrics": [
+                {
+                    "id": "ETF_Flows",
+                    "label": "ETF_Flows",
+                    "weight": 1.0,
+                    "kind": "numeric",
+                }
+            ],
+        },
+        "04": {
+            "dimension_id": "04",
+            "name": "衍生品数据",
+            "min_coverage": 1.0,
+            "metrics": [
+                {"id": "OI", "label": "OI", "weight": 0.6, "kind": "numeric"},
+                {"id": "Funding", "label": "Funding", "weight": 0.4, "kind": "numeric"},
+            ],
+        },
+        "05": {
+            "dimension_id": "05",
+            "name": "趋势与均线",
+            "min_coverage": 0.7,
+            "metrics": [
+                {"id": "Trend", "label": "Trend", "weight": 1.0, "kind": "numeric"}
+            ],
+        },
+        "06": {
+            "dimension_id": "06",
+            "name": "市场情绪",
+            "min_coverage": 0.7,
+            "metrics": [
+                {
+                    "id": "Fear_Greed",
+                    "label": "Fear_Greed",
+                    "weight": 1.0,
+                    "kind": "numeric",
+                }
+            ],
+        },
     }
 
     model_price_table: dict[str, dict[str, float]] = {

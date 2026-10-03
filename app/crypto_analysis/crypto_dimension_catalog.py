@@ -1,12 +1,10 @@
-"""读取维度机器配置，并校验配置自身的一致性。"""
+"""从 Settings 创建维度配置快照，并校验配置自身的一致性。"""
 
-import json  # 读取标准 JSON 配置。
-from pathlib import Path  # 定位项目内的配置文件。
 from typing import Literal  # 限定指标类型和接入状态。
 
 from pydantic import BaseModel, ConfigDict, Field  # 校验配置字段。
 
-_CONFIG_ROOT = Path(__file__).resolve().parents[2] / "data" / "config"  # 配置目录。
+from app.config.config import settings
 
 
 class MetricConfig(BaseModel):  # 一项指标的机器配置。
@@ -22,7 +20,6 @@ class DimensionConfig(BaseModel):  # 一个维度的执行配置。
     dimension_id: str  # 与总配置一致的两位维度编号。
     name: str  # 维度显示名称。
     min_coverage: float = Field(ge=0, le=1)  # 正式得分所需覆盖率。
-    required_metrics: list[str]  # 必须有效的专属指标。
     metrics: list[MetricConfig] = Field(min_length=1)  # 本维度全部必算指标。
 
 
@@ -32,13 +29,10 @@ class DimensionCatalog(BaseModel):  # 一轮分析使用的完整配置快照。
     dimensions: dict[str, DimensionConfig]  # 每维的指标配置。
 
 
-def load_dimension_catalog() -> DimensionCatalog:  # 每轮读取一次总配置和维度配置。
-    global_path = _CONFIG_ROOT / "analysis.json"  # 总配置沿用项目现有文件。
-    global_data = json.loads(
-        global_path.read_text(encoding="utf-8")
-    )  # UTF-8 读取总配置。
-    enabled = global_data["enabled_dimensions"]  # 取得本轮启用的维度编号。
-    weights = global_data["dimension_weights"]  # 取得本轮固定的维度权重。
+def load_dimension_catalog() -> DimensionCatalog:
+    """每轮读取启用维度，并创建独立配置快照。"""
+    enabled = list(settings.enabled_dimensions)
+    weights = dict(settings.dimension_weights)
     if (
         not isinstance(enabled, list)
         or not enabled
@@ -54,13 +48,8 @@ def load_dimension_catalog() -> DimensionCatalog:  # 每轮读取一次总配置
     if abs(sum(weights.values()) - 1.0) > 0.000001:  # 维度权重须合计为一。
         raise ValueError("config_error：维度权重总和不为 1")  # 不临时归一化配置错误。
     dimensions: dict[str, DimensionConfig] = {}  # 收集本轮维度配置。
-    for dimension_id in enabled:  # 按总配置顺序读取每维文件。
-        path = (
-            _CONFIG_ROOT / "dimensions" / f"{dimension_id}.json"
-        )  # 每维独立配置路径。
-        dimension = DimensionConfig.model_validate_json(
-            path.read_text(encoding="utf-8")
-        )  # 校验字段类型。
+    for dimension_id in enabled:
+        dimension = DimensionConfig.model_validate(settings.dimensions[dimension_id])
         if dimension.dimension_id != dimension_id:  # 文件编号必须与索引相同。
             raise ValueError(
                 f"config_error：维度 {dimension_id} 的配置编号不一致"
@@ -76,12 +65,6 @@ def load_dimension_catalog() -> DimensionCatalog:  # 每轮读取一次总配置
             raise ValueError(
                 f"config_error：维度 {dimension_id} 的指标权重总和不为 1"
             )  # 停止错误评分。
-        if not set(dimension.required_metrics) <= set(
-            ids
-        ):  # 必需指标必须在指标清单内。
-            raise ValueError(
-                f"config_error：维度 {dimension_id} 的必需指标不存在"
-            )  # 防止门槛失效。
         dimensions[dimension_id] = dimension  # 加入本轮配置快照。
     return DimensionCatalog(
         enabled_dimensions=enabled, dimension_weights=weights, dimensions=dimensions

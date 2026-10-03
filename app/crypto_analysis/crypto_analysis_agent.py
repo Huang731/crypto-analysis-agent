@@ -628,7 +628,7 @@ def build_metric_agent(
 def aggregate_dimension(
     dimension: DimensionConfig, indicators: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """保留既有覆盖率、必需指标、评分与置信度聚合规则。"""
+    """按有效指标覆盖率判断是否出分，并聚合评分与置信度。"""
     ids = [item["indicator_id"] for item in indicators]
     if len(ids) != len(set(ids)) or set(ids) != {
         metric.id for metric in dimension.metrics
@@ -640,8 +640,7 @@ def aggregate_dimension(
     coverage = round(
         sum(metric.weight for metric in dimension.metrics if metric.id in valid), 10
     )
-    required_valid = set(dimension.required_metrics) <= set(valid)
-    formal = required_valid and coverage >= dimension.min_coverage - 1e-9
+    formal = coverage >= dimension.min_coverage - 1e-9
     if formal:
         score = (
             sum(
@@ -670,7 +669,7 @@ def aggregate_dimension(
             if item["status"] != "ok" and item.get("reason")
         )
         if not reason:
-            reason = "有效指标覆盖率或必需指标未达到正式评分条件"
+            reason = "有效指标覆盖率未达到正式评分条件"
         if all(item["status"] == "not_applicable" for item in indicators):
             status = "not_applicable"
         elif any(item["status"] == "calculation_error" for item in indicators):

@@ -1,5 +1,6 @@
 """维度02工具：搜索候选材料、浏览官方原文、按规则形成指标记录。"""
 
+import asyncio
 import json
 import re
 from dataclasses import asdict
@@ -10,6 +11,7 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
+from pydantic import ValidationError
 
 from app.browser_tool import get_browser_tool
 from app.crypto_analysis.calculators.fed_policy_calculator import (
@@ -32,7 +34,7 @@ from app.crypto_analysis.crypto_analysis_agent import (
 from app.crypto_analysis.sources.fred_source import (
     get_fed_dff_background as get_fed_dff_background_data,
 )
-from app.crypto_analysis.sources.web_search_source import search_duckduckgo
+from app.crypto_analysis.sources.web_search_source import search_bocha
 from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.fed_policy import evaluation_prompt
 
@@ -93,7 +95,7 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
     """模型通过闭包注入，工具参数不暴露请求范围、规则或原始数值。"""
     evaluator = llm.with_structured_output(
         FedPolicyAssessment, method="function_calling"
-    )
+    ).with_retry(retry_if_exception_type=(ValidationError,), stop_after_attempt=2)
     evaluation_parameters: dict[str, Any] = {"temperature": 0}
     if getattr(llm, "model_name", "").startswith("glm-4.5"):
         # 仅政策比较调用启用深度思考，不改变其他维度与全局模型配置。
@@ -103,7 +105,7 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
     async def search_web(
         query: str, runtime: ToolRuntime[MetricContext], max_results: int = 6
     ) -> Command | ToolMessage:
-        """用 DuckDuckGo 查找 Federal Reserve 官方材料。返回候选 URL；摘要不可评分，须继续 browse_fed_evidence。"""
+        """用 Bocha 查找 Federal Reserve 官方材料。返回候选 URL；摘要不可评分，须继续 browse_fed_evidence。"""
         error = _check_dimension(runtime)
         if error is not None:
             return error
@@ -112,12 +114,12 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
         evidence_id = runtime.tool_call_id
         with trace_span("analysis.fed.search") as span:
             try:
-                raw = await search_duckduckgo(query, max_results)
+                raw = await search_bocha(query, max_results)
             except Exception as exc:  # noqa: BLE001 - 保存搜索服务实际失败原因，不切换来源。
                 span.metadata["status"] = "error"
                 record = {
                     "data_kind": "fed_search",
-                    "source_action": "duckduckgo.search",
+                    "source_action": "bocha.search",
                     "status": "data_missing",
                     "reason": str(exc),
                 }
@@ -132,12 +134,12 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
             candidates = [row for row in raw["results"] if is_fed_url(row["url"])]
             record = {
                 "data_kind": "fed_search",
-                "source_action": "duckduckgo.search",
+                "source_action": "bocha.search",
                 "status": "ok" if candidates else "data_missing",
                 "raw": raw,
             }
             if not candidates:
-                record["reason"] = "DuckDuckGo 未返回 Federal Reserve 官方候选链接"
+                record["reason"] = "Bocha 未返回 Federal Reserve 官方候选链接"
             research = [
                 {
                     "evidence_id": evidence_id,
@@ -295,39 +297,10 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
             _assessment_material(key, record, comparison_date(scope["as_of"]))
             for key, record in records.items()
         ]
-        reference = {
-            "evidence_id": "从页面选择ID",
-            "paragraph_index": 1,
-            "published_at": "YYYY-MM-DD",
-            "effective_at": None,
-            "material_type": "statement",
-        }
-        communication_reference = {**reference, "sentence_index": 1}
-        shape = {
-            "sep": {
-                "sep": {**reference, "material_type": "sep"},
-                "target_range": {**reference, "effective_at": "YYYY-MM-DD"},
-            },
-            "communication": {
-                "current": communication_reference,
-                "previous": communication_reference,
-                "change": "unchanged",
-                "interpretation": "所选两个句子的比较",
-                "confidence": 0.75,
-            },
-            "balance_sheet": {
-                "current": {**reference, "effective_at": "YYYY-MM-DD"},
-                "baseline": {**reference, "effective_at": "YYYY-MM-DD"},
-                "change": "unchanged",
-                "interpretation": "已生效政策和操作速度的比较",
-                "confidence": 0.75,
-            },
-            "missing_reasons": {},
-        }
         prompt = evaluation_prompt(
             scope["as_of"],
             comparison_date(scope["as_of"]),
-            json.dumps(shape, ensure_ascii=False),
+            json.dumps(FedPolicyAssessment.model_json_schema(), ensure_ascii=False),
             json.dumps(materials, ensure_ascii=False),
         )
         with trace_span("analysis.fed.evaluate") as span:
@@ -336,8 +309,11 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
                     "fed_policy_assessment",
                     model=getattr(llm, "model_name", "injected"),
                 ) as generation:
-                    assessment = await evaluator.ainvoke(
-                        prompt, config=runtime.config, **evaluation_parameters
+                    assessment = await asyncio.wait_for(
+                        evaluator.ainvoke(
+                            prompt, config=runtime.config, **evaluation_parameters
+                        ),
+                        timeout=60,
                     )
                     if not isinstance(assessment, FedPolicyAssessment):
                         raise TypeError("政策评估模型未返回 FedPolicyAssessment")
@@ -345,7 +321,7 @@ def build_fed_policy_tools(llm: Any) -> list[BaseTool]:
                         "input": estimate_tokens(prompt),
                         "output": estimate_tokens(assessment.model_dump_json()),
                     }
-            except Exception as exc:  # noqa: BLE001 - 明确记为评估失败，不重试、不换模型、不补分数。
+            except Exception as exc:  # noqa: BLE001 - 重试耗尽或超时明确记为评估失败，不换模型、不补分数。
                 span.metadata["status"] = "error"
                 reason = f"政策评估失败：{type(exc).__name__}: {str(exc)[:2000]}"
                 indicators = {
