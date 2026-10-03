@@ -8,6 +8,7 @@ import httpx
 from langchain_core.tools import tool
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.crypto_analysis.calculators.fed_policy_calculator import comparison_date
 from app.crypto_analysis.source_time_utils import (
     shift_month,  # 只用于构造 FRED 月度请求窗口。
 )
@@ -59,3 +60,36 @@ async def get_m2_yoy_change(series_id: Literal["M2SL", "WALCL"], as_of: str) -> 
     if not isinstance(payload, dict):
         raise TypeError("FRED 响应不是 JSON 对象")
     return {"payload": payload, "source": _FRED_SOURCE}  # 交由程序计算器校验并评分。
+
+
+async def get_fed_dff_background(as_of: str) -> dict[str, Any]:
+    """读取截止日及三个月前最近可用 DFF 日值，仅作维度02背景。"""
+    api_key = FREDSettings().fred_api_key
+    if not api_key:
+        raise RuntimeError("未配置 FRED_API_KEY，DFF背景数据缺失")
+    cutoff = datetime.fromisoformat(as_of)
+    if cutoff.tzinfo is None:
+        raise ValueError("as_of 必须包含时区")
+    today = cutoff.astimezone(timezone.utc).date()
+    baseline = comparison_date(as_of)
+    params = {
+        "series_id": "DFF", "api_key": api_key, "file_type": "json",
+        "observation_start": (baseline - timedelta(days=14)).isoformat(),
+        "observation_end": today.isoformat(), "units": "lin", "sort_order": "asc",
+        "realtime_start": today.isoformat(), "realtime_end": today.isoformat(),
+    }
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(_FRED_SOURCE, params=params)
+    if response.status_code != 200:
+        raise RuntimeError(f"FRED DFF HTTP {response.status_code}")
+    payload = response.json()
+    rows = [(date.fromisoformat(row["date"]), float(row["value"])) for row in payload["observations"] if row["value"] != "."]
+    current = [(day, value) for day, value in rows if day <= today]
+    past = [(day, value) for day, value in rows if day <= baseline]
+    if not current or not past:
+        raise ValueError("DFF 缺少当前或三个月前的可用观测")
+    current_day, current_value = max(current)
+    past_day, past_value = max(past)
+    return {"source": _FRED_SOURCE, "series_id": "DFF", "unit": "percent", "comparison_date": baseline.isoformat(),
+            "current": {"date": current_day.isoformat(), "value": current_value},
+            "three_months_ago": {"date": past_day.isoformat(), "value": past_value}}
