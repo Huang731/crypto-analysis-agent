@@ -259,6 +259,8 @@ class SupervisorService:
                         if isinstance(meta, dict)
                         else "?"
                     )
+                    if node in {"summarize", "model"}:
+                        continue  # 研究与汇总文本仅供内部写作使用。
                     yield _event("token", {"node": node, "content": content})
 
         if routed_agent == "crypto_analysis_agent":  # 维度路径沿用原有完成事件字段。

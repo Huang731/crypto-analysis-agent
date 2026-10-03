@@ -210,6 +210,7 @@
         addProgress("分派", "已交给 " + (agentLabels[data.agent] || data.agent));
       } else if (name === "token") {
         if (typeof data.content !== "string" || !data.content) return;
+        if (data.source_node === "model") return;
         if (data.node === "writer") {
           if (state.outputNode !== "writer" || state.writerComplete) {
             reportEl.textContent = "";
