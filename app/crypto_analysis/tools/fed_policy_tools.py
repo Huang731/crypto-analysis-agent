@@ -9,11 +9,11 @@ from app.crypto_analysis.calculators.fed_policy_calculator import (
     calculate_fed_rate_change,
 )
 from app.crypto_analysis.crypto_analysis_agent import (
-    MetricContext,
     _compute_metric,
     _fetch_evidence,
     _tool_error,
 )
+from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.fred_source import get_fed_target_range
 
 

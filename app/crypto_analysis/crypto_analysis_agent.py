@@ -2,14 +2,13 @@
 
 import asyncio
 import json
-import operator
 import re
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import date, datetime, timezone
 from math import isfinite
-from typing import Annotated, Any
+from typing import Any
 
-from langchain.agents import AgentState, create_agent
+from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelCallLimitMiddleware,
@@ -20,11 +19,9 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Send
 from pydantic import BaseModel, ConfigDict, Field
-from typing_extensions import TypedDict
 
 from app.config.config import settings
 from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics
@@ -38,6 +35,11 @@ from app.crypto_analysis.calculators.fred_calculator import (
 )
 from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics
 from app.crypto_analysis.calculators.trend_calculator import calculate_trend
+from app.crypto_analysis.crypto_analysis_state import (
+    DynamicAnalysisState,
+    MetricAgentState,
+    MetricContext,
+)
 from app.crypto_analysis.crypto_dimension_catalog import (
     DimensionCatalog,
     DimensionConfig,
@@ -56,12 +58,7 @@ from prompts.crypto_analysis import (
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
-# 请求范围与图状态
-
-
-def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    """合并并行工具记录，同一指标以后续真实计算结果为准。"""
-    return {**left, **right}
+# 请求规划模型
 
 
 class AnalysisPlan(BaseModel):
@@ -70,31 +67,6 @@ class AnalysisPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_asset: str
     analysis_focus: str = Field(min_length=1)
-
-
-class MetricContext(TypedDict):
-    """由程序注入的维度与请求范围，模型不能修改。"""
-
-    dimension: DimensionConfig
-    scope: dict[str, str]
-
-
-class MetricAgentState(AgentState):
-    """每个维度独立的证据与结果，不与其他请求共享原始数据。"""
-
-    evidence: Annotated[dict[str, dict[str, Any]], _merge_records]
-    indicator_results: Annotated[dict[str, dict[str, Any]], _merge_records]
-    research_evidence: Annotated[list[dict[str, Any]], operator.add]
-
-
-class DynamicAnalysisState(TypedDict, total=False):
-    messages: Annotated[list[Any], add_messages]
-    scope: dict[str, str]
-    catalog: DimensionCatalog
-    plan: dict[str, Any]
-    dimension_results: Annotated[list[dict[str, Any]], operator.add]
-    findings: Annotated[list[str], operator.add]
-    report: str
 
 
 # 请求规划
@@ -578,12 +550,12 @@ def build_metric_agent(
     按维度01至06组织工具，复用相同模型和每次执行的独立状态。
     """
     # 各维度工具依赖本模块的共享辅助函数，统一在构建 Agent 时导入以避免循环导入。
-    from app.crypto_analysis.derivatives_tools import build_derivatives_tools
-    from app.crypto_analysis.etf_tools import build_etf_tools
-    from app.crypto_analysis.fed_policy_tools import build_fed_policy_tools
-    from app.crypto_analysis.liquidity_tools import build_liquidity_tools
-    from app.crypto_analysis.sentiment_tools import build_sentiment_tools
-    from app.crypto_analysis.trend_tools import build_trend_tools
+    from app.crypto_analysis.tools.derivatives_tools import build_derivatives_tools
+    from app.crypto_analysis.tools.etf_tools import build_etf_tools
+    from app.crypto_analysis.tools.fed_policy_tools import build_fed_policy_tools
+    from app.crypto_analysis.tools.liquidity_tools import build_liquidity_tools
+    from app.crypto_analysis.tools.sentiment_tools import build_sentiment_tools
+    from app.crypto_analysis.tools.trend_tools import build_trend_tools
 
     tools = [
         *build_liquidity_tools(),

@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from app.crypto_analysis.source_time_utils import utc_time
+from app.crypto_analysis.tools.source_time_utils import utc_time
 
 
 def calculate_fear_and_greed(

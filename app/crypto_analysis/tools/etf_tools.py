@@ -6,11 +6,11 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from app.crypto_analysis.crypto_analysis_agent import (
-    MetricContext,
     _calculate_etf,
     _compute_metric,
     _fetch_evidence,
 )
+from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.crypto_etf_source import get_crypto_etf_flows
 
 

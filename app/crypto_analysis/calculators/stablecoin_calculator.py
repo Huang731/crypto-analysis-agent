@@ -7,7 +7,9 @@ from typing import Any  # 接收 CMC 原始响应。
 from app.crypto_analysis.calculators.score_calculator import (
     linear_score,  # 使用原有线性评分口径。
 )
-from app.crypto_analysis.source_time_utils import utc_time  # 复用数据源时间解析规则。
+from app.crypto_analysis.tools.source_time_utils import (
+    utc_time,  # 复用数据源时间解析规则。
+)
 
 _BASE_URL = "https://pro-api.coinmarketcap.com"  # 保留原有结果来源标识。
 

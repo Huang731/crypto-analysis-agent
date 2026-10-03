@@ -8,7 +8,6 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from app.crypto_analysis.crypto_analysis_agent import (
-    MetricContext,
     _calculate_dxy,
     _calculate_m2,
     _calculate_stable,
@@ -16,6 +15,7 @@ from app.crypto_analysis.crypto_analysis_agent import (
     _compute_metric,
     _fetch_evidence,
 )
+from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.coinmarketcap_source import (
     get_stablecoin_historical_market_cap,
 )

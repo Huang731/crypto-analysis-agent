@@ -7,10 +7,10 @@ from langgraph.types import Command
 
 from app.crypto_analysis.calculators.derivatives_calculator import calculate_derivatives
 from app.crypto_analysis.crypto_analysis_agent import (
-    MetricContext,
     _compute_metric,
     _fetch_evidence,
 )
+from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.binance_source import get_binance_derivatives
 
 

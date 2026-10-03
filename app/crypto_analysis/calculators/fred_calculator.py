@@ -8,7 +8,7 @@ from typing import Any  # 接收 FRED 原始响应。
 from app.crypto_analysis.calculators.score_calculator import (
     linear_score,  # 使用原有线性评分口径。
 )
-from app.crypto_analysis.source_time_utils import (
+from app.crypto_analysis.tools.source_time_utils import (
     shift_month,  # 与 FRED 请求共享自然月换算规则。
 )
 
