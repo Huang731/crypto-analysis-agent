@@ -74,9 +74,16 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=150, ge=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
 
-    # 分析维度配置；当前仅启用维度02，便于单独测试。
-    enabled_dimensions: list[str] = ["02"]
-    dimension_weights: dict[str, float] = {"02": 1.0}
+    # 启用全部已实现维度，使用规则中约定的固定综合权重。
+    enabled_dimensions: list[str] = ["01", "02", "03", "04", "05", "06"]
+    dimension_weights: dict[str, float] = {
+        "01": 0.20,
+        "02": 0.15,
+        "03": 0.15,
+        "04": 0.10,
+        "05": 0.25,
+        "06": 0.15,
+    }
     dimensions: dict[str, dict[str, Any]] = {
         "01": {
             "dimension_id": "01",
