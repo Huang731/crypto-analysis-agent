@@ -1,10 +1,12 @@
-"""Bocha 搜索来源，只返回候选链接，不把摘要视为正式证据。"""
+"""Bocha 网页搜索工具，只返回候选链接，不把摘要视为正式证据。"""
 
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
+from langchain.tools import tool
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,7 +14,7 @@ class BochaSettings(BaseSettings):
     """从环境变量或项目 .env 读取 Bocha 配置。"""
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[3] / ".env",
+        env_file=Path(__file__).resolve().parents[1] / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
@@ -21,6 +23,14 @@ class BochaSettings(BaseSettings):
     bocha_base_url: str = "https://api.bocha.cn"
 
 
+class WebSearchInput(BaseModel):
+    """网页搜索参数。"""
+
+    query: str = Field(min_length=1, description="搜索关键词")
+    max_results: int = Field(default=6, ge=1, le=10, description="最多返回结果数")
+
+
+@tool(args_schema=WebSearchInput)
 async def search_bocha(query: str, max_results: int = 6) -> dict[str, Any]:
     """调用 Bocha Web Search，失败直接交给上层记录，不切换来源。"""
     if not query.strip() or not 1 <= max_results <= 10:

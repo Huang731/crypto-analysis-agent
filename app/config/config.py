@@ -112,21 +112,14 @@ class Settings(BaseSettings):
         "02": {
             "dimension_id": "02",
             "name": "美联储政策与利率倾向",
-            "min_coverage": 0.7,
+            "min_coverage": 1.0,
             "metrics": [
                 {
-                    "id": "SEP_Policy_Stance",
-                    "label": "SEP_Policy_Stance",
-                    "weight": 0.5,
+                    "id": "Fed_Rate_Change_3M",
+                    "label": "三个月政策利率净变化",
+                    "weight": 1.0,
                     "kind": "numeric",
                 },
-                {
-                    "id": "Fed_Communication",
-                    "label": "Fed_Communication",
-                    "weight": 0.3,
-                    "kind": "text",
-                },
-                {"id": "QE_QT", "label": "QE_QT", "weight": 0.2, "kind": "text"},
             ],
         },
         "03": {

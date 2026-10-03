@@ -163,30 +163,17 @@ async def create_analysis_plan(
 
 
 _METRIC_FIELDS = {
-    "SEP_Policy_Stance": (
+    "Fed_Rate_Change_3M": (
         (
-            "year",
-            "year_end_median_pct",
-            "target_lower_pct",
-            "target_upper_pct",
-            "citations",
-        ),
-        ("target_midpoint_pct", "delta_bp", "stale"),
-    ),
-    "Fed_Communication": (
-        ("current_material", "previous_material", "citations"),
-        ("policy_change", "interpretation", "stale"),
-    ),
-    "QE_QT": (
-        ("current_policy", "baseline_policy", "citations"),
-        (
-            "policy_change",
-            "interpretation",
+            "current_date",
+            "baseline_date",
             "comparison_date",
-            "stale",
-            "current_monthly_caps",
-            "baseline_monthly_caps",
+            "current_lower_pct",
+            "current_upper_pct",
+            "baseline_lower_pct",
+            "baseline_upper_pct",
         ),
+        ("current_midpoint_pct", "baseline_midpoint_pct", "change_bp", "policy_change"),
     ),
     "Fear_Greed": (
         ("value", "value_classification", "record_timestamp"),
@@ -601,7 +588,7 @@ def build_metric_agent(
 
     tools = [
         *build_liquidity_tools(),
-        *build_fed_policy_tools(llm),
+        *build_fed_policy_tools(),
         *build_etf_tools(),
         *build_derivatives_tools(),
         *build_trend_tools(),

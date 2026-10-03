@@ -54,11 +54,13 @@ def dimension_execution_prompt(
 def dimension_02_prompt_suffix() -> str:
     """维度 02 在通用任务说明后追加的取证流程。"""
     return (
-        "\n先用 search_web 找官方候选材料，再用 browse_fed_evidence 收集实际原文。"
-        "保存最新 SEP、当前生效目标区间、最新和上一可比沟通，以及当前和三个月前生效的 QE/QT 政策。"
-        "用页面 evidence_ids 调用 evaluate_fed_policy，把三个指标写入 indicator_results；"
-        "没有官方原文时也提交已返回的页面缺失证据ID，让评估工具记录具体缺失原因。"
-        "DFF用get_fed_dff_background仅作背景，不能计分或补足指标覆盖率。"
+        "\n本维度仅计算 Fed_Rate_Change_3M（三个月政策利率净变化）。"
+        "先调用 get_fred_target_range 取得 DFEDTARL/DFEDTARU 原始序列，"
+        "再用返回的 evidence_id 调用 calculate_fed_rate_change_indicator。"
+        "取数失败时同样提交已返回的证据ID，由计算工具记录真实缺失原因。"
+        "日期配对、区间中点、变化基点与分档评分全部由程序计算，不传入或改写数值。"
+        "当前目标区间及中点只作背景展示，不重复计分。"
+        "该指标衡量已执行政策的净变化，不代表未来降息承诺、利率绝对水平或资产负债表政策。"
     )
 
 
