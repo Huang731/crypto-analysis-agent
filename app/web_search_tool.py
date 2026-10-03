@@ -1,13 +1,19 @@
 """Bocha 网页搜索工具，只返回候选链接，不把摘要视为正式证据。"""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import httpx
-from langchain.tools import tool
+from langchain.tools import ToolRuntime, tool
+from langchain_core.messages import ToolMessage
+from langchain_core.tools import BaseTool
+from langgraph.types import Command
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.browser_tool import BrowserContext
 
 
 class BochaSettings(BaseSettings):
@@ -66,3 +72,32 @@ async def search_bocha(query: str, max_results: int = 6) -> dict[str, Any]:
             for row in rows
         ],
     }
+
+
+def build_web_search_tools() -> list[BaseTool]:
+    """为研究 Agent 注册搜索工具，将候选链接保存到独立状态。"""
+
+    @tool("search_bocha", args_schema=WebSearchInput)
+    async def search_for_research(
+        query: str,
+        runtime: ToolRuntime[BrowserContext],
+        max_results: int = 6,
+    ) -> Command:
+        """搜索候选网页并记录来源；摘要只用于定位，正式取证请调用 browse_for_evidence。"""
+        result = await search_bocha.ainvoke(
+            {"query": query, "max_results": max_results}
+        )
+        runtime.context.browser.register_search_results(result["results"])
+        return Command(
+            update={
+                "search_records": {runtime.tool_call_id: result},
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(result, ensure_ascii=False),
+                        tool_call_id=runtime.tool_call_id,
+                    )
+                ],
+            }
+        )
+
+    return [search_for_research]

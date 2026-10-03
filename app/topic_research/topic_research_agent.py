@@ -8,16 +8,36 @@ from collections.abc import Awaitable, Callable  # 标注节点工厂返回的�
 from datetime import datetime, timezone  # 为命令行研究记录分析时间。
 from typing import Any  # 标注模型和消息集合。
 
-from langchain_core.messages import AIMessage, HumanMessage  # 读取原问题并回写报告。
+import httpx
+from langchain.agents import create_agent
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelCallLimitMiddleware,
+    ModelRetryMiddleware,
+    ToolCallLimitMiddleware,
+)
+from langchain.agents.middleware.types import (
+    ModelRequest,
+    ModelResponse,
+    ToolCallRequest,
+)
+from langchain_core.messages import (  # 读取原问题并回写报告。
+    AIMessage,
+    HumanMessage,
+    ToolMessage,
+)
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
-from langgraph.types import Send  # 并行分派研究子问题。
+from langgraph.types import Command, Send  # 并行分派研究子问题。
+from playwright.async_api import Error as BrowserError
 
+from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
 from app.config.config import settings  # 读取模型配置用于成本估算。
 from app.llm.model import make_fast_llm, make_smart_llm  # 复用项目现有模型工厂。
 from app.observability import get_logger, log_event, timed_node  # 保留请求观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
     AnalysisState,
+    ResearchAgentState,
     SystemState,
 )
 from app.tracing import (  # 记录请求与模型调用。
@@ -26,7 +46,9 @@ from app.tracing import (  # 记录请求与模型调用。
     trace_generation,
     trace_span,
 )
+from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
+    RESEARCH_SYSTEM_PROMPT,
     research_prompt,
     review_prompt,
     split_prompt,
@@ -70,7 +92,9 @@ def make_split(
                 with trace_generation(
                     "topic_split", model=settings.fast_model
                 ) as generation:  # 记录拆题模型调用。
-                    response = await fast_llm.ainvoke(prompt)  # 让快模型生成子问题。
+                    response = await _invoke_model(
+                        fast_llm, prompt
+                    )  # 让快模型生成子问题。
                     if isinstance(
                         response.content, str
                     ):  # 仅文本输出可估算 token 用量。
@@ -101,62 +125,179 @@ def make_split(
     return split  # 返回可注册到子图的节点。
 
 
+async def _invoke_model(llm: Any, prompt: str) -> Any:
+    """为专题研究的直接模型调用设置有限重试和总超时。"""
+    return await asyncio.wait_for(
+        llm.with_retry(stop_after_attempt=2).ainvoke(prompt),
+        timeout=120,
+    )
+
+
+class ResearchModelTrace(AgentMiddleware):
+    """逐轮记录工具决策模型调用，并限制单轮等待时间。"""
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        with trace_generation(
+            "topic_researcher", model=settings.fast_model
+        ) as generation:
+            response = await asyncio.wait_for(handler(request), timeout=60)
+            messages = [*request.messages]
+            if request.system_message is not None:
+                messages.insert(0, request.system_message)
+            generation.usage = {
+                "input": estimate_tokens(
+                    json.dumps(
+                        [message.model_dump(mode="json") for message in messages],
+                        ensure_ascii=False,
+                    )
+                ),
+                "output": estimate_tokens(
+                    json.dumps(
+                        [
+                            message.model_dump(mode="json")
+                            for message in response.result
+                        ],
+                        ensure_ascii=False,
+                    )
+                ),
+            }
+            return response
+
+    async def awrap_tool_call(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
+    ) -> ToolMessage | Command:
+        with trace_span("topic.research_tool", tool=request.tool_call["name"]) as span:
+            try:
+                return await handler(request)
+            except (
+                BrowserError,
+                httpx.HTTPError,
+                TimeoutError,
+                ValueError,
+                RuntimeError,
+                KeyError,
+                TypeError,
+            ) as exc:
+                span.metadata["status"] = "error"
+                error = {
+                    "tool": request.tool_call["name"],
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                return Command(
+                    update={
+                        "tool_errors": [error],
+                        "messages": [
+                            ToolMessage(
+                                content=json.dumps(error, ensure_ascii=False),
+                                tool_call_id=request.tool_call["id"],
+                                status="error",
+                            )
+                        ],
+                    }
+                )
+
+
+def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
+    """复用工具图，每次执行通过上下文注入独立浏览会话。"""
+    return create_agent(
+        model=fast_llm,
+        tools=[*build_web_search_tools(), *build_browser_tools()],
+        state_schema=ResearchAgentState,
+        context_schema=BrowserContext,
+        system_prompt=RESEARCH_SYSTEM_PROMPT,
+        middleware=[
+            ModelCallLimitMiddleware(
+                run_limit=settings.browser_max_steps, exit_behavior="error"
+            ),
+            ToolCallLimitMiddleware(
+                run_limit=settings.browser_max_steps * 2, exit_behavior="error"
+            ),
+            ModelRetryMiddleware(max_retries=1, on_failure="error"),
+            ResearchModelTrace(),
+        ],
+        name="topic_evidence_agent",
+    )
+
+
 def make_researcher(
     fast_llm: Any,
-) -> Callable[
-    [dict[str, Any]], Awaitable[dict[str, list[dict[str, str]]]]
-]:  # 创建单个子问题的研究节点。
-    """只根据模型已有知识分析子问题，不调用外部检索。"""
+) -> Callable[[dict[str, Any]], Awaitable[dict[str, list[dict[str, Any]]]]]:
+    """让研究 Agent 搜索、浏览原文，再根据实际工具证据分析子问题。"""
+    research_agent = build_research_agent(fast_llm)
 
-    @timed_node  # 记录各并行任务的耗时。
-    async def researcher(
-        state: dict[str, Any],
-    ) -> dict[str, list[dict[str, str]]]:  # 返回一项研究发现。
+    @timed_node
+    async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         with trace_span("topic.researcher") as node_span:
             try:
-                subquestion = state["subquestion"]  # 读取本节点负责的问题。
+                subquestion = state["subquestion"]
                 prompt = research_prompt(
-                    state["question"], subquestion
-                )  # 同时提供整体和局部语境。
-                with trace_generation(
-                    "topic_researcher", model=settings.fast_model
-                ) as generation:  # 记录子问题模型调用。
-                    response = await fast_llm.ainvoke(prompt)  # 并行调用快模型。
-                    if isinstance(
-                        response.content, str
-                    ):  # 仅文本输出可估算 token 用量。
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }  # 估算输入输出用量。
+                    state["question"], subquestion, state["scope"]["as_of"]
+                )
+                async with BrowserTool() as browser:
+                    result = await research_agent.ainvoke(
+                        {
+                            "messages": [HumanMessage(content=prompt)],
+                            "search_records": {},
+                            "research_evidence": {},
+                            "tool_errors": [],
+                        },
+                        context=BrowserContext(browser=browser),
+                        config={"recursion_limit": settings.browser_max_steps * 4 + 10},
+                    )
+                response = result["messages"][-1]
                 if (
-                    not isinstance(response.content, str)
+                    not isinstance(response, AIMessage)
+                    or not isinstance(response.content, str)
                     or not response.content.strip()
-                ):  # 检查研究结果。
-                    raise ValueError(
-                        f"研究子问题未返回有效内容：{subquestion}"
-                    )  # 不填充虚构发现。
-                finding = {  # 将模型分析与证据状态一起保存。
-                    "question": subquestion,  # 对应的研究子问题。
-                    "analysis": response.content.strip(),  # 模型生成的分析文本。
-                    "verification": "未联网核验",  # 明确这不是外部资料或实时事实。
-                }  # 完成一项研究发现。
+                ):
+                    raise ValueError(f"研究子问题未返回有效内容：{subquestion}")
+                evidence = list(result["research_evidence"].values())
+                searches = list(result["search_records"].values())
+                verification = (
+                    "已提取网页原文"
+                    if evidence
+                    else "仅有搜索摘要，未提取原文"
+                    if searches
+                    else "未取得外部证据"
+                )
+                finding = {
+                    "question": subquestion,
+                    "analysis": response.content.strip(),
+                    "verification": verification,
+                    "evidence": evidence,
+                    "search_records": searches,
+                    "tool_errors": result["tool_errors"],
+                }
                 log_event(
-                    _LOG, "research.finding.created", question=subquestion
-                )  # 记录完成的子问题。
-                return {"findings": [finding]}  # reducer 将并行结果合并。
+                    _LOG,
+                    "research.finding.created",
+                    question=subquestion,
+                    evidence_count=len(evidence),
+                )
+                return {"findings": [finding]}
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
 
-    return researcher  # 返回可注册到子图的节点。
+    return researcher
 
 
 @timed_node
 def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全部问题。
     return [  # 每个问题交给同一个研究节点独立执行。
         Send(
-            "researcher", {"question": state["question"], "subquestion": item}
+            "researcher",
+            {
+                "question": state["question"],
+                "subquestion": item,
+                "scope": state["scope"],
+            },
         )  # 传入原主题和子问题。
         for item in state["subquestions"]  # 按规划结果产生三个任务。
     ]  # 返回并行任务列表。
@@ -165,7 +306,7 @@ def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全
 def make_summarize(
     smart_llm: Any,
 ) -> Callable[[AnalysisState], Awaitable[dict[str, str]]]:  # 创建全部发现的汇总节点。
-    """综合并行研究发现，并保留未核验边界。"""
+    """综合并行研究发现，并保留原文来源与证据不足的边界。"""
 
     @timed_node  # 延续原图的节点观测。
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
@@ -182,7 +323,9 @@ def make_summarize(
                 with trace_generation(
                     "topic_summarize", model=settings.smart_model
                 ) as generation:  # 记录汇总模型调用。
-                    response = await smart_llm.ainvoke(prompt)  # 调用主模型生成摘要。
+                    response = await _invoke_model(
+                        smart_llm, prompt
+                    )  # 调用主模型生成摘要。
                     if isinstance(
                         response.content, str
                     ):  # 仅文本输出可估算 token 用量。
@@ -263,12 +406,17 @@ def make_writer(
                 question = _latest_question(state["messages"])  # 读取本轮原始研究主题。
                 feedback = state.get("feedback", "")  # 重写时读取审稿意见。
                 prompt = writer_prompt(
-                    question, state["research_summary"], feedback
+                    question,
+                    state["research_summary"],
+                    feedback,
+                    json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
                 with trace_generation(
                     "topic_writer", model=settings.smart_model
                 ) as generation:  # 记录写作模型调用。
-                    response = await smart_llm.ainvoke(prompt)  # 主模型撰写报告。
+                    response = await _invoke_model(
+                        smart_llm, prompt
+                    )  # 主模型撰写报告。
                     if isinstance(
                         response.content, str
                     ):  # 仅文本输出可估算 token 用量。
@@ -281,10 +429,16 @@ def make_writer(
                     or not response.content.strip()
                 ):  # 报告必须有正文。
                     raise ValueError("主题研究报告为空")  # 不返回空报告。
+                evidence_count = sum(
+                    len(item["evidence"]) for item in state["findings"]
+                )
+                covered_count = sum(
+                    bool(item["evidence"]) for item in state["findings"]
+                )
                 report = (
-                    "资料范围：以下分析基于模型已有知识，未联网核验。\n\n"
+                    f"资料范围：提取 {evidence_count} 条网页原文，覆盖 {covered_count}/{len(state['findings'])} 个子问题。\n\n"
                     + response.content.strip()
-                )  # 固定展示资料边界。
+                )
                 return {
                     "report": report,
                     "messages": [AIMessage(content=report)],
@@ -306,11 +460,17 @@ def make_reviewer(
         with trace_span("topic.reviewer") as node_span:
             try:
                 count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
-                prompt = review_prompt(state["report"])  # 提供实际生成的报告。
+                prompt = review_prompt(
+                    state["report"],
+                    _latest_question(state["messages"]),
+                    json.dumps(state["findings"], ensure_ascii=False),
+                )  # 提供实际生成的报告。
                 with trace_generation(
                     "topic_reviewer", model=settings.smart_model
                 ) as generation:  # 记录审稿模型调用。
-                    response = await smart_llm.ainvoke(prompt)  # 主模型评估报告。
+                    response = await _invoke_model(
+                        smart_llm, prompt
+                    )  # 主模型评估报告。
                     if isinstance(
                         response.content, str
                     ):  # 仅文本输出可估算 token 用量。

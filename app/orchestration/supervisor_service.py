@@ -287,11 +287,15 @@ class SupervisorService:
         elif routed_agent == "topic_research_agent":  # 通用研究不依赖币种和维度字段。
             yield _event(  # 推送独立的主题研究结果。
                 "done",  # 标记本轮研究完成。
-                {  # 模型知识研究的返回结构。
+                {  # 返回实际取证后的主题研究结果。
                     "kind": "topic_research",  # 标记普通主题研究。
                     "report": final_state["report"],  # 已审稿的主题报告。
                     "findings": final_state["findings"],  # 三个子问题的研究发现。
-                    "verification": "未联网核验",  # 明确第一版无外部资料。
+                    "verification": "；".join(
+                        dict.fromkeys(
+                            item["verification"] for item in final_state["findings"]
+                        )
+                    ),  # 根据各子问题实际取得的证据说明资料范围。
                 },  # 结束主题研究数据结构。
             )  # 完成主题研究输出。
         elif direct_reply.strip():  # 闲聊或超出研究范围的问题，由 Supervisor 直接回复。

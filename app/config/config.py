@@ -189,13 +189,13 @@ class Settings(BaseSettings):
     vector_weight: float = 0.6
     enable_multi_query: bool = False  # 多视角问题改写会增加模型调用，默认关闭。
 
-    # 浏览器 agent 循环步数上限（成本控制，每步一次 LLM+一次浏览器操作）
+    # 每个专题研究子问题的模型决策轮数上限。
     browser_max_steps: int = 12
     # 单页操作超时（秒）
     browser_page_timeout: int = 15
     # 无头模式（测试/CI 用 True，调试用 False）
     browser_headless: bool = True
-    # 域名 allowlist（L07 安全：逗号分隔，空=用默认 DEFAULT_ALLOWED_DOMAINS）
+    # 固定域名白名单，逗号分隔；空值允许默认域名及实际搜索结果中的域名。
     browser_domain_allowlist: str = ""
 
 
