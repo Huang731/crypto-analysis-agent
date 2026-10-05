@@ -62,7 +62,7 @@ class Settings(BaseSettings):
 
     # 百炼向量模型通过 DashScope SDK 调用，使用独立的 API Key。
     dashscope_api_key: str = Field(
-        default="sk-ws-H.PDMPHML.YRf1.MEQCIB1uZlBLpuHaPGQICan6bo3YokH41UETNoNUAKA2kGdzAiBOuh2mmfyqUkljcbWSlldwJeNRdNLMmcTV_NE3aZqNxg",
+        default="",
         description="百炼向量模型 API Key",
     )
     embedding_model: str = "text-embedding-v4"
