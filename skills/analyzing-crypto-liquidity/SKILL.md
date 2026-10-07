@@ -58,7 +58,7 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源链接 | `source.url` |
+| 来源链接 | `url` |
 
 ### 稳定币市值
 
@@ -80,7 +80,7 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源链接 | `source.url` |
+| 来源链接 | `url` |
 
 ### M2 同比变化
 
@@ -100,7 +100,7 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源链接 | `source.url` |
+| 来源链接 | `url` |
 
 ### 美联储资产负债表 WALCL
 
@@ -117,7 +117,7 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源链接 | `source.url` |
+| 来源链接 | `url` |
 
 ### 思想体系解读
 

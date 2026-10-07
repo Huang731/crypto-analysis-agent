@@ -34,7 +34,7 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源链接 | `source.url` |
+| 来源链接 | `url` |
 
 ### 思想体系解读
 

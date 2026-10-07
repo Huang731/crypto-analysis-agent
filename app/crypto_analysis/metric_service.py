@@ -5,6 +5,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date
 from math import isfinite
 from typing import Any
+from urllib.parse import urlsplit
 
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
@@ -14,6 +15,15 @@ from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.tracing import trace_span
 
 # 指标结果校验与计算
+
+_SOURCE_WEBSITES = {
+    "eodhd.com": "https://eodhd.com/",
+    "pro-api.coinmarketcap.com": "https://coinmarketcap.com/",
+    "api.stlouisfed.org": "https://fred.stlouisfed.org/",
+    "api.cryptoetf.today": "https://cryptoetf.today/",
+    "api.binance.com": "https://www.binance.com/",
+    "fapi.binance.com": "https://www.binance.com/",
+}
 
 
 _METRIC_FIELDS = {
@@ -145,12 +155,13 @@ def missing_metric(
         "unit": None,
         "observed_at": None,
         "source": None,
+        "url": None,
         "score": None,
     }
 
 
 def _normalize_result(
-    skill_name: str, metric_id: str, result: dict[str, Any], source_action: str
+    skill_name: str, metric_id: str, result: dict[str, Any]
 ) -> dict[str, Any]:
     if result.get("status") != "ok":
         status = result.get("status")
@@ -195,6 +206,10 @@ def _normalize_result(
             oi_24h_change_pct=result["oi_24h_change_pct"],
             price_24h_change_pct=result["price_24h_change_pct"],
         )
+    # 报告展示数据提供方官网，取数状态中的真实 API 地址保持原样。
+    source_host = urlsplit(result["source"]).hostname
+    if source_host not in _SOURCE_WEBSITES:
+        raise ValueError(f"指标来源未配置官网：{source_host}")
     return {
         "skill_name": skill_name,
         "indicator_id": metric_id,
@@ -204,7 +219,8 @@ def _normalize_result(
         "calculated_values": calculated_values,
         "unit": result["unit"],
         "observed_at": result["observed_at"],
-        "source": {"action": source_action, "url": result["source"]},
+        "source": result["source"],
+        "url": _SOURCE_WEBSITES[source_host],
         "score": score,
     }
 
@@ -309,7 +325,6 @@ def _compute_metric(
                     skill.name,
                     metric_id,
                     calculated,
-                    evidence["source_action"],
                 )
             except (TypeError, ValueError) as exc:
                 result = missing_metric(skill.name, metric_id, "data_missing", str(exc))
