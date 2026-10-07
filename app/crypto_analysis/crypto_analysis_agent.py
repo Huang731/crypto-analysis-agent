@@ -590,6 +590,16 @@ def aggregate_skill_results(
     }
 
 
+def metric_agent_step_limit(metric_count: int) -> int:
+    """按指标数量给出工具图步数上限。
+
+    图的每一步是一次模型决策或一次工具执行。每个指标按取数、计算
+    各占一轮，且一轮只调用一个工具；全部完成后还需要一步模型收尾，
+    并额外保留一轮用于纠正一次错误调用。
+    """
+    return metric_count * 4 + 3
+
+
 async def execute_skill(
     metric_agent: Any,
     skill: LoadedSkill,
@@ -612,7 +622,9 @@ async def execute_skill(
                         "research_evidence": [],
                     },
                     context={"skill": scoring, "scope": dict(scope)},
-                    config={"recursion_limit": 6},
+                    config={
+                        "recursion_limit": metric_agent_step_limit(len(scoring.metrics))
+                    },
                 )
             # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
             records = state["indicator_results"]
@@ -737,19 +749,9 @@ def build_dynamic_analysis_agent(
                 if not names:
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
                     return {"report": report, "messages": [AIMessage(content=report)]}
-                results = state.get("dimension_results", [])
-                loader = SkillLoader.from_snapshot(
-                    {name: state["skill_sources"][name] for name in names}
+                ordered = sorted(
+                    state["dimension_results"], key=lambda item: item["dimension_id"]
                 )
-                expected_ids = [
-                    loader.load_definition(name).scoring.dimension_id for name in names
-                ]
-                by_dimension = {item["dimension_id"]: item for item in results}
-                if len(by_dimension) != len(results) or set(by_dimension) != set(
-                    expected_ids
-                ):
-                    raise ValueError("Skill worker 结果缺失、重复或超出选择范围")
-                ordered = [by_dimension[dimension_id] for dimension_id in expected_ids]
                 facts = json.dumps(ordered, ensure_ascii=False)
                 prompt = analysis_report_prompt(
                     state["scope"]["target_asset"],
