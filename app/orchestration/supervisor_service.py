@@ -93,6 +93,19 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
             ],
             ensure_ascii=False,
         )
+        # 保留模型原始返回字段，用于区分空回复与工具调用解析异常。
+        log_event(
+            _LOG,
+            "supervisor.decision.response",
+            run_id=str(run_id),
+            model=model,
+            duration_ms=round((time.perf_counter() - started) * 1000),
+            generations=[
+                [item.model_dump(mode="json", serialize_as_any=True) for item in batch]
+                for batch in response.generations
+            ],
+            llm_output=response.llm_output,
+        )
         with trace_generation("supervisor_decision", model=model) as generation:
             generation.start = started
             generation.usage = {
@@ -169,6 +182,15 @@ class SupervisorService:
                         and node == "supervisor"
                         and isinstance(delta, dict)
                     ):  # 从工具调用识别实际分派。
+                        # 同时记录父图实际交付的消息，核对模型返回与服务读取结果。
+                        log_event(
+                            _LOG,
+                            "supervisor.state.update",
+                            messages=[
+                                message.model_dump(mode="json")
+                                for message in delta.get("messages", [])
+                            ],
+                        )
                         for message in delta.get(
                             "messages", []
                         ):  # Supervisor 可能一次返回多条消息。
@@ -298,6 +320,15 @@ class SupervisorService:
             # 以独立 kind 返回，前端不会把它当作研究报告展示。
             yield _event("done", {"kind": "direct", "report": direct_reply.strip()})
         else:  # 既未分派也没有回复内容。
+            _LOG.error(
+                "supervisor.result.empty",
+                extra={
+                    "event": "supervisor.result.empty",
+                    "routed_agent": routed_agent,
+                    "direct_reply": direct_reply,
+                    "final_state_keys": sorted(final_state),
+                },
+            )
             raise ValueError("Supervisor 未分派研究 Agent 且未给出回复")
 
 

@@ -390,6 +390,7 @@ def build_dynamic_analysis_agent(
                     state["skill_results"], key=lambda item: item["skill_name"]
                 )
                 facts = json.dumps(ordered, ensure_ascii=False)
+                print(f"facts: {facts}", flush=True)
                 skill_loader = SkillLoader.from_snapshot(
                     {name: state["skill_sources"][name] for name in names}
                 )
