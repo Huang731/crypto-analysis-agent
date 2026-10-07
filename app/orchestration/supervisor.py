@@ -16,7 +16,7 @@ from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import (
     build_topic_research_agent,  # 创建通用主题研究图。
 )
-from prompts.supervisor import SUPERVISOR_PROMPT  # 调度说明与业务图分离。
+from prompts.supervisor import supervisor_prompt  # 调度说明与业务图分离。
 
 
 class SupervisorState(TypedDict, total=False):  # 两个 Agent 共用的外层状态。
@@ -41,7 +41,7 @@ def build_supervisor_system(
     workflow = create_supervisor(  # 创建实际运行的中央分派图。
         agents=[crypto_agent, topic_agent],  # 注册两个独立的研究职责。
         model=fast,  # 使用主模型判断用户问题意图。
-        prompt=SUPERVISOR_PROMPT,  # 要求每轮只交给一个专业 Agent。
+        prompt=supervisor_prompt(),  # 要求每轮只交给一个专业 Agent。
         state_schema=SupervisorState,  # 让请求范围和报告跨 Agent 传递。
         output_mode="last_message",  # 只把子 Agent 的最终消息交回调度中心。
         parallel_tool_calls=None,  # 智谱未声明此参数，不向兼容接口发送。
