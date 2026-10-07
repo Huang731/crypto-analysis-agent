@@ -48,7 +48,6 @@ def calculate_fear_and_greed(
         "record_timestamp": observed.isoformat(),
         "signal_reference": signal,
         "score": score,
-        "confidence": 1,
         "unit": "index (0-100)",
         "observed_at": observed.date().isoformat(),
         "source": raw["source"],

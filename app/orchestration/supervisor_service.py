@@ -235,9 +235,6 @@ class SupervisorService:
                             final_state["dimension_results"].extend(
                                 delta["dimension_results"]
                             )  # 合并维度结果。
-                            final_state["findings"].extend(
-                                delta["findings"]
-                            )  # 合并指标事实。
                         else:
                             final_state.update(delta)  # 保存计划范围或最终报告。
                     elif node == "writer" and "report" in delta:
@@ -277,7 +274,6 @@ class SupervisorService:
                 {  # 维度报告及结构化事实。
                     "kind": "crypto_analysis",  # 标记当前返回类型。
                     "report": final_state["report"],  # 已生成的维度报告。
-                    "findings": final_state["findings"],  # 指标事实清单。
                     "target_asset": final_state["scope"][
                         "target_asset"
                     ],  # 使用校验过的币种。

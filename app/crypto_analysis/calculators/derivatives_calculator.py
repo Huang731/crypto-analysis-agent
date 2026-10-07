@@ -191,7 +191,6 @@ def calculate_derivatives(
             **result,
             "status": "ok",
             "score": score,
-            "confidence": 1,
             "unit": "%",
             "observed_at": datetime.fromtimestamp(latest / 1000, timezone.utc)
             .date()

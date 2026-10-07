@@ -29,6 +29,7 @@ from app.crypto_analysis.calculators.fred_calculator import (
 from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics
 from app.crypto_analysis.calculators.trend_calculator import calculate_trend
 from app.crypto_analysis.crypto_analysis_state import (
+    DimensionWorkerState,
     DynamicAnalysisState,
     MetricAgentState,
     MetricContext,
@@ -46,7 +47,7 @@ from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
     metric_agent_system_prompt,
-    skill_execution_prompt,
+    thought_retrieval_prompt,
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
@@ -238,7 +239,6 @@ def missing_metric(
         "observed_at": None,
         "source": None,
         "score": None,
-        "confidence": 0,
     }
 
 
@@ -261,7 +261,6 @@ def _normalize_result(
         "observed_at",
         "source",
         "score",
-        "confidence",
     ]
     absent = [field for field in required if result.get(field) is None]
     if absent:
@@ -274,9 +273,6 @@ def _normalize_result(
         or not 0 <= score <= 10
     ):
         raise ValueError(f"{dimension_id}.{metric_id} 分数无效")
-    confidence = result["confidence"]
-    if confidence not in (0, 0.5, 0.75, 1):
-        raise ValueError(f"{dimension_id}.{metric_id} confidence 无效")
     if not all(
         isinstance(result[field], str) and result[field]
         for field in ("unit", "observed_at", "source")
@@ -305,33 +301,31 @@ def _normalize_result(
         "observed_at": result["observed_at"],
         "source": {"action": source_action, "url": result["source"]},
         "score": score,
-        "confidence": confidence,
     }
 
 
 def _calculate_dxy(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
     result = calculate_dxy_metrics(raw["rows"], cutoff.date())
-    return {**result, "confidence": 1}
+    return result
 
 
 def _calculate_stable(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
     result = _stablecoin_metrics(raw["payload"], cutoff)
-    confidence = 0.75 if result.get("conflict_flag") else 1
-    return {**result, "confidence": confidence}
+    return result
 
 
 def _calculate_m2(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
     result = calculate_m2_yoy_change(raw["payload"], cutoff.date())
-    return {**result, "confidence": 1}
+    return result
 
 
 def _calculate_walcl(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
     result = calculate_walcl_ma4(raw["payload"], cutoff.date())
-    return {**result, "confidence": 1}
+    return result
 
 
 def _calculate_etf(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -569,19 +563,10 @@ def aggregate_skill_results(
             )
             / coverage
         )
-        raw_confidence = sum(
-            metric.weight * valid[metric.id]["confidence"]
-            for metric in scoring.metrics
-            if metric.id in valid
-        )
-        confidence = next(
-            level for level in (1, 0.75, 0.5, 0) if raw_confidence >= level - 1e-9
-        )
         status = "ok" if len(valid) == len(scoring.metrics) else "partial"
         reason = None
     else:
         score = None
-        confidence = 0
         reason = "；".join(
             item["reason"]
             for item in indicators
@@ -601,10 +586,6 @@ def aggregate_skill_results(
         "status": status,
         "reason": reason,
         "score": score,
-        "confidence": confidence,
-        "coverage": coverage,
-        "valid_indicators": len(valid),
-        "total_indicators": len(scoring.metrics),
         "indicators": indicators,
     }
 
@@ -631,7 +612,7 @@ async def execute_skill(
                         "research_evidence": [],
                     },
                     context={"skill": scoring, "scope": dict(scope)},
-                    config={"recursion_limit": 60},
+                    config={"recursion_limit": 6},
                 )
             # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
             records = state["indicator_results"]
@@ -647,8 +628,6 @@ async def execute_skill(
                 for metric in scoring.metrics
             ]
             result = aggregate_skill_results(scoring, indicators)
-            result["skill_name"] = skill.name
-            result["skill_guidance"] = skill.body
             result["research_evidence"] = state["research_evidence"]
             return result
         except Exception:
@@ -709,7 +688,8 @@ def build_dynamic_analysis_agent(
         ]
 
     @timed_node
-    async def dimension_worker(state: dict[str, Any]) -> dict[str, Any]:
+    async def dimension_worker(state: DimensionWorkerState) -> DynamicAnalysisState:
+        """执行当前技能并附加理论材料，指标只保存在维度结果中。"""
         with trace_span(
             "crypto.dimension_worker", skill_name=state["skill_name"]
         ) as node_span:
@@ -720,12 +700,10 @@ def build_dynamic_analysis_agent(
                 skill = skill_loader.load_definition(state["skill_name"])
                 scoring = skill.scoring
                 result = await execute_skill(metric_agent, skill, state["scope"])
-                # 固定模板检索理论材料，不额外调用模型生成查询。
-                metric_names = "、".join(metric.label for metric in scoring.metrics)
-                query = (
-                    f"如何解释{scoring.name}对{state['scope']['target_asset']}的影响？"
-                    f"相关指标：{metric_names}。"
-                    "请查找相关理论原则、作用机制、信号分歧和适用边界。"
+                query = thought_retrieval_prompt(
+                    state["scope"]["target_asset"],
+                    scoring.name,
+                    [metric.label for metric in scoring.metrics],
                 )
                 with trace_span(
                     "analysis.dimension.thought_retrieval",
@@ -746,11 +724,7 @@ def build_dynamic_analysis_agent(
                         ],
                     }
                     span.output = {"document_count": len(documents)}
-                findings = [
-                    json.dumps(item, ensure_ascii=False)
-                    for item in result["indicators"]
-                ]
-                return {"dimension_results": [result], "findings": findings}
+                return {"dimension_results": [result]}
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -764,28 +738,23 @@ def build_dynamic_analysis_agent(
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
                     return {"report": report, "messages": [AIMessage(content=report)]}
                 results = state.get("dimension_results", [])
-                by_name = {item["skill_name"]: item for item in results}
-                if len(by_name) != len(results) or set(by_name) != set(names):
-                    raise ValueError("Skill worker 结果缺失、重复或超出选择范围")
-                ordered = [by_name[name] for name in names]
-                facts = json.dumps(
-                    [
-                        {
-                            key: value
-                            for key, value in item.items()
-                            if key != "skill_guidance"
-                        }
-                        for item in ordered
-                    ],
-                    ensure_ascii=False,
+                loader = SkillLoader.from_snapshot(
+                    {name: state["skill_sources"][name] for name in names}
                 )
-                guidance = "\n\n".join(item["skill_guidance"] for item in ordered)
+                expected_ids = [
+                    loader.load_definition(name).scoring.dimension_id for name in names
+                ]
+                by_dimension = {item["dimension_id"]: item for item in results}
+                if len(by_dimension) != len(results) or set(by_dimension) != set(
+                    expected_ids
+                ):
+                    raise ValueError("Skill worker 结果缺失、重复或超出选择范围")
+                ordered = [by_dimension[dimension_id] for dimension_id in expected_ids]
+                facts = json.dumps(ordered, ensure_ascii=False)
                 prompt = analysis_report_prompt(
                     state["scope"]["target_asset"],
                     state["scope"]["original_question"],
                     facts,
-                    names,
-                    guidance,
                 )
                 with trace_generation(
                     "crypto_analysis_writer", model=settings.smart_model

@@ -237,7 +237,7 @@
         if (Array.isArray(data.dimensions)) { // 维度结果存在时补充维度汇总。
           for (const dimension of data.dimensions) records.push({ dimension_result: dimension }); // 保留每维得分和缺失原因。
         } // 结束维度汇总。
-        renderFindings(records.length ? records : data.findings); // 兼容既有发现展示入口。
+        renderFindings(data.kind === "topic_research" ? data.findings : records); // 主题研究展示发现，维度分析展示结构化指标。
         if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
         if (data.as_of) addProgress("截止时间", data.as_of); // 展示整轮共用的 UTC 截止时间。
         if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。

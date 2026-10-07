@@ -96,5 +96,4 @@ def calculate_fed_rate_change(
         "observed_at": current_day.isoformat(),
         "source": raw["source"],
         "score": score,
-        "confidence": 1,
     }

@@ -37,5 +37,12 @@ class DynamicAnalysisState(TypedDict, total=False):
     skill_sources: dict[str, str]
     plan: dict[str, Any]
     dimension_results: Annotated[list[dict[str, Any]], operator.add]
-    findings: Annotated[list[str], operator.add]
     report: str
+
+
+class DimensionWorkerState(TypedDict):
+    """并行维度节点的独立输入，仅包含当前技能快照和请求范围。"""
+
+    skill_name: str
+    skill_source: str
+    scope: dict[str, str]
