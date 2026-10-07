@@ -47,9 +47,8 @@ def thought_retrieval_prompt(
     """按固定模板检索技能理论材料，不额外调用模型生成查询。"""
     metric_names = "、".join(metric_labels)
     return (
-        f"如何解释{skill_name}对{target_asset}的影响？"
+        f"检索与{target_asset}的{skill_name}相关的知识。"
         f"相关指标：{metric_names}。"
-        "请查找相关理论原则、作用机制、信号分歧和适用边界。"
     )
 
 
