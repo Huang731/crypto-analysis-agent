@@ -1,4 +1,4 @@
-"""按维度04规则校验时间窗口，并计算OI及Funding评分。"""
+"""按既定规则校验时间窗口，并计算OI及Funding评分。"""
 
 from datetime import datetime, timezone
 from decimal import Decimal

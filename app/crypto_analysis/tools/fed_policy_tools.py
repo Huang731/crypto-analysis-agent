@@ -1,4 +1,4 @@
-"""维度02工具：取得政策目标区间，并计算三个月利率净变化。"""
+"""取得政策目标区间，并计算三个月利率净变化。"""
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
@@ -12,7 +12,6 @@ from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.crypto_analysis.metric_service import (
     _compute_metric,
     _fetch_evidence,
-    _tool_error,
 )
 from app.crypto_analysis.sources.fred_source import get_fed_target_range
 
@@ -20,10 +19,8 @@ from app.crypto_analysis.sources.fred_source import get_fed_target_range
 @tool
 async def get_fred_target_range(
     runtime: ToolRuntime[MetricToolContext],
-) -> Command | ToolMessage:
+) -> Command:
     """从 FRED 取得 DFEDTARL/DFEDTARU 原始日度序列。返回 evidence_id，供利率变化计算工具使用。"""
-    if runtime.context["skill"].dimension_id != "02":
-        return _tool_error(runtime, "此工具只用于维度02")
     return await _fetch_evidence(
         runtime,
         "fed_target_range",
@@ -48,5 +45,5 @@ def calculate_fed_rate_change_indicator(
 
 
 def build_fed_policy_tools() -> list[BaseTool]:
-    """维度02只注册取数与程序计算工具。"""
+    """政策利率的取数与程序计算工具。"""
     return [get_fred_target_range, calculate_fed_rate_change_indicator]

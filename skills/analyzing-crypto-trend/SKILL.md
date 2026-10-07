@@ -5,14 +5,12 @@ tools:
   - get_binance_trend_data
   - calculate_trend_indicator
 scoring:
-  dimension_id: '05'
   name: 趋势与均线
   metrics:
   - id: Trend
     label: Trend
     weight: 1.0
     kind: numeric
-  overall_weight: 0.25
 ---
 
 # 趋势与均线

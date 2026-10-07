@@ -1,4 +1,4 @@
-"""维度02：根据 FRED 政策利率上下限计算三个月净变化。"""
+"""根据 FRED 政策利率上下限计算三个月净变化。"""
 
 import calendar
 from datetime import date

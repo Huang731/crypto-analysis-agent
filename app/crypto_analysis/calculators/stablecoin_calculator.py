@@ -17,7 +17,7 @@ _BASE_URL = "https://pro-api.coinmarketcap.com"  # 保留原有结果来源标�
 def _stablecoin_metrics(
     raw: dict[str, Any], scope: dict[str, str]
 ) -> dict[str, Any]:  # 定义该指标的程序计算函数。
-    """按两个币种的 UTC 日期对齐，计算维度 01 所需指标。"""
+    """按两个币种的 UTC 日期对齐，计算稳定币流动性指标。"""
     data = raw["payload"].get("data")  # 计算或保存接口中的币种数据。
     if not isinstance(data, dict):  # 校验当前条件并决定后续计算。
         raise TypeError("CMC 稳定币响应缺少 data 对象")  # 拒绝无效或不足的数据。

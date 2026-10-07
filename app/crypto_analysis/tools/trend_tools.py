@@ -1,4 +1,4 @@
-"""维度05工具：趋势与均线的取数和计算。"""
+"""趋势与均线的取数和计算。"""
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
@@ -16,7 +16,7 @@ from app.crypto_analysis.sources.binance_source import get_binance_trend_klines
 
 @tool
 async def get_binance_trend_data(runtime: ToolRuntime[MetricToolContext]) -> Command:
-    """通过官方SDK获取维度05完整UTC日线，返回交给calculate_trend_indicator的evidence_id。"""
+    """通过官方SDK获取完整UTC日线，返回交给calculate_trend_indicator的evidence_id。"""
     return await _fetch_evidence(
         runtime,
         "trend",
@@ -33,10 +33,10 @@ async def get_binance_trend_data(runtime: ToolRuntime[MetricToolContext]) -> Com
 def calculate_trend_indicator(
     evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
-    """按维度05公式用代码计算300根日线的均线、Wilder ADX、DI及固定评分。"""
+    """按既定公式用代码计算300根日线的均线、Wilder ADX、DI及固定评分。"""
     return _compute_metric(runtime, evidence_id, "Trend", "trend", calculate_trend)
 
 
 def build_trend_tools() -> list[BaseTool]:
-    """维度05：趋势与均线的取数和计算工具。"""
+    """趋势与均线的取数和计算工具。"""
     return [get_binance_trend_data, calculate_trend_indicator]

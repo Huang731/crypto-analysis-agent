@@ -6,7 +6,6 @@ tools:
   - calculate_oi_indicator
   - calculate_funding_indicator
 scoring:
-  dimension_id: '04'
   name: 衍生品数据
   metrics:
   - id: OI
@@ -17,7 +16,6 @@ scoring:
     label: Funding
     weight: 0.4
     kind: numeric
-  overall_weight: 0.1
 ---
 
 # 衍生品数据

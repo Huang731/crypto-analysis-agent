@@ -1,4 +1,4 @@
-"""维度06工具：市场情绪的取数和计算。"""
+"""市场情绪的取数和计算。"""
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
@@ -32,12 +32,12 @@ async def get_cmc_fear_greed(runtime: ToolRuntime[MetricToolContext]) -> Command
 def calculate_fear_greed_indicator(
     evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
-    """按维度06指数区间计算Fear_Greed固定分档，记录时间仅用于展示。"""
+    """按指数区间计算Fear_Greed固定分档，记录时间仅用于展示。"""
     return _compute_metric(
         runtime, evidence_id, "Fear_Greed", "fear_greed", calculate_fear_and_greed
     )
 
 
 def build_sentiment_tools() -> list[BaseTool]:
-    """维度06：市场情绪的取数和计算工具。"""
+    """市场情绪的取数和计算工具。"""
     return [get_cmc_fear_greed, calculate_fear_greed_indicator]

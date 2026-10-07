@@ -1,4 +1,4 @@
-"""维度04工具：衍生品OI与Funding的取数和计算。"""
+"""衍生品OI与Funding的取数和计算。"""
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
@@ -35,7 +35,7 @@ async def get_binance_derivatives_data(
 def calculate_oi_indicator(
     evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
-    """读取衍生品证据，按维度04的7日OI、价格及Funding拥挤规则计算OI。"""
+    """读取衍生品证据，按7日OI、价格及Funding拥挤规则计算OI。"""
     return _compute_metric(
         runtime,
         evidence_id,
@@ -60,7 +60,7 @@ def calculate_funding_indicator(
 
 
 def build_derivatives_tools() -> list[BaseTool]:
-    """维度04：衍生品OI与Funding的取数和计算工具。"""
+    """衍生品OI与Funding的取数和计算工具。"""
     return [
         get_binance_derivatives_data,
         calculate_oi_indicator,

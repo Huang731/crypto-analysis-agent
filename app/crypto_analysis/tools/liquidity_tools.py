@@ -1,4 +1,4 @@
-"""维度01工具：美元流动性与加密内部流动性的取数和计算。"""
+"""美元流动性与加密内部流动性的取数和计算。"""
 
 from typing import Literal
 
@@ -106,7 +106,7 @@ def calculate_fed_balance_indicator(
 
 
 def build_liquidity_tools() -> list[BaseTool]:
-    """维度01：美元流动性与加密内部流动性的取数和计算工具。"""
+    """美元流动性与加密内部流动性的取数和计算工具。"""
     return [
         get_eodhd_dxy,
         get_cmc_stablecoin_market_cap,

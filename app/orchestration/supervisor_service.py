@@ -28,7 +28,7 @@ _NODE_LABELS = {
     "crypto_analysis_agent": "加密货币研究",
     "topic_research_agent": "主题研究",
     "plan": "识别币种与规划工具",
-    "dimension_worker": "执行维度",
+    "skill_worker": "执行技能",
     "research_team": "并行研究",
     "writer": "撰写报告",
     "reviewer": "审稿",
@@ -139,7 +139,7 @@ class SupervisorService:
                 yield _event("progress", {"label": "问题改写", "status": question})
         yield _event("progress", {"detail": "正在判断问题意图"})
         final_state: dict = {
-            "dimension_results": [],
+            "skill_results": [],
             "findings": [],
         }  # 累积所选 Agent 的结果。
         routed_agent: str | None = None  # 记录 Supervisor 实际交接的 Agent。
@@ -231,10 +231,10 @@ class SupervisorService:
                     yield _event("progress", progress)
                     # 父图更新构成最终状态，并行列表需要逐项累积。
                     if not namespace:
-                        if node == "dimension_worker":  # 每个维度会单独返回一次增量。
-                            final_state["dimension_results"].extend(
-                                delta["dimension_results"]
-                            )  # 合并维度结果。
+                        if node == "skill_worker":  # 每个技能会单独返回一次增量。
+                            final_state["skill_results"].extend(
+                                delta["skill_results"]
+                            )  # 合并技能结果。
                         else:
                             final_state.update(delta)  # 保存计划范围或最终报告。
                     elif node == "writer" and "report" in delta:
@@ -260,29 +260,27 @@ class SupervisorService:
                         continue  # 研究与汇总文本仅供内部写作使用。
                     yield _event("token", {"node": node, "content": content})
 
-        if routed_agent == "crypto_analysis_agent":  # 维度路径沿用原有完成事件字段。
-            dimensions = sorted(
-                final_state["dimension_results"], key=lambda item: item["dimension_id"]
-            )  # 固定维度展示顺序。
+        if routed_agent == "crypto_analysis_agent":  # 技能路径沿用原有完成事件字段。
+            skills = sorted(
+                final_state["skill_results"], key=lambda item: item["skill_name"]
+            )  # 固定技能展示顺序。
             indicators = [
-                indicator
-                for dimension in dimensions
-                for indicator in dimension["indicators"]
-            ]  # 汇总各维指标。
-            yield _event(  # 保留前端现有维度数据结构。
+                indicator for skill in skills for indicator in skill["indicators"]
+            ]  # 汇总各技能指标。
+            yield _event(  # 保留前端现有技能数据结构。
                 "done",  # 标记本轮分析完成。
-                {  # 维度报告及结构化事实。
+                {  # 技能报告及结构化事实。
                     "kind": "crypto_analysis",  # 标记当前返回类型。
-                    "report": final_state["report"],  # 已生成的维度报告。
+                    "report": final_state["report"],  # 已生成的技能报告。
                     "target_asset": final_state["scope"][
                         "target_asset"
                     ],  # 使用校验过的币种。
                     "as_of": final_state["scope"]["as_of"],  # 返回固定截止时间。
-                    "dimensions": dimensions,  # 返回维度状态。
+                    "skill_results": skills,  # 返回技能状态。
                     "indicators": indicators,  # 返回全部指标记录。
-                },  # 结束维度数据结构。
-            )  # 推送维度完成事件。
-        elif routed_agent == "topic_research_agent":  # 通用研究不依赖币种和维度字段。
+                },  # 结束技能数据结构。
+            )  # 推送技能完成事件。
+        elif routed_agent == "topic_research_agent":  # 通用研究不依赖币种和技能字段。
             yield _event(  # 推送独立的主题研究结果。
                 "done",  # 标记本轮研究完成。
                 {  # 返回实际取证后的主题研究结果。
@@ -307,9 +305,9 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     """把节点 state delta 摘要成前端可读的进度事件。"""
     info = {"node": node, "label": _NODE_LABELS.get(node, node)}
     if node == "topic_research_agent":  # 显示通用研究完成进度。
-        info["status"] = "主题研究已完成"  # 与维度分开展示。
-    elif node == "crypto_analysis_agent":  # 显示维度分析完成进度。
-        info["status"] = "加密货币维度分析已完成"  # 保留币种分析语义。
+        info["status"] = "主题研究已完成"  # 与技能分开展示。
+    elif node == "crypto_analysis_agent":  # 显示技能分析完成进度。
+        info["status"] = "加密货币技能分析已完成"  # 保留币种分析语义。
     elif node == "researcher" and "findings" in delta:  # 显示单个子问题完成。
         info["status"] = (
             f"已分析：{delta['findings'][0]['question']}"  # 读取研究节点的结构化问题。
@@ -320,10 +318,10 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     elif node == "writer" and "report" in delta:
         info["status"] = f"报告已生成（{len(delta.get('report', ''))} 字）"
     elif node == "plan":  # 计划完成时显示模型识别的币种。
-        info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行维度"
-    elif node == "dimension_worker":  # 维度执行完成时显示状态。
-        item = delta["dimension_results"][0]  # 当前增量只对应一个维度。
-        info["status"] = f"维度 {item['name']}：{item['status']}"
+        info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行技能"
+    elif node == "skill_worker":  # 技能执行完成时显示状态。
+        item = delta["skill_results"][0]  # 当前增量只对应一个技能。
+        info["status"] = f"技能 {item['name']}：{item['status']}"
     elif node == "reviewer":
         info["status"] = f"审稿：{delta.get('review_decision', '?')}"
         info["review_count"] = delta.get("review_count", 0)  # 展示当前审稿轮次。

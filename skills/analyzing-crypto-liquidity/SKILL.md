@@ -10,7 +10,6 @@ tools:
   - calculate_m2_indicator
   - calculate_fed_balance_indicator
 scoring:
-  dimension_id: '01'
   name: 美元流动性与加密内部流动性
   metrics:
   - id: DXY_Trend
@@ -29,7 +28,6 @@ scoring:
     label: 美联储资产负债表 WALCL
     weight: 0.15
     kind: numeric
-  overall_weight: 0.2
 ---
 
 # 美元流动性与加密内部流动性

@@ -132,7 +132,7 @@ async def ask(
     """
     thread_id: str = request.state.thread_id
     trace_id: str = request.state.trace_id
-    # 在请求入口固定一次 UTC 截止时间，保证六个分析维度使用同一时间点的数据。
+    # 在请求入口固定一次 UTC 截止时间，保证各个分析技能使用同一时间点的数据。
     scope = create_request_scope(req.question, thread_id, trace_id)
 
     async def event_generator() -> AsyncIterator[dict[str, str]]:

@@ -5,14 +5,12 @@ tools:
   - get_fred_target_range
   - calculate_fed_rate_change_indicator
 scoring:
-  dimension_id: '02'
   name: 美联储政策与利率倾向
   metrics:
   - id: Fed_Rate_Change_3M
     label: 三个月政策利率净变化
     weight: 1.0
     kind: numeric
-  overall_weight: 0.15
 ---
 
 # 美联储政策与利率倾向

@@ -5,14 +5,12 @@ tools:
   - get_etf_flows
   - calculate_etf_indicator
 scoring:
-  dimension_id: '03'
   name: ETF资金流
   metrics:
   - id: ETF_Flows
     label: ETF_Flows
     weight: 1.0
     kind: numeric
-  overall_weight: 0.15
 ---
 
 # ETF资金流

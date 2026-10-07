@@ -1,4 +1,4 @@
-"""通过Binance官方SDK读取维度04公开行情。"""
+"""通过Binance官方SDK读取衍生品公开行情。"""
 
 import asyncio
 from datetime import datetime
@@ -120,5 +120,5 @@ def _fetch_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
 
 
 async def get_binance_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
-    """用官方SDK获取维度05所需的完整UTC现货日线，不计算技术指标。"""
+    """用官方SDK获取趋势分析所需的完整UTC现货日线，不计算技术指标。"""
     return await asyncio.to_thread(_fetch_trend_klines, target_asset, as_of)

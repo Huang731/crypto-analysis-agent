@@ -1,4 +1,4 @@
-"""加密货币分析：请求规划、维度执行、并行汇总及报告生成。"""
+"""加密货币分析：请求规划、技能执行、并行汇总及报告生成。"""
 
 import json
 from collections.abc import Awaitable, Callable
@@ -17,16 +17,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
-    DimensionWorkerState,
     DynamicAnalysisState,
     MetricAgentState,
     MetricToolContext,
+    SkillWorkerState,
 )
 from app.crypto_analysis.metric_service import missing_metric
 from app.crypto_analysis.skill_loader import (
     LoadedSkill,
     SkillLoader,
-    SkillScoring,
     get_skill_loader,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
@@ -56,7 +55,7 @@ class AnalysisPlan(BaseModel):
     @field_validator("skill_names")
     @classmethod
     def unique_skill_names(cls, names: list[str]) -> list[str]:
-        """拒绝重复技能，避免并行派发同一维度多次。"""
+        """拒绝重复技能，避免并行派发同一技能多次。"""
         if len(names) != len(set(names)):
             raise ValueError("分析计划中的技能名称不能重复")
         return names
@@ -160,18 +159,19 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
     )
 
 
-# 维度聚合与执行
+# 技能聚合与执行
 
 
 def aggregate_skill_results(
-    scoring: SkillScoring, indicators: list[dict[str, Any]]
+    skill: LoadedSkill, indicators: list[dict[str, Any]]
 ) -> dict[str, Any]:
     """根据 Skill 权重聚合有效指标，不设置最低覆盖率。"""
+    scoring = skill.scoring
     ids = [item["indicator_id"] for item in indicators]
     if len(ids) != len(set(ids)) or set(ids) != {
         metric.id for metric in scoring.metrics
     }:
-        raise ValueError("维度指标记录不完整或重复")
+        raise ValueError("技能指标记录不完整或重复")
     valid = {
         item["indicator_id"]: item for item in indicators if item["status"] == "ok"
     }
@@ -203,7 +203,7 @@ def aggregate_skill_results(
         else:
             status = "data_missing"
     return {
-        "dimension_id": scoring.dimension_id,
+        "skill_name": skill.name,
         "name": scoring.name,
         "status": status,
         "reason": reason,
@@ -227,15 +227,11 @@ async def execute_skill(
     skill: LoadedSkill,
     scope: dict[str, str],
 ) -> dict[str, Any]:
-    """让维度 Agent 自主调用工具，只接收工具写入的可核验指标结果。"""
+    """让技能 Agent 自主调用工具，只接收工具写入的可核验指标结果。"""
     scoring = skill.scoring
-    with trace_span(
-        "analysis.dimension.execute", dimension_id=scoring.dimension_id
-    ) as node_span:
+    with trace_span("analysis.skill.execute", skill_name=skill.name) as node_span:
         try:
-            with trace_span(
-                "analysis.metric_agent.graph", dimension_id=scoring.dimension_id
-            ):
+            with trace_span("analysis.metric_agent.graph", skill_name=skill.name):
                 state = await metric_agent.ainvoke(
                     {
                         "messages": [HumanMessage(content=skill.body)],
@@ -243,7 +239,7 @@ async def execute_skill(
                         "indicator_results": {},
                         "research_evidence": [],
                     },
-                    context={"skill": scoring, "scope": dict(scope)},
+                    context={"skill": skill, "scope": dict(scope)},
                     config={
                         "recursion_limit": metric_agent_step_limit(len(scoring.metrics))
                     },
@@ -254,14 +250,14 @@ async def execute_skill(
                 records[metric.id]
                 if metric.id in records
                 else missing_metric(
-                    scoring.dimension_id,
+                    skill.name,
                     metric.id,
                     "data_missing",
-                    "维度 Agent 未取得该指标的可核验工具结果",
+                    "技能 Agent 未取得该指标的可核验工具结果",
                 )
                 for metric in scoring.metrics
             ]
-            result = aggregate_skill_results(scoring, indicators)
+            result = aggregate_skill_results(skill, indicators)
             result["research_evidence"] = state["research_evidence"]
             return result
         except Exception:
@@ -269,7 +265,7 @@ async def execute_skill(
             raise
 
 
-# 分析主图：规划、并行维度、报告
+# 分析主图：规划、并行技能、报告
 
 
 def build_dynamic_analysis_agent(
@@ -282,7 +278,7 @@ def build_dynamic_analysis_agent(
                 skill_loader = get_skill_loader()
                 question = state["scope"].get("original_question")
                 if not isinstance(question, str) or not question.strip():
-                    raise ValueError("维度分析缺少有效用户问题")
+                    raise ValueError("技能分析缺少有效用户问题")
                 selection = await create_analysis_plan(
                     fast_llm,
                     question,
@@ -310,13 +306,13 @@ def build_dynamic_analysis_agent(
                 raise
 
     @timed_node
-    def send_dimensions(state: DynamicAnalysisState) -> list[Send] | str:
+    def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
         names = state["plan"]["skill_names"]
         if not names:
             return "writer"
         return [
             Send(
-                "dimension_worker",
+                "skill_worker",
                 {
                     "skill_name": name,
                     "skill_source": state["skill_sources"][name],
@@ -327,10 +323,10 @@ def build_dynamic_analysis_agent(
         ]
 
     @timed_node(label=lambda state: state["skill_name"])
-    async def dimension_worker(state: DimensionWorkerState) -> DynamicAnalysisState:
-        """执行当前技能并附加理论材料，指标只保存在维度结果中。"""
+    async def skill_worker(state: SkillWorkerState) -> DynamicAnalysisState:
+        """执行当前技能并附加理论材料，指标只保存在技能结果中。"""
         with trace_span(
-            "crypto.dimension_worker", skill_name=state["skill_name"]
+            "crypto.skill_worker", skill_name=state["skill_name"]
         ) as node_span:
             try:
                 skill_loader = SkillLoader.from_snapshot(
@@ -346,8 +342,8 @@ def build_dynamic_analysis_agent(
                     [metric.label for metric in scoring.metrics],
                 )
                 with trace_span(
-                    "analysis.dimension.thought_retrieval",
-                    dimension_id=scoring.dimension_id,
+                    "analysis.skill.thought_retrieval",
+                    skill_name=skill.name,
                 ) as span:
                     try:
                         documents = await retriever.aretrieve(query)
@@ -374,7 +370,7 @@ def build_dynamic_analysis_agent(
                             ],
                         }
                         span.output = {"document_count": len(documents)}
-                return {"dimension_results": [result]}
+                return {"skill_results": [result]}
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -388,7 +384,7 @@ def build_dynamic_analysis_agent(
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
                     return {"report": report, "messages": [AIMessage(content=report)]}
                 ordered = sorted(
-                    state["dimension_results"], key=lambda item: item["dimension_id"]
+                    state["skill_results"], key=lambda item: item["skill_name"]
                 )
                 facts = json.dumps(ordered, ensure_ascii=False)
                 prompt = analysis_report_prompt(
@@ -418,10 +414,10 @@ def build_dynamic_analysis_agent(
 
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", plan)
-    builder.add_node("dimension_worker", dimension_worker)
+    builder.add_node("skill_worker", skill_worker)
     builder.add_node("writer", writer)
     builder.add_edge(START, "plan")
-    builder.add_conditional_edges("plan", send_dimensions)
-    builder.add_edge("dimension_worker", "writer")
+    builder.add_conditional_edges("plan", send_skills)
+    builder.add_edge("skill_worker", "writer")
     builder.add_edge("writer", END)
     return builder.compile(name="crypto_analysis_agent")

@@ -1,4 +1,4 @@
-"""维度03工具：ETF资金流的取数和计算。"""
+"""ETF资金流的取数和计算。"""
 
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
@@ -40,5 +40,5 @@ def calculate_etf_indicator(
 
 
 def build_etf_tools() -> list[BaseTool]:
-    """维度03：ETF资金流的取数和计算工具。"""
+    """ETF资金流的取数和计算工具。"""
     return [get_etf_flows, calculate_etf_indicator]

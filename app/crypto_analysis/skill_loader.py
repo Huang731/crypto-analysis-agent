@@ -77,15 +77,8 @@ class MetricRule(BaseModel):
 
 class SkillScoring(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    dimension_id: str = Field(pattern=r"^[0-9]{2}$", strict=True)
     name: str = Field(min_length=1, strict=True)
-    overall_weight: float = Field(gt=0, le=1, allow_inf_nan=False)
     metrics: list[MetricRule] = Field(min_length=1)
-
-    @field_validator("overall_weight", mode="before")
-    @classmethod
-    def numeric_weight(cls, value):
-        return MetricRule.numeric_weight(value)
 
     @model_validator(mode="after")
     def valid_metrics(self):
@@ -207,13 +200,12 @@ class SkillLoader:
         return self._definitions[name]
 
     def validate_selected(self, names: Sequence[str]) -> None:
-        dimension_ids, metric_ids = set(), set()
+        metric_ids = set()
         for name in names:
             scoring = self.load_definition(name).scoring
             ids = {metric.id for metric in scoring.metrics}
-            if scoring.dimension_id in dimension_ids or metric_ids & ids:
-                raise ValueError("已选 Skill 的编号或指标归属冲突")
-            dimension_ids.add(scoring.dimension_id)
+            if metric_ids & ids:
+                raise ValueError("已选 Skill 的指标归属冲突")
             metric_ids.update(ids)
 
     def list_skills(self) -> list[SkillMeta]:

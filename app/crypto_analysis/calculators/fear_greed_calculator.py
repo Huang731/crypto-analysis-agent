@@ -1,4 +1,4 @@
-"""按维度06规则校验CMC市场情绪记录并计算固定分档。"""
+"""按既定规则校验CMC市场情绪记录并计算固定分档。"""
 
 from typing import Any
 
@@ -16,7 +16,7 @@ def calculate_fear_and_greed(
         }
     try:
         if raw["mode"] != "latest":
-            raise ValueError("维度06只使用latest情绪记录")
+            raise ValueError("情绪指标只使用latest记录")
         record = raw["payload"]
         value = record["value"]
         if (

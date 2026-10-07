@@ -134,10 +134,10 @@ _METRIC_FIELDS = {
 
 
 def missing_metric(
-    dimension_id: str, metric_id: str, status: str, reason: str
+    skill_name: str, metric_id: str, status: str, reason: str
 ) -> dict[str, Any]:
     return {
-        "dimension_id": dimension_id,
+        "skill_name": skill_name,
         "indicator_id": metric_id,
         "status": status,
         "reason": reason,
@@ -151,16 +151,16 @@ def missing_metric(
 
 
 def _normalize_result(
-    dimension_id: str, metric_id: str, result: dict[str, Any], source_action: str
+    skill_name: str, metric_id: str, result: dict[str, Any], source_action: str
 ) -> dict[str, Any]:
     if result.get("status") != "ok":
         status = result.get("status")
         if status not in {"data_missing", "calculation_error", "not_applicable"}:
-            raise ValueError(f"{dimension_id}.{metric_id} 返回无效状态")
+            raise ValueError(f"{skill_name}.{metric_id} 返回无效状态")
         reason = result.get("reason")
         if not isinstance(reason, str) or not reason:
-            raise ValueError(f"{dimension_id}.{metric_id} 缺少原因")
-        return missing_metric(dimension_id, metric_id, status, reason)
+            raise ValueError(f"{skill_name}.{metric_id} 缺少原因")
+        return missing_metric(skill_name, metric_id, status, reason)
     raw_fields, calculated_fields = _METRIC_FIELDS[metric_id]
     required = [
         *raw_fields,
@@ -172,7 +172,7 @@ def _normalize_result(
     ]
     absent = [field for field in required if result.get(field) is None]
     if absent:
-        raise ValueError(f"{dimension_id}.{metric_id} 缺少字段：{', '.join(absent)}")
+        raise ValueError(f"{skill_name}.{metric_id} 缺少字段：{', '.join(absent)}")
     score = result["score"]
     if (
         isinstance(score, bool)
@@ -180,16 +180,16 @@ def _normalize_result(
         or not isfinite(score)
         or not 0 <= score <= 10
     ):
-        raise ValueError(f"{dimension_id}.{metric_id} 分数无效")
+        raise ValueError(f"{skill_name}.{metric_id} 分数无效")
     if not all(
         isinstance(result[field], str) and result[field]
         for field in ("unit", "observed_at", "source")
     ):
-        raise ValueError(f"{dimension_id}.{metric_id} 的单位、日期或来源无效")
+        raise ValueError(f"{skill_name}.{metric_id} 的单位、日期或来源无效")
     try:
         date.fromisoformat(result["observed_at"])
     except ValueError as exc:
-        raise ValueError(f"{dimension_id}.{metric_id} 的观测日期格式无效") from exc
+        raise ValueError(f"{skill_name}.{metric_id} 的观测日期格式无效") from exc
     calculated_values = {field: result[field] for field in calculated_fields}
     if metric_id == "OI":
         calculated_values.update(
@@ -197,7 +197,7 @@ def _normalize_result(
             price_24h_change_pct=result["price_24h_change_pct"],
         )
     return {
-        "dimension_id": dimension_id,
+        "skill_name": skill_name,
         "indicator_id": metric_id,
         "status": "ok",
         "reason": None,
@@ -281,10 +281,11 @@ def _compute_metric(
     calculator: Callable[[dict[str, Any], dict[str, str]], dict[str, Any]],
 ) -> Command | ToolMessage:
     """计算器直接读取工具状态中的原始数据，模型不传入或修改数值。"""
-    scoring = runtime.context["skill"]
+    skill = runtime.context["skill"]
+    scoring = skill.scoring
     if metric_id not in {metric.id for metric in scoring.metrics}:
         return _tool_error(
-            runtime, f"指标 {metric_id} 不属于当前维度，请选择本维度适用的工具"
+            runtime, f"指标 {metric_id} 不属于当前技能，请选择本技能适用的工具"
         )
     if evidence_id not in runtime.state["evidence"]:
         return _tool_error(
@@ -300,24 +301,22 @@ def _compute_metric(
     ) as span:
         if evidence["status"] != "ok":
             result = missing_metric(
-                scoring.dimension_id, metric_id, "data_missing", evidence["reason"]
+                skill.name, metric_id, "data_missing", evidence["reason"]
             )
         else:
             try:
                 calculated = calculator(evidence["raw"], runtime.context["scope"])
                 result = _normalize_result(
-                    scoring.dimension_id,
+                    skill.name,
                     metric_id,
                     calculated,
                     evidence["source_action"],
                 )
             except (TypeError, ValueError) as exc:
+                result = missing_metric(skill.name, metric_id, "data_missing", str(exc))
+            except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断技能。
                 result = missing_metric(
-                    scoring.dimension_id, metric_id, "data_missing", str(exc)
-                )
-            except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断维度。
-                result = missing_metric(
-                    scoring.dimension_id, metric_id, "calculation_error", str(exc)
+                    skill.name, metric_id, "calculation_error", str(exc)
                 )
         span.output = {"status": result["status"], "score": result["score"]}
     return Command(

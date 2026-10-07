@@ -1,4 +1,4 @@
-"""按维度05公式校验日线并计算均线及Wilder ADX。"""
+"""按既定公式校验日线并计算均线及Wilder ADX。"""
 
 from datetime import datetime, timezone
 from math import isfinite

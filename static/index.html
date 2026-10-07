@@ -117,7 +117,7 @@
 <body>
   <main class="container">
     <h1>研究分析 AI</h1>
-    <p class="subtitle">加密货币问题进入维度分析，其他主题进入模型知识研究。</p>
+    <p class="subtitle">加密货币问题进入技能分析，其他主题进入模型知识研究。</p>
 
     <form id="ask-form" class="input-row">
       <input id="question" type="text" maxlength="2000" required aria-label="分析问题" placeholder="例如：分析 BTC，或分析人工智能对教育的影响">
@@ -227,18 +227,18 @@
         reportEl.textContent += data.content;
       } else if (name === "done") {
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "维度指标记录（点击展开）"; // 两条路径分别展示对应内容。
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "技能指标记录（点击展开）"; // 两条路径分别展示对应内容。
         reportEl.classList.remove("blink");
         if (typeof data.report === "string" && data.report) {
           reportEl.classList.remove("placeholder");
           reportEl.textContent = data.report;
         }
         const records = Array.isArray(data.indicators) ? data.indicators.slice() : []; // 先展示全部指标记录。
-        if (Array.isArray(data.dimensions)) { // 维度结果存在时补充维度汇总。
-          for (const dimension of data.dimensions) records.push({ dimension_result: dimension }); // 保留每维得分和缺失原因。
-        } // 结束维度汇总。
-        renderFindings(data.kind === "topic_research" ? data.findings : records); // 主题研究展示发现，维度分析展示结构化指标。
-        if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
+        if (Array.isArray(data.skill_results)) { // 技能结果存在时补充技能汇总。
+          for (const skill of data.skill_results) records.push({ skill_result: skill }); // 保留各技能得分和缺失原因。
+        } // 结束技能汇总。
+        renderFindings(data.kind === "topic_research" ? data.findings : records); // 主题研究展示发现，技能分析展示结构化指标。
+        if (data.target_asset) addProgress("标的", data.target_asset + " · 技能分析"); // 展示统一目标币种。
         if (data.as_of) addProgress("截止时间", data.as_of); // 展示整轮共用的 UTC 截止时间。
         if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
         if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。

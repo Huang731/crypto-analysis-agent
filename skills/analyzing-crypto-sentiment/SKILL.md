@@ -5,14 +5,12 @@ tools:
   - get_cmc_fear_greed
   - calculate_fear_greed_indicator
 scoring:
-  dimension_id: '06'
   name: 市场情绪
   metrics:
   - id: Fear_Greed
     label: Fear_Greed
     weight: 1.0
     kind: numeric
-  overall_weight: 0.15
 ---
 
 # 市场情绪
