@@ -95,7 +95,6 @@ class LoadedSkill(BaseModel):
     description: str
     tools: list[str] = Field(min_length=1)
     scoring: SkillScoring
-    body: str
 
     @field_validator("tools")
     @classmethod
@@ -187,17 +186,34 @@ class SkillLoader:
     def load_definition(self, name: str) -> LoadedSkill:
         if name not in self._definitions:
             try:
-                data, body = _parse_document(self.load_skill(name))
+                if name not in self._sources:
+                    raise ValueError(f"skill '{name}' 不存在")
+                data, _ = _parse_document(self._sources[name])
                 self._definitions[name] = LoadedSkill(
                     name=data["name"],
                     description=data["description"],
                     tools=data["tools"],
                     scoring=SkillScoring.model_validate(data["scoring"]),
-                    body=body,
                 )
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"Skill {name} 配置无效：{exc}") from exc
         return self._definitions[name]
+
+    def load_analysis_output(self, name: str) -> str:
+        """从请求快照提取完整的分析输出章节，供最终写作使用。"""
+        _, body = _parse_document(self.load_skill(name))
+        lines = body.splitlines()
+        try:
+            start = lines.index("## 分析输出")
+        except ValueError as exc:
+            raise ValueError(f"Skill {name} 缺少分析输出章节") from exc
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")),
+            len(lines),
+        )
+        if not any(line.strip() for line in lines[start + 1 : end]):
+            raise ValueError(f"Skill {name} 分析输出章节为空")
+        return "\n".join(lines[start:end])
 
     def validate_selected(self, names: Sequence[str]) -> None:
         metric_ids = set()

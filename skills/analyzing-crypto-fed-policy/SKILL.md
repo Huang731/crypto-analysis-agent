@@ -1,6 +1,8 @@
 ---
 name: analyzing-crypto-fed-policy
-description: 评估美联储已经发生的政策利率变化，用联邦基金目标区间近三个月净变动判断偏鹰、偏鸽或中性。用户问加息、降息、利率路径或货币政策立场时选用；不分析资产负债表、M2 或美元指数。
+description: >-
+  按近三个月政策利率净变化判断偏鹰、偏鸽或中性，适用于加息、降息和利率政策分析；不分析 M2、WALCL 或 DXY。
+  get_fred_target_range → calculate_fed_rate_change_indicator，使用返回的 evidence_id。
 tools:
   - get_fred_target_range
   - calculate_fed_rate_change_indicator
@@ -15,9 +17,32 @@ scoring:
 
 # 美联储政策与利率倾向
 
-get_fred_target_range → calculate_fed_rate_change_indicator。
+## 分析输出
 
-- 使用FRED上下限共同有效的日期，以目标区间中点计算三个月净变化（基点）。
-- 分数来自计算工具；分数大于6解释为偏鸽，小于4为偏鹰，其余为中性或相互抵消。
-- 三个月净变化为零不代表期间没有调整，也不代表未来政策承诺。
-- 本技能评估已发生的利率变化，不将新闻预期代替政策利率事实。
+按以下“字段／内容”表格逐项输出，保留所有字段并将说明文字替换为实际结果。每个指标表的字段路径对应该指标的标准化工具结果。列表和对象完整展示，多条内容用 `<br>` 分隔。
+
+### 政策利率
+
+| 字段 | 内容 |
+| --- | --- |
+| 指标标识 | `indicator_id` |
+| 当前利率观测日期 | `raw_values.current_date` |
+| 基准利率观测日期 | `raw_values.baseline_date` |
+| 三个月比较日期 | `raw_values.comparison_date` |
+| 当前利率下限（%） | `raw_values.current_lower_pct` |
+| 当前利率上限（%） | `raw_values.current_upper_pct` |
+| 基准利率下限（%） | `raw_values.baseline_lower_pct` |
+| 基准利率上限（%） | `raw_values.baseline_upper_pct` |
+| 当前利率中点（%） | `calculated_values.current_midpoint_pct` |
+| 基准利率中点（%） | `calculated_values.baseline_midpoint_pct` |
+| 利率变化（基点） | `calculated_values.change_bp` |
+| 政策变化方向 | `calculated_values.policy_change` |
+| 指标状态 | `status` |
+| 状态原因 | `reason` |
+| 指标分数 | `score` |
+| 单位 | `unit` |
+| 观测日期 | `observed_at` |
+| 来源工具 | `source.action` |
+| 来源链接 | `source.url` |
+
+分析仅依据工具结果，不重算或修改数值和分数。缺失值或不适用字段写“N/A”，数值 0 必须保留；无有效数据时说明缺失原因。

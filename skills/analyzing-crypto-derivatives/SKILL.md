@@ -1,6 +1,8 @@
 ---
 name: analyzing-crypto-derivatives
-description: 评估目标资产合约市场的杠杆与拥挤程度，覆盖持仓量 OI 和资金费率 Funding。用户问杠杆、多空拥挤、资金费率或持仓量时选用；不判断价格趋势本身。
+description: >-
+  评估 OI 与资金费率，适用于杠杆、持仓量和多空拥挤分析；不判断价格趋势。
+  get_binance_derivatives_data → calculate_oi_indicator、calculate_funding_indicator，共用返回的 evidence_id。
 tools:
   - get_binance_derivatives_data
   - calculate_oi_indicator
@@ -20,9 +22,57 @@ scoring:
 
 # 衍生品数据
 
-get_binance_derivatives_data → calculate_oi_indicator、calculate_funding_indicator。
+## 分析输出
 
-- 两项计算复用同一份真实证据；核对目标合约，勿混用不同资产的数据。
-- OI结合七日价格变化、OI变化及Funding解释；OI增长本身不能确定多空方向。
-- Funding采用完整七日结算记录的八小时等效口径，单位和方向以计算工具为准。
-- 解释计算器返回的杠杆压力、去杠杆或扩张信号，不把高杠杆等同持续上涨。
+按以下“字段／内容”表格逐项输出，保留所有字段并将说明文字替换为实际结果。每个指标表的字段路径对应该指标的标准化工具结果。列表和对象完整展示，多条内容用 `<br>` 分隔。
+
+### 持仓量 OI
+
+| 字段 | 内容 |
+| --- | --- |
+| 指标标识 | `indicator_id` |
+| 交易对 | `raw_values.symbol` |
+| 持仓量观测时间 | `raw_values.oi_timestamp` |
+| 最新持仓量 | `raw_values.latest_oi` |
+| 基准持仓量 | `raw_values.baseline_oi` |
+| 最新价格 | `raw_values.latest_price` |
+| 基准价格 | `raw_values.baseline_price` |
+| 价格数据来源 | `raw_values.price_source` |
+| 资金费率数据来源 | `raw_values.funding_source` |
+| 持仓量变化（%） | `calculated_values.oi_change_pct` |
+| 价格变化（%） | `calculated_values.price_change_pct` |
+| 平均资金费率（%） | `calculated_values.funding_average_pct` |
+| 资金费率分数 | `calculated_values.funding_score` |
+| 市场状态 | `calculated_values.market_state` |
+| 持仓量二十四小时变化（%） | `calculated_values.oi_24h_change_pct` |
+| 价格二十四小时变化（%） | `calculated_values.price_24h_change_pct` |
+| 指标状态 | `status` |
+| 状态原因 | `reason` |
+| 指标分数 | `score` |
+| 单位 | `unit` |
+| 观测日期 | `observed_at` |
+| 来源工具 | `source.action` |
+| 来源链接 | `source.url` |
+
+### 资金费率 Funding
+
+| 字段 | 内容 |
+| --- | --- |
+| 指标标识 | `indicator_id` |
+| 交易对 | `raw_values.symbol` |
+| 资金费率采样时间 | `raw_values.funding_times` |
+| 资金费率采样值 | `raw_values.funding_rates` |
+| 资金费率观测时间 | `raw_values.funding_timestamp` |
+| 价格数据来源 | `raw_values.price_source` |
+| 资金费率数据来源 | `raw_values.funding_source` |
+| 平均资金费率（%） | `calculated_values.funding_average_pct` |
+| 资金费率观察窗口价格变化（%） | `calculated_values.funding_price_change_pct` |
+| 指标状态 | `status` |
+| 状态原因 | `reason` |
+| 指标分数 | `score` |
+| 单位 | `unit` |
+| 观测日期 | `observed_at` |
+| 来源工具 | `source.action` |
+| 来源链接 | `source.url` |
+
+分析仅依据工具结果，不重算或修改数值和分数。缺失值或不适用字段写“N/A”，数值 0 必须保留；无有效数据时说明缺失原因。

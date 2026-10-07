@@ -36,6 +36,7 @@ from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
     metric_agent_system_prompt,
+    metric_execution_prompt,
     thought_retrieval_prompt,
 )
 
@@ -234,7 +235,11 @@ async def execute_skill(
             with trace_span("analysis.metric_agent.graph", skill_name=skill.name):
                 state = await metric_agent.ainvoke(
                     {
-                        "messages": [HumanMessage(content=skill.body)],
+                        "messages": [
+                            HumanMessage(
+                                content=metric_execution_prompt(skill.model_dump())
+                            )
+                        ],
                         "evidence": {},
                         "indicator_results": {},
                         "research_evidence": [],
@@ -387,10 +392,19 @@ def build_dynamic_analysis_agent(
                     state["skill_results"], key=lambda item: item["skill_name"]
                 )
                 facts = json.dumps(ordered, ensure_ascii=False)
+                skill_loader = SkillLoader.from_snapshot(
+                    {name: state["skill_sources"][name] for name in names}
+                )
+                output_templates = "\n\n".join(
+                    f"技能 {item['skill_name']}：\n"
+                    f"{skill_loader.load_analysis_output(item['skill_name'])}"
+                    for item in ordered
+                )
                 prompt = analysis_report_prompt(
                     state["scope"]["target_asset"],
                     state["scope"]["original_question"],
                     facts,
+                    output_templates,
                 )
                 with trace_generation(
                     "crypto_analysis_writer", model=settings.smart_model
