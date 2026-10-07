@@ -28,7 +28,6 @@ class MetricAgentState(AgentState):
     # 键是 evidence_id，值是取数原始记录。并行取数时按键合并，避免后返回的结果覆盖先返回的。
     evidence: Annotated[dict[str, dict[str, Any]], _merge_records]
     indicator_results: Annotated[dict[str, dict[str, Any]], _merge_records]
-    research_evidence: Annotated[list[dict[str, Any]], operator.add]
 
 
 class DynamicAnalysisState(TypedDict, total=False):

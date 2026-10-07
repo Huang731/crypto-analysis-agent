@@ -242,7 +242,6 @@ async def execute_skill(
                         ],
                         "evidence": {},
                         "indicator_results": {},
-                        "research_evidence": [],
                     },
                     context={"skill": skill, "scope": dict(scope)},
                     config={
@@ -263,7 +262,6 @@ async def execute_skill(
                 for metric in scoring.metrics
             ]
             result = aggregate_skill_results(skill, indicators)
-            result["research_evidence"] = state["research_evidence"]
             return result
         except Exception:
             node_span.metadata["status"] = "error"
