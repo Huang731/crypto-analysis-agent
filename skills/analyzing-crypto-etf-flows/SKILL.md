@@ -31,7 +31,6 @@ scoring:
 | 五日净流量（亿美元） | `calculated_values.five_day_flow_usd_100m` |
 | 二十日净流量（亿美元） | `calculated_values.twenty_day_flow_usd_100m` |
 | 指标状态 | `status` |
-| 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |

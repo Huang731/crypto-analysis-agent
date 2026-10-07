@@ -38,7 +38,6 @@ scoring:
 | 利率变化（基点） | `calculated_values.change_bp` |
 | 政策变化方向 | `calculated_values.policy_change` |
 | 指标状态 | `status` |
-| 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |

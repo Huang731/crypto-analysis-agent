@@ -38,7 +38,6 @@ scoring:
 | +DI | `calculated_values.plus_di` |
 | -DI | `calculated_values.minus_di` |
 | 指标状态 | `status` |
-| 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |

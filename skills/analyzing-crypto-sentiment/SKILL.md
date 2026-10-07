@@ -30,7 +30,6 @@ scoring:
 | 情绪分类 | `raw_values.value_classification` |
 | 信号参考 | `calculated_values.signal_reference` |
 | 指标状态 | `status` |
-| 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
