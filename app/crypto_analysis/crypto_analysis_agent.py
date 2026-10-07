@@ -326,7 +326,7 @@ def build_dynamic_analysis_agent(
             for name in names
         ]
 
-    @timed_node
+    @timed_node(label=lambda state: state["skill_name"])
     async def dimension_worker(state: DimensionWorkerState) -> DynamicAnalysisState:
         """执行当前技能并附加理论材料，指标只保存在维度结果中。"""
         with trace_span(

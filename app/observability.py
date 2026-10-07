@@ -123,7 +123,9 @@ def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
     logger.info(event, extra={"event": event, **fields})
 
 
-def timed_node(func: Callable) -> Callable:
+def timed_node(
+    func: Callable | None = None, *, label: Callable[[Any], str] | None = None
+) -> Callable:
     """节点计时装饰器：记录进出 + 耗时。
 
     用法：
@@ -132,6 +134,8 @@ def timed_node(func: Callable) -> Callable:
 
     同时支持 sync 和 async 函数（自动检测）。
     """
+    if func is None:
+        return functools.partial(timed_node, label=label)
     log = get_logger(f"node.{func.__name__}")
     node_name = func.__name__
 
@@ -139,19 +143,25 @@ def timed_node(func: Callable) -> Callable:
 
         @functools.wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            # 可选标签从节点输入读取，用于区分并行任务。
+            name = (
+                f"{node_name} [{label(args[0] if args else kwargs['state'])}]"
+                if label is not None
+                else node_name
+            )
             t0 = time.perf_counter()
-            log.info(f"{node_name} start")
+            log.info(f"{name} start")
             try:
                 result = await func(*args, **kwargs)
                 duration_ms = (time.perf_counter() - t0) * 1000
                 # 摘要结果大小（不打印全部，避免日志爆炸）
                 summary = _summarize_result(result)
-                log.info(f"{node_name} done | {duration_ms:.0f}ms | {summary}")
+                log.info(f"{name} done | {duration_ms:.0f}ms | {summary}")
                 return result
             except Exception as e:
                 duration_ms = (time.perf_counter() - t0) * 1000
                 log.error(
-                    f"{node_name} failed | {duration_ms:.0f}ms | {type(e).__name__}: {e}"
+                    f"{name} failed | {duration_ms:.0f}ms | {type(e).__name__}: {e}"
                 )
                 raise
 
@@ -159,19 +169,22 @@ def timed_node(func: Callable) -> Callable:
 
     @functools.wraps(func)
     def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+        name = (
+            f"{node_name} [{label(args[0] if args else kwargs['state'])}]"
+            if label is not None
+            else node_name
+        )
         t0 = time.perf_counter()
-        log.info(f"{node_name} start")
+        log.info(f"{name} start")
         try:
             result = func(*args, **kwargs)
             duration_ms = (time.perf_counter() - t0) * 1000
             summary = _summarize_result(result)
-            log.info(f"{node_name} done | {duration_ms:.0f}ms | {summary}")
+            log.info(f"{name} done | {duration_ms:.0f}ms | {summary}")
             return result
         except Exception as e:
             duration_ms = (time.perf_counter() - t0) * 1000
-            log.error(
-                f"{node_name} failed | {duration_ms:.0f}ms | {type(e).__name__}: {e}"
-            )
+            log.error(f"{name} failed | {duration_ms:.0f}ms | {type(e).__name__}: {e}")
             raise
 
     return sync_wrapper
