@@ -14,7 +14,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Send
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
 from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics
@@ -60,8 +60,16 @@ class AnalysisPlan(BaseModel):
     """一轮分析的目标币种和所需技能，不指定具体工具。"""
 
     model_config = ConfigDict(extra="forbid")
-    target_asset: str
+    target_asset: str = Field(pattern=r"^[A-Z0-9]+$", strict=True)
     skill_names: list[str]
+
+    @field_validator("skill_names")
+    @classmethod
+    def unique_skill_names(cls, names: list[str]) -> list[str]:
+        """拒绝重复技能，避免并行派发同一维度多次。"""
+        if len(names) != len(set(names)):
+            raise ValueError("分析计划中的技能名称不能重复")
+        return names
 
 
 # 请求规划
@@ -668,6 +676,13 @@ def build_dynamic_analysis_agent(
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
+                unknown_names = set(selection["skill_names"]) - {
+                    meta.name for meta in skill_loader.list_skills()
+                }
+                if unknown_names:
+                    raise ValueError(
+                        f"分析计划包含未知技能：{'、'.join(sorted(unknown_names))}"
+                    )
                 scope = {
                     **state["scope"],
                     "target_asset": selection["target_asset"],
