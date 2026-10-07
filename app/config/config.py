@@ -85,7 +85,7 @@ class Settings(BaseSettings):
 
     # ── 检索层（阶段 2）───────────────────────────────────────
     retrieve_k: int = 8  # 混合召回条数（rerank 前）
-    final_k: int = 4  # 最终送入 prompt 的材料条数
+    final_k: int = 2  # 最终送入 prompt 的材料条数
     rerank_model: str = "gte-rerank-v2"  # 百炼文本重排模型，与向量模型分别配置。
     bm25_weight: float = 0.4  # EnsembleRetriever 权重（与向量检索互补）
     vector_weight: float = 0.6
