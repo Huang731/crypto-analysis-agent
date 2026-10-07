@@ -58,7 +58,6 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
 
 ### 稳定币市值
@@ -66,13 +65,12 @@ scoring:
 | 字段 | 内容 |
 | --- | --- |
 | 指标标识 | `indicator_id` |
-| USDT 市值 | `raw_values.usdt_market_cap` |
-| USDC 市值 | `raw_values.usdc_market_cap` |
-| 稳定币总市值 | `raw_values.total_market_cap` |
-| 稳定币市值 MA30 | `raw_values.ma30_market_cap` |
-| 七日前市值 | `raw_values.seven_day_market_cap` |
-| 三十日前市值 | `raw_values.thirty_day_market_cap` |
-| 报价时间 | `raw_values.quote_timestamps` |
+| USDT 市值（亿美元） | `raw_values.usdt_market_cap` |
+| USDC 市值（亿美元） | `raw_values.usdc_market_cap` |
+| 稳定币总市值（亿美元） | `raw_values.total_market_cap` |
+| 稳定币市值 MA30（亿美元） | `raw_values.ma30_market_cap` |
+| 七日前市值（亿美元） | `raw_values.seven_day_market_cap` |
+| 三十日前市值（亿美元） | `raw_values.thirty_day_market_cap` |
 | MA30 偏离比例（%） | `calculated_values.ma30_change_pct` |
 | 七日变化（%） | `calculated_values.seven_day_change_pct` |
 | 三十日变化（%） | `calculated_values.thirty_day_change_pct` |
@@ -82,7 +80,6 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
 
 ### M2 同比变化
@@ -103,7 +100,6 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
 
 ### 美联储资产负债表 WALCL
@@ -121,7 +117,14 @@ scoring:
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
+
+### 思想体系解读
+
+| 字段 | 内容 |
+| --- | --- |
+| 当前解读 | 结合 DXY、稳定币市值、M2 与 WALCL，按相关原则解释流动性方向、指标分歧及对目标资产的影响；区分事实与推断 |
+
+仅使用检索到的相关原则，不补造思想体系内容。无相关材料时写“未检索到相关原则”；检索失败时写“思想材料检索失败”，当前解读仅依据指标。
 
 分析仅依据工具结果，不重算或修改数值和分数。缺失值或不适用字段写“N/A”，数值 0 必须保留；无有效数据时说明缺失原因。

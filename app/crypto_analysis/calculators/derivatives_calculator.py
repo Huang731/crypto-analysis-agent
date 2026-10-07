@@ -173,6 +173,17 @@ def calculate_derivatives(
                 market_state=state,
             )
             source = raw["sources"]["oi"]
+        # 评分和市场状态判定完成后，再统一处理返回值的小数精度。
+        result["funding_average_pct"] = round(result["funding_average_pct"], 6)
+        for field in (
+            "funding_price_change_pct",
+            "oi_change_pct",
+            "price_change_pct",
+            "oi_24h_change_pct",
+            "price_24h_change_pct",
+        ):
+            if field in result and result[field] is not None:
+                result[field] = round(result[field], 2)
         return {
             **result,
             "status": "ok",

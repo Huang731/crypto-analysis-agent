@@ -86,24 +86,23 @@ def calculate_m2_yoy_change(
         "source": _FRED_SOURCE,  # 输出 source 字段供后续核对。
         "series_id": "M2SL",  # 输出 series_id 字段供后续核对。
         "observed_at": latest_month.isoformat(),  # 输出 observed_at 字段供后续核对。
-        "unit": "十亿美元，季节调整",  # 输出 unit 字段供后续核对。
+        # M2SL 原始单位为十亿美元，返回金额统一换算为亿美元。
+        "unit": "亿美元，季节调整",
         "latest_value": float(
-            values[latest_month]
+            values[latest_month] * 10
         ),  # 输出 latest_value 字段供后续核对。
         "previous_value": float(
-            values[previous_month]
+            values[previous_month] * 10
         ),  # 输出 previous_value 字段供后续核对。
         "latest_year_ago_value": float(
-            values[latest_year_ago]
+            values[latest_year_ago] * 10
         ),  # 输出 latest_year_ago_value 字段供后续核对。
         "previous_year_ago_value": float(
-            values[previous_year_ago]
+            values[previous_year_ago] * 10
         ),  # 输出 previous_year_ago_value 字段供后续核对。
-        "latest_yoy_pct": float(latest_yoy),  # 输出 latest_yoy_pct 字段供后续核对。
-        "previous_yoy_pct": float(
-            previous_yoy
-        ),  # 输出 previous_yoy_pct 字段供后续核对。
-        "yoy_change_pp": float(yoy_change),  # 输出 yoy_change_pp 字段供后续核对。
+        "latest_yoy_pct": round(float(latest_yoy), 2),
+        "previous_yoy_pct": round(float(previous_yoy), 2),
+        "yoy_change_pp": round(float(yoy_change), 2),
         "score": linear_score(yoy_change, -0.5, 0.5),  # 输出 score 字段供后续核对。
         "comparison_months": [
             month.isoformat() for month in required
@@ -175,15 +174,16 @@ def calculate_walcl_ma4(
         "source": _FRED_SOURCE,  # 输出 source 字段供后续核对。
         "series_id": "WALCL",  # 输出 series_id 字段供后续核对。
         "observed_at": latest_day.isoformat(),  # 输出 observed_at 字段供后续核对。
-        "unit": "百万美元，未季节调整",  # 输出 unit 字段供后续核对。
-        "latest_value": float(latest),  # 输出 latest_value 字段供后续核对。
-        "ma4_value": float(ma4),  # 输出 ma4_value 字段供后续核对。
-        "ma4_change_pct": float(ma4_change_pct),  # 输出 ma4_change_pct 字段供后续核对。
-        "score": linear_score(ma4_change_pct, -0.5, 0.5),  # 输出 score 字段供后续核对。
+        # WALCL 原始单位为百万美元，返回金额统一换算为亿美元。
+        "unit": "亿美元，未季节调整",
+        "latest_value": round(float(latest / 100), 2),
+        "ma4_value": round(float(ma4 / 100), 2),
+        "ma4_change_pct": round(float(ma4_change_pct), 2),
+        "score": round(linear_score(ma4_change_pct, -0.5, 0.5), 2),
         "comparison_dates": [
             day.isoformat() for day in required
         ],  # 输出 comparison_dates 字段供后续核对。
         "weekly_values": [
-            float(values[day]) for day in required
+            round(float(values[day] / 100), 2) for day in required
         ],  # 输出 weekly_values 字段供后续核对。
     }  # 结束当前数据结构。

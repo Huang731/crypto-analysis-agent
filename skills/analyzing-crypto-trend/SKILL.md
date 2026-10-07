@@ -27,7 +27,6 @@ scoring:
 | --- | --- |
 | 指标标识 | `indicator_id` |
 | 交易对 | `raw_values.symbol` |
-| K 线数量 | `raw_values.kline_count` |
 | 首根 K 线开盘时间 | `raw_values.first_open_time` |
 | 最后一根 K 线收盘时间 | `raw_values.last_close_time` |
 | 最新收盘价 | `raw_values.close` |
@@ -38,17 +37,19 @@ scoring:
 | ADX14 | `calculated_values.adx14` |
 | +DI | `calculated_values.plus_di` |
 | -DI | `calculated_values.minus_di` |
-| 准入结果 | `calculated_values.admission` |
-| 时机结果 | `calculated_values.timing` |
-| 确认结果 | `calculated_values.confirmation` |
-| 计算中间值 | `calculated_values.intermediate_values` |
-| 计算方法 | `calculated_values.calculation_method` |
 | 指标状态 | `status` |
 | 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
+
+### 思想体系解读
+
+| 字段 | 内容 |
+| --- | --- |
+| 当前解读 | 结合 MA50、MA200、ADX、DI 及准入、时机、确认结果，按相关原则解释趋势背景与确认程度；区分事实与推断 |
+
+仅使用检索到的相关原则，不补造思想体系内容。无相关材料时写“未检索到相关原则”；检索失败时写“思想材料检索失败”，当前解读仅依据指标。
 
 分析仅依据工具结果，不重算或修改数值和分数。缺失值或不适用字段写“N/A”，数值 0 必须保留；无有效数据时说明缺失原因。

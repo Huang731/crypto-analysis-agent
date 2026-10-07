@@ -125,23 +125,19 @@ def _stablecoin_metrics(
             symbol: by_coin[symbol][latest_day][1].isoformat()  # 延续上一行的数据处理。
             for symbol in ("USDT", "USDC")  # 依次处理原始数据中的记录。
         },  # 结束当前数据结构。
-        "unit": "USD",  # 输出 unit 字段供后续核对。
-        "usdt_market_cap": by_coin["USDT"][latest_day][
-            0
-        ],  # 输出 usdt_market_cap 字段供后续核对。
-        "usdc_market_cap": by_coin["USDC"][latest_day][
-            0
-        ],  # 输出 usdc_market_cap 字段供后续核对。
-        "total_market_cap": latest,  # 输出 total_market_cap 字段供后续核对。
-        "ma30_market_cap": ma30,  # 输出 ma30_market_cap 字段供后续核对。
-        "seven_day_market_cap": seven_day,  # 输出 seven_day_market_cap 字段供后续核对。
-        "thirty_day_market_cap": thirty_day,  # 输出 thirty_day_market_cap 字段供后续核对。
-        "ma30_change_pct": ma30_change,  # 输出 ma30_change_pct 字段供后续核对。
-        "seven_day_change_pct": seven_day_change,  # 输出 seven_day_change_pct 字段供后续核对。
+        # 评分使用原始美元市值，返回的市值统一换算为亿美元。
+        "unit": "亿美元",
+        "usdt_market_cap": round(by_coin["USDT"][latest_day][0] / 100_000_000, 2),
+        "usdc_market_cap": round(by_coin["USDC"][latest_day][0] / 100_000_000, 2),
+        "total_market_cap": round(latest / 100_000_000, 2),
+        "ma30_market_cap": round(ma30 / 100_000_000, 2),
+        "seven_day_market_cap": round(seven_day / 100_000_000, 2),
+        "thirty_day_market_cap": round(thirty_day / 100_000_000, 2),
+        "ma30_change_pct": round(ma30_change, 2),
+        "seven_day_change_pct": round(seven_day_change, 2),
         "score": 0.5 * ma30_score
         + 0.5 * seven_day_score,  # 输出 score 字段供后续核对。
-        "thirty_day_change_pct": 100
-        * (latest / thirty_day - 1),  # 输出 thirty_day_change_pct 字段供后续核对。
+        "thirty_day_change_pct": round(100 * (latest / thirty_day - 1), 2),
         "conflict_flag": (
             ma30_change > 0 > seven_day_change
         )  # 输出 conflict_flag 字段供后续核对。

@@ -28,14 +28,20 @@ scoring:
 | 指标标识 | `indicator_id` |
 | 恐惧与贪婪指数 | `raw_values.value` |
 | 情绪分类 | `raw_values.value_classification` |
-| 记录时间 | `raw_values.record_timestamp` |
 | 信号参考 | `calculated_values.signal_reference` |
 | 指标状态 | `status` |
 | 状态原因 | `reason` |
 | 指标分数 | `score` |
 | 单位 | `unit` |
 | 观测日期 | `observed_at` |
-| 来源工具 | `source.action` |
 | 来源链接 | `source.url` |
+
+### 思想体系解读
+
+| 字段 | 内容 |
+| --- | --- |
+| 当前解读 | 结合恐惧贪婪指数、情绪分类及信号参考，按相关原则解释当前情绪及其含义；区分事实与推断 |
+
+仅使用检索到的相关原则，不补造思想体系内容。无相关材料时写“未检索到相关原则”；检索失败时写“思想材料检索失败”，当前解读仅依据指标。
 
 分析仅依据工具结果，不重算或修改数值和分数。缺失值或不适用字段写“N/A”，数值 0 必须保留；无有效数据时说明缺失原因。

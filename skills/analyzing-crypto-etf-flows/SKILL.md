@@ -26,10 +26,10 @@ scoring:
 | 字段 | 内容 |
 | --- | --- |
 | 指标标识 | `indicator_id` |
-| 最新日净流量（百万美元） | `raw_values.latest_flow_usd_m` |
-| 前一个五日窗口净流量（百万美元） | `raw_values.previous_five_day_flow_usd_m` |
-| 五日净流量（百万美元） | `calculated_values.five_day_flow_usd_m` |
-| 二十日净流量（百万美元） | `calculated_values.twenty_day_flow_usd_m` |
+| 最新日净流量（亿美元） | `raw_values.latest_flow_usd_100m` |
+| 前一个五日窗口净流量（亿美元） | `raw_values.previous_five_day_flow_usd_100m` |
+| 五日净流量（亿美元） | `calculated_values.five_day_flow_usd_100m` |
+| 二十日净流量（亿美元） | `calculated_values.twenty_day_flow_usd_100m` |
 | 指标状态 | `status` |
 | 状态原因 | `reason` |
 | 指标分数 | `score` |
@@ -41,9 +41,7 @@ scoring:
 
 | 字段 | 内容 |
 | --- | --- |
-| 相关原则 | 概括检索材料中 ETF 资金流与现货需求相关的原则，引用写成“《文件名》·章节名”，省略目录层级和旧维度编号，不展示内部字段名 |
 | 当前解读 | 结合最新日、近五日与近二十日净流量，按相关原则解释资金方向、持续性及对目标资产需求的含义；区分事实与推断 |
-| 适用边界 | 根据材料说明原则的适用条件，结合数据缺失或不同窗口的分歧说明判断限制；ETF 流量不代表全部市场需求 |
 
 仅使用检索到的相关原则，不补造思想体系内容。无相关材料时写“未检索到相关原则”；检索失败时写“思想材料检索失败”，当前解读仅依据指标。
 

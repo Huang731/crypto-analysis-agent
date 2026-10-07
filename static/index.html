@@ -239,7 +239,16 @@
         } // 结束技能汇总。
         renderFindings(data.kind === "topic_research" ? data.findings : records); // 主题研究展示发现，技能分析展示结构化指标。
         if (data.target_asset) addProgress("标的", data.target_asset + " · 技能分析"); // 展示统一目标币种。
-        if (data.as_of) addProgress("截止时间", data.as_of); // 展示整轮共用的 UTC 截止时间。
+        if (data.as_of) {
+          // 内部保留 UTC，页面统一按北京时间展示到秒。
+          const displayTime = new Intl.DateTimeFormat("sv-SE", {
+            timeZone: "Asia/Shanghai",
+            year: "numeric", month: "2-digit", day: "2-digit",
+            hour: "2-digit", minute: "2-digit", second: "2-digit",
+            hourCycle: "h23"
+          }).format(new Date(data.as_of));
+          addProgress("截止时间", displayTime + "（北京时间）");
+        }
         if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
         if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。
         addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");

@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from math import isfinite
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _DAY = 86_400_000
 
@@ -113,6 +114,13 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
         score = 0 if close[-1] < ma200 < ma200_before else 2.5
     else:
         score = 5 if not timing else 7.5 if not confirmation else 10
+
+    def display_time(timestamp: int) -> str:
+        """毫秒时间戳按北京时间展示，日线校验仍使用原始 UTC 时间。"""
+        return datetime.fromtimestamp(
+            timestamp / 1000, ZoneInfo("Asia/Shanghai")
+        ).strftime("%Y-%m-%d %H:%M:%S（北京时间）")
+
     return {
         "status": "ok",
         "score": score,
@@ -123,16 +131,16 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
         "source": raw["source"],
         "symbol": raw["symbol"],
         "kline_count": len(rows),
-        "first_open_time": rows[0][0],
-        "last_close_time": rows[-1][6],
+        "first_open_time": display_time(rows[0][0]),
+        "last_close_time": display_time(rows[-1][6]),
         "close": close[-1],
-        "ma50": ma50,
-        "ma200": ma200,
-        "ma50_20_days_ago": ma50_before,
-        "ma200_20_days_ago": ma200_before,
-        "adx14": adx,
-        "plus_di": pdi,
-        "minus_di": mdi,
+        "ma50": round(ma50, 2),
+        "ma200": round(ma200, 2),
+        "ma50_20_days_ago": round(ma50_before, 2),
+        "ma200_20_days_ago": round(ma200_before, 2),
+        "adx14": round(adx, 2),
+        "plus_di": round(pdi, 2),
+        "minus_di": round(mdi, 2),
         "admission": admission,
         "timing": timing,
         "confirmation": confirmation,

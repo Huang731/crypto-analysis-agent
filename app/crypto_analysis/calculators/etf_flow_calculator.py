@@ -1,4 +1,4 @@
-"""计算现货ETF净流量及金额分档评分，金额统一使用百万美元。"""
+"""按百万美元计算现货 ETF 流量评分，返回金额统一为亿美元。"""
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -51,14 +51,16 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
     return {
         "status": "ok",
         "source": raw["source"],
-        "unit": "USD million",
+        "unit": "亿美元",
         "observed_at": window_dates[-1].isoformat(),
         "trading_dates": [day.isoformat() for day in window_dates],
-        "daily_flows_usd_m": [float(value) for value in values],
-        "latest_flow_usd_m": float(values[-1]),
-        "previous_five_day_flow_usd_m": float(sum(values[-10:-5], Decimal(0))),
-        "five_day_flow_usd_m": float(five),
-        "twenty_day_flow_usd_m": float(twenty),
+        "daily_flows_usd_100m": [round(float(value / 100), 6) for value in values],
+        "latest_flow_usd_100m": round(float(values[-1] / 100), 6),
+        "previous_five_day_flow_usd_100m": round(
+            float(sum(values[-10:-5], Decimal(0)) / 100), 6
+        ),
+        "five_day_flow_usd_100m": round(float(five / 100), 6),
+        "twenty_day_flow_usd_100m": round(float(twenty / 100), 6),
         "five_day_score": five_score,
         "twenty_day_score": twenty_score,
         "score": float(

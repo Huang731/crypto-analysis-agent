@@ -83,13 +83,13 @@ _METRIC_FIELDS = {
     "ETF_Flows": (
         (
             "trading_dates",
-            "daily_flows_usd_m",
-            "latest_flow_usd_m",
-            "previous_five_day_flow_usd_m",
+            "daily_flows_usd_100m",
+            "latest_flow_usd_100m",
+            "previous_five_day_flow_usd_100m",
         ),
         (
-            "five_day_flow_usd_m",
-            "twenty_day_flow_usd_m",
+            "five_day_flow_usd_100m",
+            "twenty_day_flow_usd_100m",
             "five_day_score",
             "twenty_day_score",
         ),
