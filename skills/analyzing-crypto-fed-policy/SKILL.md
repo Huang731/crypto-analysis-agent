@@ -1,6 +1,9 @@
 ---
 name: analyzing-crypto-fed-policy
 description: 评估美联储已经发生的政策利率变化，用联邦基金目标区间近三个月净变动判断偏鹰、偏鸽或中性。用户问加息、降息、利率路径或货币政策立场时选用；不分析资产负债表、M2 或美元指数。
+tools:
+  - get_fred_target_range
+  - calculate_fed_rate_change_indicator
 scoring:
   dimension_id: '02'
   name: 美联储政策与利率倾向

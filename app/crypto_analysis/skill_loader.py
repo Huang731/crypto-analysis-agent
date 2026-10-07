@@ -12,6 +12,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.config.config import settings
+from app.crypto_analysis.tools.registry import get_tool_registry
 from app.observability import get_logger
 
 log = get_logger("skills")
@@ -41,8 +42,13 @@ def _parse_document(text: str) -> tuple[dict, str]:
     if any(isinstance(event, yaml.events.AliasEvent) for event in yaml.parse(header)):
         raise ValueError("Skill frontmatter 不支持 YAML 别名")
     data = yaml.load(header, Loader=_UniqueSafeLoader)
-    if not isinstance(data, dict) or set(data) != {"name", "description", "scoring"}:
-        raise ValueError("frontmatter 必须仅包含 name、description 和 scoring")
+    if not isinstance(data, dict) or set(data) != {
+        "name",
+        "description",
+        "tools",
+        "scoring",
+    }:
+        raise ValueError("frontmatter 必须仅包含 name、description、tools 和 scoring")
     name, description = data["name"], data["description"]
     if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
         raise ValueError("Skill name 格式无效")
@@ -94,8 +100,20 @@ class SkillScoring(BaseModel):
 class LoadedSkill(BaseModel):
     name: str
     description: str
+    tools: list[str] = Field(min_length=1)
     scoring: SkillScoring
     body: str
+
+    @field_validator("tools")
+    @classmethod
+    def valid_tools(cls, names: list[str]) -> list[str]:
+        """加载时拒绝重复或未注册工具，不补充默认工具。"""
+        if len(names) != len(set(names)):
+            raise ValueError("Skill 工具名称重复")
+        unknown = set(names) - get_tool_registry().keys()
+        if unknown:
+            raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
+        return names
 
 
 @dataclass
@@ -180,11 +198,12 @@ class SkillLoader:
                 self._definitions[name] = LoadedSkill(
                     name=data["name"],
                     description=data["description"],
+                    tools=data["tools"],
                     scoring=SkillScoring.model_validate(data["scoring"]),
                     body=body,
                 )
             except (ValueError, yaml.YAMLError) as exc:
-                raise ValueError(f"Skill {name} 评分规则无效：{exc}") from exc
+                raise ValueError(f"Skill {name} 配置无效：{exc}") from exc
         return self._definitions[name]
 
     def validate_selected(self, names: Sequence[str]) -> None:

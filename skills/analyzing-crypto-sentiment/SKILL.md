@@ -1,6 +1,9 @@
 ---
 name: analyzing-crypto-sentiment
 description: 评估加密市场整体情绪，使用恐惧贪婪指数及其固定分档。用户问恐慌、贪婪、市场情绪或极端情绪时选用；这是全市场指标，不是单个币种的价格或资金数据。
+tools:
+  - get_cmc_fear_greed
+  - calculate_fear_greed_indicator
 scoring:
   dimension_id: '06'
   name: 市场情绪

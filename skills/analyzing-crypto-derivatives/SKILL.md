@@ -1,6 +1,10 @@
 ---
 name: analyzing-crypto-derivatives
 description: 评估目标资产合约市场的杠杆与拥挤程度，覆盖持仓量 OI 和资金费率 Funding。用户问杠杆、多空拥挤、资金费率或持仓量时选用；不判断价格趋势本身。
+tools:
+  - get_binance_derivatives_data
+  - calculate_oi_indicator
+  - calculate_funding_indicator
 scoring:
   dimension_id: '04'
   name: 衍生品数据

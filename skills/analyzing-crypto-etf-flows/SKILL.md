@@ -1,6 +1,9 @@
 ---
 name: analyzing-crypto-etf-flows
 description: 评估目标资产现货 ETF 的资金流入和流出，覆盖近 5 日与近 20 日净流入。用户问 ETF、机构申购赎回或现货 ETF 资金时选用；不能代表全部市场需求。
+tools:
+  - get_etf_flows
+  - calculate_etf_indicator
 scoring:
   dimension_id: '03'
   name: ETF资金流

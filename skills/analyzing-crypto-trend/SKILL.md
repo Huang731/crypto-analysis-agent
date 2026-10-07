@@ -1,6 +1,9 @@
 ---
 name: analyzing-crypto-trend
 description: 评估目标资产的价格趋势，覆盖 MA50、MA200、趋势强度 ADX 和方向指标 DI。用户问走势、均线、趋势强弱或涨跌是否确认时选用。
+tools:
+  - get_binance_trend_data
+  - calculate_trend_indicator
 scoring:
   dimension_id: '05'
   name: 趋势与均线

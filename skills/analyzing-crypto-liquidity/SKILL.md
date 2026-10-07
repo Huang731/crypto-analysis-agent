@@ -1,6 +1,14 @@
 ---
 name: analyzing-crypto-liquidity
 description: 评估美元与加密市场的流动性环境，覆盖美元指数 DXY、USDT 与 USDC 稳定币总市值、美国 M2 同比变化和美联储资产负债表 WALCL。用户问流动性、美元强弱、稳定币供给或宽货币时选用；不分析政策利率升降。
+tools:
+  - get_eodhd_dxy
+  - calculate_dxy_indicator
+  - get_cmc_stablecoin_market_cap
+  - calculate_stablecoin_indicator
+  - get_fred_observations
+  - calculate_m2_indicator
+  - calculate_fed_balance_indicator
 scoring:
   dimension_id: '01'
   name: 美元流动性与加密内部流动性
