@@ -61,7 +61,6 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
         "twenty_day_flow_usd_m": float(twenty),
         "five_day_score": five_score,
         "twenty_day_score": twenty_score,
-        "conflict_flag": five * twenty < 0,
         "score": float(
             Decimal(str(five_score)) * Decimal("0.4")
             + Decimal(str(twenty_score)) * Decimal("0.6")

@@ -92,7 +92,6 @@ _METRIC_FIELDS = {
             "twenty_day_flow_usd_m",
             "five_day_score",
             "twenty_day_score",
-            "conflict_flag",
         ),
     ),
     "DXY_Trend": (
