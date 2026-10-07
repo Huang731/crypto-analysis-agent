@@ -6,16 +6,18 @@ from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from app.crypto_analysis.calculators.derivatives_calculator import calculate_derivatives
-from app.crypto_analysis.crypto_analysis_agent import (
+from app.crypto_analysis.crypto_analysis_state import MetricToolContext
+from app.crypto_analysis.metric_service import (
     _compute_metric,
     _fetch_evidence,
 )
-from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.binance_source import get_binance_derivatives
 
 
 @tool
-async def get_binance_derivatives_data(runtime: ToolRuntime[MetricContext]) -> Command:
+async def get_binance_derivatives_data(
+    runtime: ToolRuntime[MetricToolContext],
+) -> Command:
     """通过Binance官方SDK取得同合约OI、Funding及现货小时线，返回计算用evidence_id。"""
     return await _fetch_evidence(
         runtime,
@@ -31,7 +33,7 @@ async def get_binance_derivatives_data(runtime: ToolRuntime[MetricContext]) -> C
 
 @tool
 def calculate_oi_indicator(
-    evidence_id: str, runtime: ToolRuntime[MetricContext]
+    evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
     """读取衍生品证据，按维度04的7日OI、价格及Funding拥挤规则计算OI。"""
     return _compute_metric(
@@ -45,7 +47,7 @@ def calculate_oi_indicator(
 
 @tool
 def calculate_funding_indicator(
-    evidence_id: str, runtime: ToolRuntime[MetricContext]
+    evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
     """读取衍生品证据，核验完整7日结算记录并计算8小时等效Funding及固定评分。"""
     return _compute_metric(

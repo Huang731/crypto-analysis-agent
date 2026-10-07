@@ -1,6 +1,5 @@
 """FRED 原始观测的校验、指标计算与评分。"""
 
-from calendar import monthrange  # 核对月末及观测有效期。
 from datetime import date, timedelta  # 计算月度与周度窗口。
 from decimal import Decimal, InvalidOperation  # 保留原有精度和格式校验。
 from typing import Any  # 接收 FRED 原始响应。
@@ -18,10 +17,10 @@ _FRED_SOURCE = (
 
 
 def calculate_m2_yoy_change(
-    payload: dict[str, Any], as_of: date
+    raw: dict[str, Any], scope: dict[str, str]
 ) -> dict[str, Any]:  # 定义该指标的程序计算函数。
     """用 M2SL 原始月值计算最新月同比与上月同比之差。"""
-    rows = payload.get("observations")  # 计算或保存原始观测列表。
+    rows = raw["payload"].get("observations")  # 计算或保存原始观测列表。
     if not isinstance(rows, list):  # 校验当前条件并决定后续计算。
         raise TypeError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
     values: dict[date, Decimal] = {}  # 计算或保存按日期整理的有效观测。
@@ -35,12 +34,8 @@ def calculate_m2_yoy_change(
             raise ValueError(
                 "FRED 月度观测缺少有效日期或数值"
             ) from exc  # 拒绝无效或不足的数据。
-        if (
-            observed_month.day != 1 or observed_month > as_of
-        ):  # 校验当前条件并决定后续计算。
-            raise ValueError(
-                "M2SL 观测日期不是已到达月份的第一天"
-            )  # 拒绝无效或不足的数据。
+        if observed_month.day != 1:  # 校验当前条件并决定后续计算。
+            raise ValueError("M2SL 观测日期不是月份的第一天")  # 拒绝无效或不足的数据。
         if observed_month in values:  # 校验当前条件并决定后续计算。
             raise ValueError("M2SL 月度观测日期重复")  # 拒绝无效或不足的数据。
         if raw_value == ".":  # 校验当前条件并决定后续计算。
@@ -77,19 +72,6 @@ def calculate_m2_yoy_change(
             "status": "data_missing",  # 输出 status 字段供后续核对。
             "reason": "缺少最新月、上月或其去年同月的 M2SL 月值",  # 输出 reason 字段供后续核对。
         }  # 结束当前数据结构。
-    month_end = date(
-        latest_month.year,
-        latest_month.month,
-        monthrange(latest_month.year, latest_month.month)[1],
-    )  # 计算或保存最新观测月的月末日期。
-    if month_end > as_of or as_of - month_end > timedelta(
-        days=75
-    ):  # 校验当前条件并决定后续计算。
-        return {
-            "indicator": "M2_YoY",
-            "status": "data_missing",
-            "reason": "最新 M2SL 观测月末超过 75 天有效期",
-        }  # 返回本步骤的结果。
 
     latest_yoy = Decimal(100) * (
         values[latest_month] / values[latest_year_ago] - 1
@@ -130,10 +112,10 @@ def calculate_m2_yoy_change(
 
 
 def calculate_walcl_ma4(
-    payload: dict[str, Any], as_of: date
+    raw: dict[str, Any], scope: dict[str, str]
 ) -> dict[str, Any]:  # 定义该指标的程序计算函数。
     """用最近四个连续周三的 WALCL 原始值计算 MA4 与偏离百分比。"""
-    rows = payload.get("observations")  # 计算或保存原始观测列表。
+    rows = raw["payload"].get("observations")  # 计算或保存原始观测列表。
     if not isinstance(rows, list):  # 校验当前条件并决定后续计算。
         raise TypeError("FRED 响应缺少 observations 数组")  # 拒绝无效或不足的数据。
     values: dict[date, Decimal] = {}  # 计算或保存按日期整理的有效观测。
@@ -147,10 +129,8 @@ def calculate_walcl_ma4(
             raise ValueError(
                 "WALCL 周度观测缺少有效日期或数值"
             ) from exc  # 拒绝无效或不足的数据。
-        if (
-            observed_at.weekday() != 2 or observed_at > as_of
-        ):  # 校验当前条件并决定后续计算。
-            raise ValueError("WALCL 观测日期不是已到达的周三")  # 拒绝无效或不足的数据。
+        if observed_at.weekday() != 2:  # 校验当前条件并决定后续计算。
+            raise ValueError("WALCL 观测日期不是周三")  # 拒绝无效或不足的数据。
         if observed_at in values:  # 校验当前条件并决定后续计算。
             raise ValueError("WALCL 周度观测日期重复")  # 拒绝无效或不足的数据。
         if raw_value == ".":  # 校验当前条件并决定后续计算。
@@ -180,12 +160,6 @@ def calculate_walcl_ma4(
             "indicator": "Fed_Balance（WALCL）",
             "status": "data_missing",
             "reason": "缺少最近四个连续周三的 WALCL 观测",
-        }  # 返回本步骤的结果。
-    if as_of - latest_day > timedelta(days=14):  # 校验当前条件并决定后续计算。
-        return {
-            "indicator": "Fed_Balance（WALCL）",
-            "status": "data_missing",
-            "reason": "最新 WALCL 观测超过 14 天有效期",
         }  # 返回本步骤的结果。
 
     ma4 = (

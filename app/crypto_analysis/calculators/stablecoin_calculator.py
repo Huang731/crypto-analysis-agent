@@ -1,6 +1,6 @@
 """CMC 稳定币原始报价的校验、对齐与评分。"""
 
-from datetime import date, datetime, timedelta  # 对齐 UTC 日期并检查有效期。
+from datetime import date, datetime, timedelta  # 对齐 UTC 日期。
 from math import isfinite  # 排除无效市值。
 from typing import Any  # 接收 CMC 原始响应。
 
@@ -15,10 +15,10 @@ _BASE_URL = "https://pro-api.coinmarketcap.com"  # 保留原有结果来源标�
 
 
 def _stablecoin_metrics(
-    payload: dict[str, Any], as_of: datetime
+    raw: dict[str, Any], scope: dict[str, str]
 ) -> dict[str, Any]:  # 定义该指标的程序计算函数。
     """按两个币种的 UTC 日期对齐，计算维度 01 所需指标。"""
-    data = payload.get("data")  # 计算或保存接口中的币种数据。
+    data = raw["payload"].get("data")  # 计算或保存接口中的币种数据。
     if not isinstance(data, dict):  # 校验当前条件并决定后续计算。
         raise TypeError("CMC 稳定币响应缺少 data 对象")  # 拒绝无效或不足的数据。
     by_coin: dict[
@@ -70,13 +70,7 @@ def _stablecoin_metrics(
             values[day] = (value, observed_at)  # 计算或保存values[day]。
         by_coin[symbol] = values  # 计算或保存by_coin[symbol]。
 
-    shared_days = sorted(  # 计算或保存两种稳定币共同拥有的日期。
-        day
-        for day in set(by_coin["USDT"]) & set(by_coin["USDC"])  # 延续上一行的数据处理。
-        if all(
-            by_coin[symbol][day][1] <= as_of for symbol in ("USDT", "USDC")
-        )  # 校验当前条件并决定后续计算。
-    )  # 结束当前数据结构。
+    shared_days = sorted(set(by_coin["USDT"]) & set(by_coin["USDC"]))
     if not shared_days:  # 校验当前条件并决定后续计算。
         return {
             "status": "data_missing",
@@ -102,17 +96,6 @@ def _stablecoin_metrics(
         return {
             "status": "data_missing",
             "reason": "所需日期的稳定币市值缺失",
-        }  # 返回本步骤的结果。
-    latest_times = [
-        by_coin[symbol][latest_day][1] for symbol in ("USDT", "USDC")
-    ]  # 计算或保存两种稳定币的最新观测时间。
-    if any(
-        observed_at > as_of or as_of - observed_at > timedelta(hours=48)
-        for observed_at in latest_times
-    ):  # 校验当前条件并决定后续计算。
-        return {
-            "status": "data_missing",
-            "reason": "稳定币最新报价超过 48 小时有效期或晚于当前时间",
         }  # 返回本步骤的结果。
 
     totals = {  # 计算或保存每天两种稳定币的合计市值。

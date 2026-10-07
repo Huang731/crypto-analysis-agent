@@ -116,7 +116,7 @@ def _fetch_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:
         ).data()
     finally:
         client.rest_api._session.close()
-    return {"symbol": f"{asset}USDT", "rows": rows, "source": _SOURCES["klines"]}
+    return {"symbol": f"{asset}USDT", "payload": rows, "source": _SOURCES["klines"]}
 
 
 async def get_binance_trend_klines(target_asset: str, as_of: str) -> dict[str, Any]:

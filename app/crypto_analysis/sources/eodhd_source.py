@@ -63,4 +63,4 @@ async def query_dxy_from_official_mcp(
         rows = json.loads(raw_data)
     except json.JSONDecodeError as exc:
         raise ValueError("EODHD 官方 MCP 日线结果不是有效 JSON") from exc
-    return {"rows": rows, "source": _DXY_SOURCE}  # 将原始数组交给程序计算器。
+    return {"payload": rows, "source": _DXY_SOURCE}  # 将原始数组交给程序计算器。

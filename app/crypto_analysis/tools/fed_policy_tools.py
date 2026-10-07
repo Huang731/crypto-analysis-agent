@@ -8,18 +8,18 @@ from langgraph.types import Command
 from app.crypto_analysis.calculators.fed_policy_calculator import (
     calculate_fed_rate_change,
 )
-from app.crypto_analysis.crypto_analysis_agent import (
+from app.crypto_analysis.crypto_analysis_state import MetricToolContext
+from app.crypto_analysis.metric_service import (
     _compute_metric,
     _fetch_evidence,
     _tool_error,
 )
-from app.crypto_analysis.crypto_analysis_state import MetricContext
 from app.crypto_analysis.sources.fred_source import get_fed_target_range
 
 
 @tool
 async def get_fred_target_range(
-    runtime: ToolRuntime[MetricContext],
+    runtime: ToolRuntime[MetricToolContext],
 ) -> Command | ToolMessage:
     """从 FRED 取得 DFEDTARL/DFEDTARU 原始日度序列。返回 evidence_id，供利率变化计算工具使用。"""
     if runtime.context["skill"].dimension_id != "02":
@@ -35,7 +35,7 @@ async def get_fred_target_range(
 
 @tool
 def calculate_fed_rate_change_indicator(
-    evidence_id: str, runtime: ToolRuntime[MetricContext]
+    evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
     """用 FRED 证据计算 Fed_Rate_Change_3M：同日上下限、中点、三个月基点净变化与固定评分。"""
     return _compute_metric(

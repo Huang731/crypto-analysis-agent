@@ -1,30 +1,24 @@
 """维度02：根据 FRED 政策利率上下限计算三个月净变化。"""
 
 import calendar
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 
-def comparison_date(as_of: str) -> date:
+def comparison_date(day: date) -> date:
     """按日历向前移动三个月，月末取目标月实际最后一天。"""
-    cutoff = datetime.fromisoformat(as_of)
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    day = cutoff.astimezone(timezone.utc).date()
     index = day.year * 12 + day.month - 1 - 3
     year, month = index // 12, index % 12 + 1
     return date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
 
 
-def _fed_target_values(payload: dict[str, Any], cutoff: date) -> dict[date, Decimal]:
-    """解析有效日度观测；缺失标记不转成零，未来日期不参与计算。"""
+def _fed_target_values(payload: dict[str, Any]) -> dict[date, Decimal]:
+    """解析有效日度观测；缺失标记不转成零。"""
     values = {}
     dates = set()
     for row in payload["observations"]:
         day = date.fromisoformat(row["date"])
-        if day > cutoff:
-            continue
         if day in dates:
             raise ValueError("FRED 政策利率观测日期重复")
         dates.add(day)
@@ -44,21 +38,24 @@ def calculate_fed_rate_change(
     raw: dict[str, Any], scope: dict[str, str]
 ) -> dict[str, Any]:
     """用同日上下限计算三个月中点净变化，并按五档评分。"""
-    cutoff = datetime.fromisoformat(scope["as_of"])
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    today = cutoff.astimezone(timezone.utc).date()
-    comparison_day = comparison_date(scope["as_of"])
-    lower = _fed_target_values(raw["lower_payload"], today)
-    upper = _fed_target_values(raw["upper_payload"], today)
+    payload = raw["payload"]
+    lower = _fed_target_values(payload["lower_payload"])
+    upper = _fed_target_values(payload["upper_payload"])
     common = lower.keys() & upper.keys()
+    if not common:
+        return {
+            "status": "data_missing",
+            "reason": "缺少上下限共同有效的观测日期",
+        }
+    current_day = max(common)
+    comparison_day = comparison_date(current_day)
     baseline_days = [day for day in common if day <= comparison_day]
-    if not common or not baseline_days:
+    if not baseline_days:
         return {
             "status": "data_missing",
             "reason": "缺少当前或三个月前上下限共同有效的观测日期",
         }
-    current_day, baseline_day = max(common), max(baseline_days)
+    baseline_day = max(baseline_days)
     for day in (current_day, baseline_day):
         if lower[day] > upper[day]:
             raise ValueError("FRED 政策目标区间下限大于上限")

@@ -36,7 +36,7 @@ async def get_fed_target_range(as_of: str) -> dict[str, Any]:
     if cutoff.tzinfo is None:
         raise ValueError("as_of 必须包含时区")
     today = cutoff.astimezone(timezone.utc).date()
-    baseline = comparison_date(as_of)
+    baseline = comparison_date(today)
     params = {
         "api_key": api_key,
         "file_type": "json",
@@ -66,8 +66,7 @@ async def get_fed_target_range(as_of: str) -> dict[str, Any]:
         payloads.append(payload)
     return {
         "source": _FRED_SOURCE,
-        "lower_payload": payloads[0],
-        "upper_payload": payloads[1],
+        "payload": {"lower_payload": payloads[0], "upper_payload": payloads[1]},
     }
 
 

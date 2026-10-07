@@ -107,5 +107,5 @@ async def get_fear_and_greed(
         "status": "ok",
         "source": f"{_BASE_URL}{path}",
         "mode": mode,
-        "data": normalized[0] if mode == "latest" else normalized,
+        "payload": normalized[0] if mode == "latest" else normalized,
     }

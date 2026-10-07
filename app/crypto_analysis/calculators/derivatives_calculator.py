@@ -27,13 +27,11 @@ def _rows(payload: dict[str, Any], key: str) -> list[Any]:
     return rows
 
 
-def _price(payload: dict[str, Any], cutoff: int) -> dict[int, float]:
-    """小时线收盘价对应下一小时起点，只接收已完成的UTC小时线。"""
+def _price(payload: dict[str, Any]) -> dict[int, float]:
+    """小时线收盘价对应下一小时起点，按返回的UTC小时线计算。"""
     prices = {}
     for row in _rows(payload, "klines"):
         start, close = int(row[0]), int(row[6])
-        if close >= cutoff:
-            continue
         if start % _HOUR or close != start + _HOUR - 1:
             raise ValueError("现货小时线时间格式无效")
         timestamp = start + _HOUR
@@ -54,16 +52,12 @@ def _change(values: dict[int, float], latest: int, hours: int) -> float | None:
     )
 
 
-def _funding(
-    payload: dict[str, Any], cutoff: int, prices: dict[int, float]
-) -> dict[str, Any]:
+def _funding(payload: dict[str, Any], prices: dict[int, float]) -> dict[str, Any]:
     """按最新已返回结算记录取168小时窗口，起点记录不计入累计值。"""
     records = {}
     actual_times = {}
     for row in _rows(payload, "funding"):
         actual = int(row["fundingTime"])
-        if actual > cutoff:
-            continue
         if actual % _HOUR >= 1000:
             raise ValueError("Funding结算时间偏离小时边界超过允许范围")
         # 保留原始结算时间，仅将不足一秒的发布偏移映射到结算小时。
@@ -71,8 +65,6 @@ def _funding(
         actual_times[timestamp] = actual
         if row["symbol"] != payload["symbol"]:
             raise ValueError("Funding 合约与目标不一致")
-        if timestamp > cutoff:
-            continue
         if timestamp in records:
             raise ValueError("Funding 结算时间重复")
         records[timestamp] = _number(row["fundingRate"])
@@ -116,18 +108,14 @@ def calculate_derivatives(
     """Funding独立评分；OI依赖Funding和同时间戳价格，缺失时不给分。"""
     if metric_id not in {"OI", "Funding"}:
         raise ValueError("不支持的衍生品指标")
-    cutoff_dt = datetime.fromisoformat(scope["as_of"])
-    if cutoff_dt.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    cutoff = int(cutoff_dt.timestamp() * 1000)
     payload = raw["payload"]
     try:
         if payload["symbol"] != f"{scope['target_asset'].upper()}USDT":
             raise ValueError("原始证据目标合约不一致")
-        prices = _price(payload, cutoff)
-        if not prices or cutoff - max(prices) > 24 * _HOUR:
-            raise ValueError("现货小时线缺失或超过24小时有效期")
-        funding = _funding(payload, cutoff, prices)
+        prices = _price(payload)
+        if not prices:
+            raise ValueError("现货小时线缺失")
+        funding = _funding(payload, prices)
         result = {**funding, "symbol": payload["symbol"]}
         latest = funding["funding_timestamp"]
         score = funding["funding_score"]
@@ -138,8 +126,6 @@ def calculate_derivatives(
                 timestamp = int(row["timestamp"])
                 if row["symbol"] != payload["symbol"]:
                     raise ValueError("OI 合约与目标不一致")
-                if timestamp > cutoff:
-                    continue
                 value = _number(row["sumOpenInterest"])
                 if timestamp in oi or value <= 0:
                     raise ValueError("OI记录重复或数量无效")
@@ -147,8 +133,8 @@ def calculate_derivatives(
             if not oi:
                 raise ValueError("OI 最新记录缺失")
             latest = max(oi)
-            if cutoff - latest > 24 * _HOUR or abs(latest - max(prices)) > _HOUR:
-                raise ValueError("OI及现货小时线过期或时间差超过1小时")
+            if abs(latest - max(prices)) > _HOUR:
+                raise ValueError("OI与现货小时线时间差超过1小时")
             if latest not in prices:
                 raise ValueError("OI 最新采样与现货收盘时间无法匹配")
             oi_change = _change(oi, latest, 168)

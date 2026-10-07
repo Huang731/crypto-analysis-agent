@@ -17,7 +17,7 @@ def calculate_fear_and_greed(
     try:
         if raw["mode"] != "latest":
             raise ValueError("维度06只使用latest情绪记录")
-        record = raw["data"]
+        record = raw["payload"]
         value = record["value"]
         if (
             isinstance(value, bool)

@@ -1,6 +1,6 @@
 """计算现货ETF净流量及金额分档评分，金额统一使用百万美元。"""
 
-from datetime import date, datetime, timezone
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -21,9 +21,6 @@ def _flow_score(value: Decimal, neutral: int, extreme: int) -> float:
 def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     """按接口日期序列计算最近5条、20条记录，不依赖额外交易日历。"""
     payload = raw["payload"]
-    cutoff = datetime.fromisoformat(scope["as_of"])
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
     if payload["symbol"].upper() != scope["target_asset"].upper():
         raise ValueError("ETF响应资产与目标资产不一致")
     days = payload["days"]
@@ -44,9 +41,8 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
         if not amount.is_finite():
             raise ValueError("ETF净流量不是有限金额")
         rows[day] = amount
-    # 保留as_of截止范围，直接按日期取接口返回的最近20条记录。
-    cutoff_date = cutoff.astimezone(timezone.utc).date()
-    window_dates = sorted(day for day in rows if day <= cutoff_date)[-20:]
+    # 直接按日期取接口返回的最近20条记录。
+    window_dates = sorted(rows)[-20:]
     values = [rows[day] for day in window_dates]
     five = sum(values[-5:], Decimal(0))
     twenty = sum(values, Decimal(0))

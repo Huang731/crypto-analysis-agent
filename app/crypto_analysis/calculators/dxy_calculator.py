@@ -1,6 +1,6 @@
 """DXY 原始日线的校验、均线与评分。"""
 
-from datetime import date, timedelta
+from datetime import date
 from math import isfinite
 from typing import Any
 
@@ -9,8 +9,9 @@ from app.crypto_analysis.calculators.score_calculator import linear_score
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"
 
 
-def calculate_dxy_metrics(rows: Any, end_date: date) -> dict[str, Any]:
+def calculate_dxy_metrics(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     """用日线 close 计算 DXY、MA50、MA200 及均线方向。"""
+    rows = raw["payload"]
     if not isinstance(rows, list):
         raise TypeError("EODHD 日线响应必须是数组")
     bars: list[tuple[date, float]] = []
@@ -24,15 +25,11 @@ def calculate_dxy_metrics(rows: Any, end_date: date) -> dict[str, Any]:
             raise ValueError("EODHD 日线缺少有效的 date 或 close") from exc
         if not isfinite(close) or close <= 0:
             raise ValueError("EODHD 日线 close 必须是正的有限数值")
-        if trading_date > end_date:
-            raise ValueError("EODHD 返回了未来交易日期")
         if bars and trading_date <= bars[-1][0]:
             raise ValueError("EODHD 日线日期未严格升序或存在重复")
         bars.append((trading_date, close))
     if len(bars) < 201:
         raise ValueError("DXY 完整日线不足 201 根，无法判断 MA200 方向")
-    if end_date - bars[-1][0] > timedelta(days=5):
-        raise ValueError("DXY 最新日线已超过 5 天有效期")
 
     # 使用相邻交易日的均线判断方向，不改变评分基准。
     closes = [close for _, close in bars]

@@ -15,7 +15,7 @@ def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any
     return {**left, **right}
 
 
-class MetricContext(TypedDict):
+class MetricToolContext(TypedDict):
     """由程序注入的维度与请求范围，模型不能修改。"""
 
     skill: SkillScoring

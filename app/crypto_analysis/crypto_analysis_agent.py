@@ -1,39 +1,28 @@
-"""加密货币分析：请求规划、证据与指标校验、维度执行、并行汇总及报告生成。"""
+"""加密货币分析：请求规划、维度执行、并行汇总及报告生成。"""
 
 import json
 from collections.abc import Awaitable, Callable
-from datetime import date, datetime, timezone
-from math import fsum, isfinite
+from datetime import datetime, timezone
+from math import fsum
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
-from langchain.tools import ToolRuntime
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Command, Send
+from langgraph.types import Send
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
-from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics
-from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
-from app.crypto_analysis.calculators.fear_greed_calculator import (
-    calculate_fear_and_greed,
-)
-from app.crypto_analysis.calculators.fred_calculator import (
-    calculate_m2_yoy_change,
-    calculate_walcl_ma4,
-)
-from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics
-from app.crypto_analysis.calculators.trend_calculator import calculate_trend
 from app.crypto_analysis.crypto_analysis_state import (
     DimensionWorkerState,
     DynamicAnalysisState,
     MetricAgentState,
-    MetricContext,
+    MetricToolContext,
 )
+from app.crypto_analysis.metric_service import missing_metric
 from app.crypto_analysis.skill_loader import (
     LoadedSkill,
     SkillLoader,
@@ -114,368 +103,7 @@ async def create_analysis_plan(
     return plan.model_dump()
 
 
-# 指标结果校验与计算
-
-
-_METRIC_FIELDS = {
-    "Fed_Rate_Change_3M": (
-        (
-            "current_date",
-            "baseline_date",
-            "comparison_date",
-            "current_lower_pct",
-            "current_upper_pct",
-            "baseline_lower_pct",
-            "baseline_upper_pct",
-        ),
-        ("current_midpoint_pct", "baseline_midpoint_pct", "change_bp", "policy_change"),
-    ),
-    "Fear_Greed": (
-        ("value", "value_classification", "record_timestamp"),
-        ("signal_reference",),
-    ),
-    "Trend": (
-        ("symbol", "kline_count", "first_open_time", "last_close_time", "close"),
-        (
-            "ma50",
-            "ma200",
-            "ma50_20_days_ago",
-            "ma200_20_days_ago",
-            "adx14",
-            "plus_di",
-            "minus_di",
-            "admission",
-            "timing",
-            "confirmation",
-            "intermediate_values",
-            "calculation_method",
-        ),
-    ),
-    "Funding": (
-        (
-            "symbol",
-            "funding_times",
-            "funding_rates",
-            "funding_timestamp",
-            "price_source",
-            "funding_source",
-        ),
-        ("funding_average_pct", "funding_price_change_pct"),
-    ),
-    "OI": (
-        (
-            "symbol",
-            "oi_timestamp",
-            "latest_oi",
-            "baseline_oi",
-            "latest_price",
-            "baseline_price",
-            "price_source",
-            "funding_source",
-        ),
-        (
-            "oi_change_pct",
-            "price_change_pct",
-            "funding_average_pct",
-            "funding_score",
-            "market_state",
-        ),
-    ),
-    "ETF_Flows": (
-        (
-            "trading_dates",
-            "daily_flows_usd_m",
-            "latest_flow_usd_m",
-            "previous_five_day_flow_usd_m",
-        ),
-        (
-            "five_day_flow_usd_m",
-            "twenty_day_flow_usd_m",
-            "five_day_score",
-            "twenty_day_score",
-            "conflict_flag",
-        ),
-    ),
-    "DXY_Trend": (
-        ("dxy", "ma50", "ma200"),
-        ("ma50_deviation_pct", "ma50_trend", "ma200_trend"),
-    ),
-    "Stable_MCap": (
-        (
-            "usdt_market_cap",
-            "usdc_market_cap",
-            "total_market_cap",
-            "ma30_market_cap",
-            "seven_day_market_cap",
-            "thirty_day_market_cap",
-            "quote_timestamps",
-        ),
-        (
-            "ma30_change_pct",
-            "seven_day_change_pct",
-            "thirty_day_change_pct",
-            "conflict_flag",
-        ),
-    ),
-    "M2_YoY": (
-        (
-            "latest_value",
-            "previous_value",
-            "latest_year_ago_value",
-            "previous_year_ago_value",
-            "comparison_months",
-        ),
-        ("latest_yoy_pct", "previous_yoy_pct", "yoy_change_pp"),
-    ),
-    "Fed_Balance": (
-        ("latest_value", "ma4_value", "comparison_dates", "weekly_values"),
-        ("ma4_change_pct",),
-    ),
-}
-
-
-def missing_metric(
-    dimension_id: str, metric_id: str, status: str, reason: str
-) -> dict[str, Any]:
-    return {
-        "dimension_id": dimension_id,
-        "indicator_id": metric_id,
-        "status": status,
-        "reason": reason,
-        "raw_values": {},
-        "calculated_values": {},
-        "unit": None,
-        "observed_at": None,
-        "source": None,
-        "score": None,
-    }
-
-
-def _normalize_result(
-    dimension_id: str, metric_id: str, result: dict[str, Any], source_action: str
-) -> dict[str, Any]:
-    if result.get("status") != "ok":
-        status = result.get("status")
-        if status not in {"data_missing", "calculation_error", "not_applicable"}:
-            raise ValueError(f"{dimension_id}.{metric_id} 返回无效状态")
-        reason = result.get("reason")
-        if not isinstance(reason, str) or not reason:
-            raise ValueError(f"{dimension_id}.{metric_id} 缺少原因")
-        return missing_metric(dimension_id, metric_id, status, reason)
-    raw_fields, calculated_fields = _METRIC_FIELDS[metric_id]
-    required = [
-        *raw_fields,
-        *calculated_fields,
-        "unit",
-        "observed_at",
-        "source",
-        "score",
-    ]
-    absent = [field for field in required if result.get(field) is None]
-    if absent:
-        raise ValueError(f"{dimension_id}.{metric_id} 缺少字段：{', '.join(absent)}")
-    score = result["score"]
-    if (
-        isinstance(score, bool)
-        or not isinstance(score, (int, float))
-        or not isfinite(score)
-        or not 0 <= score <= 10
-    ):
-        raise ValueError(f"{dimension_id}.{metric_id} 分数无效")
-    if not all(
-        isinstance(result[field], str) and result[field]
-        for field in ("unit", "observed_at", "source")
-    ):
-        raise ValueError(f"{dimension_id}.{metric_id} 的单位、日期或来源无效")
-    try:
-        date.fromisoformat(result["observed_at"])
-    except ValueError as exc:
-        raise ValueError(f"{dimension_id}.{metric_id} 的观测日期格式无效") from exc
-    return {
-        "dimension_id": dimension_id,
-        "indicator_id": metric_id,
-        "status": "ok",
-        "reason": None,
-        "raw_values": {field: result[field] for field in raw_fields},
-        "calculated_values": {field: result[field] for field in calculated_fields}
-        | (
-            {
-                field: result[field]
-                for field in ("oi_24h_change_pct", "price_24h_change_pct")
-            }
-            if metric_id == "OI"
-            else {}
-        ),
-        "unit": result["unit"],
-        "observed_at": result["observed_at"],
-        "source": {"action": source_action, "url": result["source"]},
-        "score": score,
-    }
-
-
-def _calculate_dxy(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
-    return calculate_dxy_metrics(raw["rows"], cutoff.date())
-
-
-def _calculate_stable(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
-    result = _stablecoin_metrics(raw["payload"], cutoff)
-    return result
-
-
-def _calculate_m2(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
-    result = calculate_m2_yoy_change(raw["payload"], cutoff.date())
-    return result
-
-
-def _calculate_walcl(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
-    result = calculate_walcl_ma4(raw["payload"], cutoff.date())
-    return result
-
-
-def _calculate_etf(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    """按已确认的ETF金额分档计算，保留完整性缺失状态。"""
-    return calculate_etf_flows(raw, scope)
-
-
-def _calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    """按维度05文档公式计算均线和趋势，保留原始数据缺失状态。"""
-    return calculate_trend(raw, scope)
-
-
-def _calculate_fear_greed(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    """按维度06分档计算市场情绪，保留缺失状态。"""
-    return calculate_fear_and_greed(raw, scope)
-
-
-# 证据处理与维度工具Agent
-
-
-def _tool_message(
-    runtime: ToolRuntime[MetricContext], content: dict[str, Any]
-) -> ToolMessage:
-    return ToolMessage(
-        content=json.dumps(content, ensure_ascii=False),
-        tool_call_id=runtime.tool_call_id,
-    )
-
-
-def _tool_error(runtime: ToolRuntime[MetricContext], reason: str) -> ToolMessage:
-    """把可纠正的调用参数错误交还模型，不产生指标数据或分数。"""
-    return ToolMessage(
-        content=json.dumps({"status": "error", "reason": reason}, ensure_ascii=False),
-        tool_call_id=runtime.tool_call_id,
-        status="error",
-    )
-
-
-async def _fetch_evidence(
-    runtime: ToolRuntime[MetricContext],
-    data_kind: str,
-    source_action: str,
-    source_function: Callable[..., Awaitable[dict[str, Any]]],
-    arguments: dict[str, Any],
-) -> Command:
-    """保存真实原始响应，只把证据标识与概要交给模型。"""
-    evidence_id = runtime.tool_call_id
-    with trace_span(
-        "analysis.metric.fetch", data_kind=data_kind, source_action=source_action
-    ) as span:
-        try:
-            raw = await source_function(**arguments)
-        except Exception as exc:  # noqa: BLE001 - 取数失败类型不固定，作为缺失证据交还 Agent。
-            # 取数失败作为真实缺失证据交还 Agent，不返回其他来源或缓存数据。
-            reason = (
-                str(exc)
-                if isinstance(exc, (RuntimeError, TypeError, ValueError))
-                else type(exc).__name__
-            )
-            record = {
-                "data_kind": data_kind,
-                "source_action": source_action,
-                "status": "data_missing",
-                "reason": reason,
-            }
-            summary = {"evidence_id": evidence_id, **record}
-            span.metadata["status"] = "error"
-        else:
-            record = {
-                "data_kind": data_kind,
-                "source_action": source_action,
-                "status": "ok",
-                "raw": raw,
-            }
-            summary = {
-                "evidence_id": evidence_id,
-                "data_kind": data_kind,
-                "status": "ok",
-                "source": raw["source"],
-            }
-            span.output = summary
-    return Command(
-        update={
-            "evidence": {evidence_id: record},
-            "messages": [_tool_message(runtime, summary)],
-        }
-    )
-
-
-def _compute_metric(
-    runtime: ToolRuntime[MetricContext],
-    evidence_id: str,
-    metric_id: str,
-    data_kind: str,
-    calculator: Callable[[dict[str, Any], dict[str, str]], dict[str, Any]],
-) -> Command | ToolMessage:
-    """计算器直接读取工具状态中的原始数据，模型不传入或修改数值。"""
-    scoring = runtime.context["skill"]
-    if metric_id not in {metric.id for metric in scoring.metrics}:
-        return _tool_error(
-            runtime, f"指标 {metric_id} 不属于当前维度，请选择本维度适用的工具"
-        )
-    if evidence_id not in runtime.state["evidence"]:
-        return _tool_error(
-            runtime, "证据 ID 不存在，请先取得真实数据并使用工具返回的 evidence_id"
-        )
-    evidence = runtime.state["evidence"][evidence_id]
-    if evidence["data_kind"] != data_kind:
-        return _tool_error(
-            runtime, f"证据类型不适用于指标 {metric_id}，请核对取数工具返回的 data_kind"
-        )
-    with trace_span(
-        "analysis.metric.calculate", metric_id=metric_id, evidence_id=evidence_id
-    ) as span:
-        if evidence["status"] != "ok":
-            result = missing_metric(
-                scoring.dimension_id, metric_id, "data_missing", evidence["reason"]
-            )
-        else:
-            try:
-                calculated = calculator(evidence["raw"], runtime.context["scope"])
-                result = _normalize_result(
-                    scoring.dimension_id,
-                    metric_id,
-                    calculated,
-                    evidence["source_action"],
-                )
-            except (TypeError, ValueError) as exc:
-                result = missing_metric(
-                    scoring.dimension_id, metric_id, "data_missing", str(exc)
-                )
-            except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断维度。
-                result = missing_metric(
-                    scoring.dimension_id, metric_id, "calculation_error", str(exc)
-                )
-        span.output = {"status": result["status"], "score": result["score"]}
-    return Command(
-        update={
-            "indicator_results": {metric_id: result},
-            "messages": [_tool_message(runtime, result)],
-        }
-    )
+# 指标工具 Agent
 
 
 class MetricModelTrace(AgentMiddleware):
@@ -526,7 +154,7 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
         # 声明 evidence 与 indicator_results，工具才能写入原始数据和指标结果。
         state_schema=MetricAgentState,
         # 声明 skill 与 scope，工具才能读取币种、截止时间，且模型不能修改。
-        context_schema=MetricContext,
+        context_schema=MetricToolContext,
         system_prompt=metric_agent_system_prompt(),
         middleware=[MetricModelTrace()],
     )
@@ -721,21 +349,31 @@ def build_dynamic_analysis_agent(
                     "analysis.dimension.thought_retrieval",
                     dimension_id=scoring.dimension_id,
                 ) as span:
-                    documents = await retriever.aretrieve(query)
-                    # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
-                    result["thought_context"] = {
-                        "query": query,
-                        "status": "ok" if documents else "no_results",
-                        "documents": [
-                            {
-                                "id": doc.id,
-                                "content": doc.page_content,
-                                "metadata": doc.metadata,
-                            }
-                            for doc in documents
-                        ],
-                    }
-                    span.output = {"document_count": len(documents)}
+                    try:
+                        documents = await retriever.aretrieve(query)
+                    except Exception:  # noqa: BLE001 - 检索失败保留已计算指标，明确记录失败状态。
+                        span.metadata["status"] = "error"
+                        _LOG.exception("思想材料检索失败：%s", skill.name)
+                        result["thought_context"] = {
+                            "query": query,
+                            "status": "error",
+                            "documents": [],
+                        }
+                    else:
+                        # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
+                        result["thought_context"] = {
+                            "query": query,
+                            "status": "ok" if documents else "no_results",
+                            "documents": [
+                                {
+                                    "id": doc.id,
+                                    "content": doc.page_content,
+                                    "metadata": doc.metadata,
+                                }
+                                for doc in documents
+                            ],
+                        }
+                        span.output = {"document_count": len(documents)}
                 return {"dimension_results": [result]}
             except Exception:
                 node_span.metadata["status"] = "error"

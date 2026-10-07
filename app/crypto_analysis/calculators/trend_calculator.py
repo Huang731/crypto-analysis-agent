@@ -10,24 +10,19 @@ _DAY = 86_400_000
 def validate_trend_klines(
     raw: dict[str, Any], scope: dict[str, str]
 ) -> list[list[Any]]:
-    """检查完整原始数组，只选最近300根完整且连续的UTC日线。"""
-    cutoff = datetime.fromisoformat(scope["as_of"])
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
+    """检查完整原始数组，只选返回数据中最近300根连续的UTC日线。"""
     if raw["symbol"] != f"{scope['target_asset'].upper()}USDT":
         raise ValueError("现货日线交易对与目标不一致")
-    rows = raw["rows"]
+    rows = raw["payload"]
     if not isinstance(rows, list):
         raise TypeError("现货日线响应不是数组")
-    cutoff_ms = int(cutoff.timestamp() * 1000)
     selected = []
     for row in rows:
         if not isinstance(row, list) or len(row) < 7:
             raise ValueError("现货日线字段缺失或响应截断")
         if not isinstance(row[0], int) or not isinstance(row[6], int):
             raise TypeError("现货日线时间戳必须为整数毫秒")
-        if row[6] < cutoff_ms:
-            selected.append(row)
+        selected.append(row)
     selected = sorted(selected, key=lambda row: row[0])[-300:]
     if len(selected) != 300:
         raise ValueError("完整UTC日线不足300根")
@@ -44,11 +39,6 @@ def validate_trend_klines(
             raise ValueError("日线价格不是有限正数")
         if not low <= close <= high:
             raise ValueError("日线最高、最低及收盘价格不一致")
-    day = cutoff.astimezone(timezone.utc).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
-    if selected[-1][6] != int(day.timestamp() * 1000) - 1:
-        raise ValueError("最新完整日线过期")
     return selected
 
 
