@@ -1,27 +1,20 @@
 """加密货币分析：请求规划、证据与指标校验、维度执行、并行汇总及报告生成。"""
 
-import asyncio
 import json
-import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timezone
-from math import isfinite
+from math import fsum, isfinite
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import (
-    AgentMiddleware,
-    ModelCallLimitMiddleware,
-    ToolCallLimitMiddleware,
-)
+from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
-from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Send
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from app.config.config import settings
 from app.crypto_analysis.calculators.dxy_calculator import calculate_dxy_metrics
@@ -40,19 +33,20 @@ from app.crypto_analysis.crypto_analysis_state import (
     MetricAgentState,
     MetricContext,
 )
-from app.crypto_analysis.crypto_dimension_catalog import (
-    DimensionCatalog,
-    DimensionConfig,
-    load_dimension_catalog,
+from app.crypto_analysis.skill_loader import (
+    LoadedSkill,
+    SkillLoader,
+    SkillScoring,
+    get_skill_loader,
 )
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.crypto_analysis import (
-    METRIC_AGENT_SYSTEM_PROMPT,
     analysis_plan_prompt,
     analysis_report_prompt,
-    dimension_execution_prompt,
+    metric_agent_system_prompt,
+    skill_execution_prompt,
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
@@ -62,17 +56,14 @@ _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
 class AnalysisPlan(BaseModel):
-    """一轮分析的目标与重点，不提前指定取数或计算工具。"""
+    """一轮分析的目标币种和所需技能，不指定具体工具。"""
 
     model_config = ConfigDict(extra="forbid")
     target_asset: str
-    analysis_focus: str = Field(min_length=1)
+    skill_names: list[str]
 
 
 # 请求规划
-
-
-_ASSET_PATTERN = re.compile(r"^[A-Z][A-Z0-9]{1,9}$")
 
 
 def create_request_scope(
@@ -86,32 +77,15 @@ def create_request_scope(
     }
 
 
-def validate_plan(plan: AnalysisPlan) -> dict[str, str]:
-    """保持单币种约束，并要求规划明确用户的研究重点。"""
-    if not _ASSET_PATTERN.fullmatch(plan.target_asset):
-        raise ValueError("计划中的目标币种格式无效")
-    if not plan.analysis_focus.strip():
-        raise ValueError("分析计划缺少研究重点")
-    return plan.model_dump()
-
-
 async def create_analysis_plan(
-    llm: Any, question: str, catalog: DimensionCatalog
-) -> dict[str, str]:
-    """让模型识别币种与研究重点，后续由维度 Agent 实时选择工具。"""
-    overview = [
-        {
-            "dimension_id": dimension_id,
-            "name": catalog.dimensions[dimension_id].name,
-            "metrics": [
-                metric.label for metric in catalog.dimensions[dimension_id].metrics
-            ],
-        }
-        for dimension_id in catalog.enabled_dimensions
-    ]
+    llm: Any,
+    question: str,
+    skill_descriptions: str,
+) -> dict[str, Any]:
+    """LLM 根据任务和技能描述选择资产、研究重点与所需 Skill。"""
     prompt = analysis_plan_prompt(
         json.dumps(AnalysisPlan.model_json_schema(), ensure_ascii=False),
-        json.dumps(overview, ensure_ascii=False),
+        skill_descriptions,
         question,
     )
     # 规划只提取字段，使用 JSON 模式，避免把普通文本输出误当作工具调用结果。
@@ -127,7 +101,7 @@ async def create_analysis_plan(
             }
     if not isinstance(plan, AnalysisPlan):
         raise TypeError("规划模型未返回 AnalysisPlan 结构化结果")
-    return validate_plan(plan)
+    return plan.model_dump()
 
 
 # 指标结果校验与计算
@@ -455,8 +429,8 @@ def _compute_metric(
     calculator: Callable[[dict[str, Any], dict[str, str]], dict[str, Any]],
 ) -> Command | ToolMessage:
     """计算器直接读取工具状态中的原始数据，模型不传入或修改数值。"""
-    dimension = runtime.context["dimension"]
-    if metric_id not in {metric.id for metric in dimension.metrics}:
+    scoring = runtime.context["skill"]
+    if metric_id not in {metric.id for metric in scoring.metrics}:
         return _tool_error(
             runtime, f"指标 {metric_id} 不属于当前维度，请选择本维度适用的工具"
         )
@@ -474,24 +448,24 @@ def _compute_metric(
     ) as span:
         if evidence["status"] != "ok":
             result = missing_metric(
-                dimension.dimension_id, metric_id, "data_missing", evidence["reason"]
+                scoring.dimension_id, metric_id, "data_missing", evidence["reason"]
             )
         else:
             try:
                 calculated = calculator(evidence["raw"], runtime.context["scope"])
                 result = _normalize_result(
-                    dimension.dimension_id,
+                    scoring.dimension_id,
                     metric_id,
                     calculated,
                     evidence["source_action"],
                 )
             except (TypeError, ValueError) as exc:
                 result = missing_metric(
-                    dimension.dimension_id, metric_id, "data_missing", str(exc)
+                    scoring.dimension_id, metric_id, "data_missing", str(exc)
                 )
             except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断维度。
                 result = missing_metric(
-                    dimension.dimension_id, metric_id, "calculation_error", str(exc)
+                    scoring.dimension_id, metric_id, "calculation_error", str(exc)
                 )
         span.output = {"status": result["status"], "score": result["score"]}
     return Command(
@@ -540,15 +514,8 @@ class MetricModelTrace(AgentMiddleware):
             return response
 
 
-def build_metric_agent(
-    llm: Any, extra_tools: Sequence[BaseTool] = ()
-) -> CompiledStateGraph:
-    """构建可复用的维度工具 Agent；领域工具通过 extra_tools 接入。
-
-    搜索工具通过 Command 把正文、来源和日期写入 research_evidence，
-    这些证据随维度结果交给报告撰写者，不从模型最终文本中反推数据。
-    按维度01至06组织工具，复用相同模型和每次执行的独立状态。
-    """
+def build_metric_agent(llm: Any) -> CompiledStateGraph:
+    """构建维度工具 Agent，由模型按当前技能调用取数和计算工具。"""
     # 各维度工具依赖本模块的共享辅助函数，统一在构建 Agent 时导入以避免循环导入。
     from app.crypto_analysis.tools.derivatives_tools import build_derivatives_tools
     from app.crypto_analysis.tools.etf_tools import build_etf_tools
@@ -568,55 +535,49 @@ def build_metric_agent(
     return create_agent(
         model=llm,
         tools=tools,
+        # 声明 evidence 与 indicator_results，工具才能写入原始数据和指标结果。
         state_schema=MetricAgentState,
+        # 声明 skill 与 scope，工具才能读取币种、截止时间，且模型不能修改。
         context_schema=MetricContext,
-        system_prompt=METRIC_AGENT_SYSTEM_PROMPT,
-        middleware=[
-            ModelCallLimitMiddleware(run_limit=12, exit_behavior="error"),
-            ToolCallLimitMiddleware(run_limit=24, exit_behavior="error"),
-            MetricModelTrace(),
-        ],
-        name="crypto_metric_agent",
+        system_prompt=metric_agent_system_prompt(),
+        middleware=[MetricModelTrace()],
     )
 
 
 # 维度聚合与执行
 
 
-def aggregate_dimension(
-    dimension: DimensionConfig, indicators: list[dict[str, Any]]
+def aggregate_skill_results(
+    scoring: SkillScoring, indicators: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """按有效指标覆盖率判断是否出分，并聚合评分与置信度。"""
+    """根据 Skill 权重聚合有效指标，不设置最低覆盖率。"""
     ids = [item["indicator_id"] for item in indicators]
     if len(ids) != len(set(ids)) or set(ids) != {
-        metric.id for metric in dimension.metrics
+        metric.id for metric in scoring.metrics
     }:
         raise ValueError("维度指标记录不完整或重复")
     valid = {
         item["indicator_id"]: item for item in indicators if item["status"] == "ok"
     }
-    coverage = round(
-        sum(metric.weight for metric in dimension.metrics if metric.id in valid), 10
-    )
-    formal = coverage >= dimension.min_coverage - 1e-9
-    if formal:
+    coverage = fsum(metric.weight for metric in scoring.metrics if metric.id in valid)
+    if coverage > 0:
         score = (
             sum(
                 metric.weight * valid[metric.id]["score"]
-                for metric in dimension.metrics
+                for metric in scoring.metrics
                 if metric.id in valid
             )
             / coverage
         )
         raw_confidence = sum(
             metric.weight * valid[metric.id]["confidence"]
-            for metric in dimension.metrics
+            for metric in scoring.metrics
             if metric.id in valid
         )
         confidence = next(
             level for level in (1, 0.75, 0.5, 0) if raw_confidence >= level - 1e-9
         )
-        status = "ok" if len(valid) == len(dimension.metrics) else "partial"
+        status = "ok" if len(valid) == len(scoring.metrics) else "partial"
         reason = None
     else:
         score = None
@@ -627,7 +588,7 @@ def aggregate_dimension(
             if item["status"] != "ok" and item.get("reason")
         )
         if not reason:
-            reason = "有效指标覆盖率未达到正式评分条件"
+            reason = "没有可用的有效指标"
         if all(item["status"] == "not_applicable" for item in indicators):
             status = "not_applicable"
         elif any(item["status"] == "calculation_error" for item in indicators):
@@ -635,54 +596,41 @@ def aggregate_dimension(
         else:
             status = "data_missing"
     return {
-        "dimension_id": dimension.dimension_id,
-        "name": dimension.name,
+        "dimension_id": scoring.dimension_id,
+        "name": scoring.name,
         "status": status,
         "reason": reason,
         "score": score,
         "confidence": confidence,
         "coverage": coverage,
         "valid_indicators": len(valid),
-        "total_indicators": len(dimension.metrics),
+        "total_indicators": len(scoring.metrics),
         "indicators": indicators,
     }
 
 
-async def execute_dimension(
+async def execute_skill(
     metric_agent: Any,
-    dimension: DimensionConfig,
+    skill: LoadedSkill,
     scope: dict[str, str],
-    analysis_focus: str,
 ) -> dict[str, Any]:
     """让维度 Agent 自主调用工具，只接收工具写入的可核验指标结果。"""
+    scoring = skill.scoring
     with trace_span(
-        "analysis.dimension.execute", dimension_id=dimension.dimension_id
+        "analysis.dimension.execute", dimension_id=scoring.dimension_id
     ) as node_span:
         try:
-            metrics = [
-                {"id": metric.id, "label": metric.label, "kind": metric.kind}
-                for metric in dimension.metrics
-            ]
-            prompt = dimension_execution_prompt(
-                scope["target_asset"],
-                scope["as_of"],
-                scope["original_question"],
-                analysis_focus,
-                dimension.dimension_id,
-                dimension.name,
-                json.dumps(metrics, ensure_ascii=False),
-            )
             with trace_span(
-                "analysis.metric_agent.graph", dimension_id=dimension.dimension_id
+                "analysis.metric_agent.graph", dimension_id=scoring.dimension_id
             ):
                 state = await metric_agent.ainvoke(
                     {
-                        "messages": [HumanMessage(content=prompt)],
+                        "messages": [HumanMessage(content=skill.body)],
                         "evidence": {},
                         "indicator_results": {},
                         "research_evidence": [],
                     },
-                    context={"dimension": dimension, "scope": dict(scope)},
+                    context={"skill": scoring, "scope": dict(scope)},
                     config={"recursion_limit": 60},
                 )
             # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
@@ -691,26 +639,17 @@ async def execute_dimension(
                 records[metric.id]
                 if metric.id in records
                 else missing_metric(
-                    dimension.dimension_id,
+                    scoring.dimension_id,
                     metric.id,
                     "data_missing",
                     "维度 Agent 未取得该指标的可核验工具结果",
                 )
-                for metric in dimension.metrics
+                for metric in scoring.metrics
             ]
-            result = aggregate_dimension(dimension, indicators)
+            result = aggregate_skill_results(scoring, indicators)
+            result["skill_name"] = skill.name
+            result["skill_guidance"] = skill.body
             result["research_evidence"] = state["research_evidence"]
-            if dimension.dimension_id == "02":
-                score = result["score"]
-                result["policy_stance"] = (
-                    None
-                    if score is None
-                    else "偏鸽"
-                    if score > 6
-                    else "偏鹰"
-                    if score < 4
-                    else "中性或相互抵消"
-                )
             return result
         except Exception:
             node_span.metadata["status"] = "error"
@@ -720,76 +659,79 @@ async def execute_dimension(
 # 分析主图：规划、并行维度、报告
 
 
-def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any) -> CompiledStateGraph:
+def build_dynamic_analysis_agent(
+    smart_llm: Any, fast_llm: Any, retriever: KBRetriever
+) -> CompiledStateGraph:
     metric_agent = build_metric_agent(fast_llm)
-    retriever: KBRetriever | None = None
-    retriever_lock = asyncio.Lock()
 
     @timed_node
     async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
         with trace_span("crypto.plan") as node_span:
             try:
-                nonlocal retriever
-                catalog = load_dimension_catalog()
-                question = next(
-                    (
-                        message.content
-                        for message in reversed(state["messages"])
-                        if isinstance(message, HumanMessage)
-                    ),
-                    None,
-                )
+                skill_loader = get_skill_loader()
+                question = state["scope"].get("original_question")
                 if not isinstance(question, str) or not question.strip():
                     raise ValueError("维度分析缺少有效用户问题")
-                selection = await create_analysis_plan(fast_llm, question, catalog)
-                async with retriever_lock:
-                    if retriever is None:
-                        retriever = await asyncio.to_thread(KBRetriever)
-                scope = {**state["scope"], "target_asset": selection["target_asset"]}
-                return {"catalog": catalog, "plan": selection, "scope": scope}
+                selection = await create_analysis_plan(
+                    fast_llm,
+                    question,
+                    skill_loader.format_skill_descriptions(),
+                )
+                scope = {
+                    **state["scope"],
+                    "target_asset": selection["target_asset"],
+                    "original_question": question,
+                }
+                return {
+                    "skill_sources": skill_loader.snapshot(),
+                    "plan": selection,
+                    "scope": scope,
+                }
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
 
     @timed_node
-    def send_dimensions(state: DynamicAnalysisState) -> list[Send]:
-        catalog = state["catalog"]
+    def send_dimensions(state: DynamicAnalysisState) -> list[Send] | str:
+        names = state["plan"]["skill_names"]
+        if not names:
+            return "writer"
         return [
             Send(
                 "dimension_worker",
                 {
-                    "dimension": catalog.dimensions[dimension_id],
-                    "analysis_focus": state["plan"]["analysis_focus"],
+                    "skill_name": name,
+                    "skill_source": state["skill_sources"][name],
                     "scope": state["scope"],
                 },
             )
-            for dimension_id in catalog.enabled_dimensions
+            for name in names
         ]
 
     @timed_node
     async def dimension_worker(state: dict[str, Any]) -> dict[str, Any]:
         with trace_span(
-            "crypto.dimension_worker", dimension_id=state["dimension"].dimension_id
+            "crypto.dimension_worker", skill_name=state["skill_name"]
         ) as node_span:
             try:
-                dimension = state["dimension"]
-                result = await execute_dimension(
-                    metric_agent, dimension, state["scope"], state["analysis_focus"]
+                skill_loader = SkillLoader.from_snapshot(
+                    {state["skill_name"]: state["skill_source"]}
                 )
-                if retriever is None:
-                    raise RuntimeError("维度分析检索器尚未初始化")
+                skill = skill_loader.load_definition(state["skill_name"])
+                scoring = skill.scoring
+                result = await execute_skill(metric_agent, skill, state["scope"])
                 # 固定模板检索理论材料，不额外调用模型生成查询。
-                metric_names = "、".join(metric.label for metric in dimension.metrics)
+                metric_names = "、".join(metric.label for metric in scoring.metrics)
                 query = (
-                    f"如何解释{dimension.name}对{state['scope']['target_asset']}的影响？"
+                    f"如何解释{scoring.name}对{state['scope']['target_asset']}的影响？"
                     f"相关指标：{metric_names}。"
                     "请查找相关理论原则、作用机制、信号分歧和适用边界。"
                 )
                 with trace_span(
                     "analysis.dimension.thought_retrieval",
-                    dimension_id=dimension.dimension_id,
+                    dimension_id=scoring.dimension_id,
                 ) as span:
-                    documents = await asyncio.to_thread(retriever.retrieve, query)
+                    documents = await retriever.aretrieve(query)
                     # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
                     result["thought_context"] = {
                         "query": query,
@@ -817,18 +759,33 @@ def build_dynamic_analysis_agent(smart_llm: Any, fast_llm: Any) -> CompiledState
     async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
         with trace_span("crypto.writer") as node_span:
             try:
-                catalog = state["catalog"]
-                by_id = {
-                    item["dimension_id"]: item for item in state["dimension_results"]
-                }
-                ordered = [
-                    by_id[dimension_id] for dimension_id in catalog.enabled_dimensions
-                ]
-                facts = json.dumps(ordered, ensure_ascii=False)
+                names = state["plan"]["skill_names"]
+                if not names:
+                    report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
+                    return {"report": report, "messages": [AIMessage(content=report)]}
+                results = state.get("dimension_results", [])
+                by_name = {item["skill_name"]: item for item in results}
+                if len(by_name) != len(results) or set(by_name) != set(names):
+                    raise ValueError("Skill worker 结果缺失、重复或超出选择范围")
+                ordered = [by_name[name] for name in names]
+                facts = json.dumps(
+                    [
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key != "skill_guidance"
+                        }
+                        for item in ordered
+                    ],
+                    ensure_ascii=False,
+                )
+                guidance = "\n\n".join(item["skill_guidance"] for item in ordered)
                 prompt = analysis_report_prompt(
                     state["scope"]["target_asset"],
                     state["scope"]["original_question"],
                     facts,
+                    names,
+                    guidance,
                 )
                 with trace_generation(
                     "crypto_analysis_writer", model=settings.smart_model

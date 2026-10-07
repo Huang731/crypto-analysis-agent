@@ -1,6 +1,7 @@
 # Web
 fastapi>=0.115
 pydantic>=2.0
+PyYAML>=6.0,<7
 pydantic-settings>=2.0
 python-dotenv>=1.0
 sse-starlette>=3.0,<4

@@ -12,6 +12,7 @@ from typing_extensions import NotRequired, TypedDict  # 声明跨 Agent 的状�
 from app.crypto_analysis.crypto_analysis_agent import (
     build_dynamic_analysis_agent,  # 创建维度加密货币分析图。
 )
+from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import (
     build_topic_research_agent,  # 创建通用主题研究图。
 )
@@ -28,10 +29,12 @@ class SupervisorState(TypedDict, total=False):  # 两个 Agent 共用的外层�
 
 
 def build_supervisor_system(
-    smart: BaseChatModel, fast: BaseChatModel
+    smart: BaseChatModel, fast: BaseChatModel, retriever: KBRetriever
 ) -> CompiledStateGraph:  # 沿用 API 现有构建入口。
     """让 Supervisor 只在维度分析和主题研究之间分派。"""
-    crypto_agent = build_dynamic_analysis_agent(smart, fast)  # 保留已实现的维度图。
+    crypto_agent = build_dynamic_analysis_agent(
+        smart, fast, retriever
+    )  # 注入启动时创建的共享检索器。
     topic_agent = build_topic_research_agent(
         smart, fast
     )  # 将主题研究 Agent 接入调度图。

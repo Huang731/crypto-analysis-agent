@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from http import HTTPStatus
 
 import jieba
@@ -137,10 +138,35 @@ class KBRetriever:
 
     def __init__(self) -> None:
         self.hybrid = build_hybrid_retriever()
+        self._semaphore = asyncio.Semaphore(settings.retrieval_max_concurrency)
+        self._pending: set[asyncio.Task[list[Document]]] = set()
+
+    async def aretrieve(self, question: str) -> list[Document]:
+        """限制共享实例的检索并发，将同步 SDK 调用移出事件循环。"""
+        with trace_span("rag.retrieve.queue"):
+            await self._semaphore.acquire()
+        task = asyncio.create_task(asyncio.to_thread(self.retrieve, question))
+        self._pending.add(task)
+        task.add_done_callback(self._retrieval_done)
+        # 请求取消不终止同步 SDK；实际结束后再释放名额，避免突破并发上限。
+        return await asyncio.shield(task)
+
+    def _retrieval_done(self, task: asyncio.Task[list[Document]]) -> None:
+        self._pending.discard(task)
+        self._semaphore.release()
+        if not task.cancelled():
+            task.exception()  # 消费被取消请求遗留的异常，正常调用仍会收到异常。
+
+    async def aclose(self) -> None:
+        """服务退出时等待已经开始的同步检索结束。"""
+        if self._pending:
+            await asyncio.gather(*self._pending, return_exceptions=True)
 
     def retrieve(self, question: str) -> list[Document]:
         with trace_span("rag.retrieve", retrieve_k=settings.retrieve_k) as span:
-            candidates = self.hybrid.invoke(question)[: settings.retrieve_k]
+            with trace_span("rag.retrieve.recall") as recall_span:
+                candidates = self.hybrid.invoke(question)[: settings.retrieve_k]
+                recall_span.output = {"candidate_count": len(candidates)}
             documents = rerank_documents(question, candidates, top_n=settings.final_k)
             span.output = {
                 "candidate_count": len(candidates),

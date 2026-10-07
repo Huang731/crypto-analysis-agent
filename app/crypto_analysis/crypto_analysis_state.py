@@ -7,10 +7,7 @@ from langchain.agents import AgentState
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
-from app.crypto_analysis.crypto_dimension_catalog import (
-    DimensionCatalog,
-    DimensionConfig,
-)
+from app.crypto_analysis.skill_loader import SkillScoring
 
 
 def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -21,13 +18,14 @@ def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any
 class MetricContext(TypedDict):
     """由程序注入的维度与请求范围，模型不能修改。"""
 
-    dimension: DimensionConfig
+    skill: SkillScoring
     scope: dict[str, str]
 
 
 class MetricAgentState(AgentState):
     """每个维度独立的证据与结果，不与其他请求共享原始数据。"""
 
+    # 键是 evidence_id，值是取数原始记录。并行取数时按键合并，避免后返回的结果覆盖先返回的。
     evidence: Annotated[dict[str, dict[str, Any]], _merge_records]
     indicator_results: Annotated[dict[str, dict[str, Any]], _merge_records]
     research_evidence: Annotated[list[dict[str, Any]], operator.add]
@@ -36,7 +34,7 @@ class MetricAgentState(AgentState):
 class DynamicAnalysisState(TypedDict, total=False):
     messages: Annotated[list[Any], add_messages]
     scope: dict[str, str]
-    catalog: DimensionCatalog
+    skill_sources: dict[str, str]
     plan: dict[str, Any]
     dimension_results: Annotated[list[dict[str, Any]], operator.add]
     findings: Annotated[list[str], operator.add]

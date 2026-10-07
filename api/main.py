@@ -1,13 +1,13 @@
 """FastAPI 入口：分析页面与 Supervisor 流式问答接口。"""
 
+import asyncio
 import json
 import re
 import sys
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from contextlib import contextmanager
-from functools import lru_cache
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated
 
@@ -31,6 +31,7 @@ from app.observability import (
 )
 from app.orchestration.supervisor import build_supervisor_system
 from app.orchestration.supervisor_service import SupervisorService
+from app.rag.retriever import KBRetriever
 from app.tracing import start_trace
 
 _INDEX = Path(__file__).resolve().parents[1] / "static" / "index.html"
@@ -38,7 +39,22 @@ _LOG = get_logger("crypto_analysis.api")
 # 请求 ID 会写入日志和 checkpoint 的 thread_id，限制字符集与长度防止注入和超长键。
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
-app = FastAPI(title="研究分析 Agent", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """启动时加载知识库并构建服务，退出时等待在途检索结束。"""
+    with start_trace("app.startup"):
+        retriever = await asyncio.to_thread(KBRetriever)
+    try:
+        app.state.supervisor_service = _build_supervisor_service(retriever)
+        yield
+    finally:
+        await retriever.aclose()
+        if hasattr(app.state, "supervisor_service"):
+            del app.state.supervisor_service
+
+
+app = FastAPI(title="研究分析 Agent", version="0.1.0", lifespan=lifespan)
 
 
 # ---------- 工具函数 ----------
@@ -66,11 +82,10 @@ def _elapsed_ms(started: float) -> int:
 # ---------- 依赖注入 ----------
 
 
-@lru_cache(maxsize=1)
-def _build_supervisor_service() -> SupervisorService:
-    """首次请求时才构建 Supervisor 图（需要 LLM 配置），之后进程内复用。"""
+def _build_supervisor_service(retriever: KBRetriever) -> SupervisorService:
+    """构建使用共享检索器的 Supervisor 图，由应用生命周期持有。"""
     smart, fast = make_smart_llm(), make_fast_llm()
-    return SupervisorService(build_supervisor_system(smart, fast), rewriter_llm=fast)
+    return SupervisorService(build_supervisor_system(smart, fast, retriever), fast)
 
 
 async def get_supervisor_service(request: Request) -> SupervisorService:
@@ -87,15 +102,7 @@ async def get_supervisor_service(request: Request) -> SupervisorService:
     request.state.thread_id = thread_id
     request.state.trace_id = trace_id
 
-    try:
-        return _build_supervisor_service()
-    except RuntimeError as exc:
-        # 构建失败通常是缺少 LLM 配置；lru_cache 不缓存异常，配置修复后下次请求会重试。
-        with _request_context(trace_id, thread_id):
-            _LOG.warning("request.unavailable", extra={"event": "request.unavailable"})
-        raise HTTPException(
-            status_code=503, detail=str(exc), headers=_id_headers(trace_id, thread_id)
-        ) from exc
+    return request.app.state.supervisor_service
 
 
 # ---------- 路由 ----------

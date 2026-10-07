@@ -1,4 +1,4 @@
-"""配置中心：所有可配置项集中在这里，用 pydantic-settings 从 .env 读取。
+"""运行环境配置；分析规则定义在 skills/ 下各 SKILL.md，用 pydantic-settings 从 .env 读取。
 
 设计原则：
     - 所有"会变的值"（模型名、并发数、阈值、路径）都不写死在代码里
@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,105 +73,8 @@ class Settings(BaseSettings):
     chunk_overlap: int = Field(default=150, ge=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
 
-    # 启用全部已实现维度，使用规则中约定的固定综合权重。
-    enabled_dimensions: list[str] = ["01", "02", "03", "04", "05", "06"]
-    dimension_weights: dict[str, float] = {
-        "01": 0.20,
-        "02": 0.15,
-        "03": 0.15,
-        "04": 0.10,
-        "05": 0.25,
-        "06": 0.15,
-    }
-    dimensions: dict[str, dict[str, Any]] = {
-        "01": {
-            "dimension_id": "01",
-            "name": "美元流动性与加密内部流动性",
-            "min_coverage": 0.7,
-            "metrics": [
-                {
-                    "id": "DXY_Trend",
-                    "label": "美元指数 DXY",
-                    "weight": 0.35,
-                    "kind": "numeric",
-                },
-                {
-                    "id": "Stable_MCap",
-                    "label": "稳定币总市值 Stable_MCap",
-                    "weight": 0.3,
-                    "kind": "numeric",
-                },
-                {
-                    "id": "M2_YoY",
-                    "label": "M2 同比变化 M2_YoY",
-                    "weight": 0.2,
-                    "kind": "numeric",
-                },
-                {
-                    "id": "Fed_Balance",
-                    "label": "美联储资产负债表 WALCL",
-                    "weight": 0.15,
-                    "kind": "numeric",
-                },
-            ],
-        },
-        "02": {
-            "dimension_id": "02",
-            "name": "美联储政策与利率倾向",
-            "min_coverage": 1.0,
-            "metrics": [
-                {
-                    "id": "Fed_Rate_Change_3M",
-                    "label": "三个月政策利率净变化",
-                    "weight": 1.0,
-                    "kind": "numeric",
-                },
-            ],
-        },
-        "03": {
-            "dimension_id": "03",
-            "name": "ETF资金流",
-            "min_coverage": 0.7,
-            "metrics": [
-                {
-                    "id": "ETF_Flows",
-                    "label": "ETF_Flows",
-                    "weight": 1.0,
-                    "kind": "numeric",
-                }
-            ],
-        },
-        "04": {
-            "dimension_id": "04",
-            "name": "衍生品数据",
-            "min_coverage": 1.0,
-            "metrics": [
-                {"id": "OI", "label": "OI", "weight": 0.6, "kind": "numeric"},
-                {"id": "Funding", "label": "Funding", "weight": 0.4, "kind": "numeric"},
-            ],
-        },
-        "05": {
-            "dimension_id": "05",
-            "name": "趋势与均线",
-            "min_coverage": 0.7,
-            "metrics": [
-                {"id": "Trend", "label": "Trend", "weight": 1.0, "kind": "numeric"}
-            ],
-        },
-        "06": {
-            "dimension_id": "06",
-            "name": "市场情绪",
-            "min_coverage": 0.7,
-            "metrics": [
-                {
-                    "id": "Fear_Greed",
-                    "label": "Fear_Greed",
-                    "weight": 1.0,
-                    "kind": "numeric",
-                }
-            ],
-        },
-    }
+    # 分析规范、指标和权重定义在各自 SKILL.md 中。
+    skills_dir: str = str(PROJECT_ROOT / "skills")
 
     model_price_table: dict[str, dict[str, float]] = {
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
@@ -188,6 +90,7 @@ class Settings(BaseSettings):
     bm25_weight: float = 0.4  # EnsembleRetriever 权重（与向量检索互补）
     vector_weight: float = 0.6
     enable_multi_query: bool = False  # 多视角问题改写会增加模型调用，默认关闭。
+    retrieval_max_concurrency: int = Field(default=3, ge=1)  # 单进程检索并发上限。
 
     # 每个专题研究子问题的模型决策轮数上限。
     browser_max_steps: int = 12

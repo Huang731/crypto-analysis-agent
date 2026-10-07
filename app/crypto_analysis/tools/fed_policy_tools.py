@@ -22,7 +22,7 @@ async def get_fred_target_range(
     runtime: ToolRuntime[MetricContext],
 ) -> Command | ToolMessage:
     """从 FRED 取得 DFEDTARL/DFEDTARU 原始日度序列。返回 evidence_id，供利率变化计算工具使用。"""
-    if runtime.context["dimension"].dimension_id != "02":
+    if runtime.context["skill"].dimension_id != "02":
         return _tool_error(runtime, "此工具只用于维度02")
     return await _fetch_evidence(
         runtime,
