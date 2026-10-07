@@ -11,6 +11,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain.tools import ToolRuntime
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command, Send
@@ -197,7 +198,7 @@ _METRIC_FIELDS = {
     ),
     "DXY_Trend": (
         ("dxy", "ma50", "ma200"),
-        ("ma50_deviation_pct",),
+        ("ma50_deviation_pct", "ma50_trend", "ma200_trend"),
     ),
     "Stable_MCap": (
         (
@@ -314,8 +315,7 @@ def _normalize_result(
 
 def _calculate_dxy(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
     cutoff = datetime.fromisoformat(scope["as_of"]).astimezone(timezone.utc)
-    result = calculate_dxy_metrics(raw["rows"], cutoff.date())
-    return result
+    return calculate_dxy_metrics(raw["rows"], cutoff.date())
 
 
 def _calculate_stable(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -516,27 +516,67 @@ class MetricModelTrace(AgentMiddleware):
             return response
 
 
-def build_metric_agent(llm: Any) -> CompiledStateGraph:
-    """构建维度工具 Agent，由模型按当前技能调用取数和计算工具。"""
+def build_metric_agent(llm: Any, scoring: SkillScoring) -> CompiledStateGraph:
+    """根据当前技能的指标，只注册对应的取数和计算工具。"""
     # 各维度工具依赖本模块的共享辅助函数，统一在构建 Agent 时导入以避免循环导入。
-    from app.crypto_analysis.tools.derivatives_tools import build_derivatives_tools
-    from app.crypto_analysis.tools.etf_tools import build_etf_tools
-    from app.crypto_analysis.tools.fed_policy_tools import build_fed_policy_tools
-    from app.crypto_analysis.tools.liquidity_tools import build_liquidity_tools
-    from app.crypto_analysis.tools.sentiment_tools import build_sentiment_tools
-    from app.crypto_analysis.tools.trend_tools import build_trend_tools
+    from app.crypto_analysis.tools.derivatives_tools import (
+        calculate_funding_indicator,
+        calculate_oi_indicator,
+        get_binance_derivatives_data,
+    )
+    from app.crypto_analysis.tools.etf_tools import (
+        calculate_etf_indicator,
+        get_etf_flows,
+    )
+    from app.crypto_analysis.tools.fed_policy_tools import (
+        calculate_fed_rate_change_indicator,
+        get_fred_target_range,
+    )
+    from app.crypto_analysis.tools.liquidity_tools import (
+        calculate_dxy_indicator,
+        calculate_fed_balance_indicator,
+        calculate_m2_indicator,
+        calculate_stablecoin_indicator,
+        get_cmc_stablecoin_market_cap,
+        get_eodhd_dxy,
+        get_fred_observations,
+    )
+    from app.crypto_analysis.tools.sentiment_tools import (
+        calculate_fear_greed_indicator,
+        get_cmc_fear_greed,
+    )
+    from app.crypto_analysis.tools.trend_tools import (
+        calculate_trend_indicator,
+        get_binance_trend_data,
+    )
 
-    tools = [
-        *build_liquidity_tools(),
-        *build_fed_policy_tools(),
-        *build_etf_tools(),
-        *build_derivatives_tools(),
-        *build_trend_tools(),
-        *build_sentiment_tools(),
-    ]
+    tools_by_metric: dict[str, tuple[BaseTool, BaseTool]] = {
+        "DXY_Trend": (get_eodhd_dxy, calculate_dxy_indicator),
+        "Stable_MCap": (
+            get_cmc_stablecoin_market_cap,
+            calculate_stablecoin_indicator,
+        ),
+        "M2_YoY": (get_fred_observations, calculate_m2_indicator),
+        "Fed_Balance": (get_fred_observations, calculate_fed_balance_indicator),
+        "Fed_Rate_Change_3M": (
+            get_fred_target_range,
+            calculate_fed_rate_change_indicator,
+        ),
+        "ETF_Flows": (get_etf_flows, calculate_etf_indicator),
+        "OI": (get_binance_derivatives_data, calculate_oi_indicator),
+        "Funding": (get_binance_derivatives_data, calculate_funding_indicator),
+        "Trend": (get_binance_trend_data, calculate_trend_indicator),
+        "Fear_Greed": (get_cmc_fear_greed, calculate_fear_greed_indicator),
+    }
+    tools: dict[str, BaseTool] = {}
+    for metric in scoring.metrics:
+        if metric.id not in tools_by_metric:
+            raise ValueError(f"当前技能包含未接入工具的指标：{metric.id}")
+        for tool in tools_by_metric[metric.id]:
+            tools[tool.name] = tool  # 共享取数工具只注册一次。
     return create_agent(
         model=llm,
-        tools=tools,
+        tools=list(tools.values()),
         # 声明 evidence 与 indicator_results，工具才能写入原始数据和指标结果。
         state_schema=MetricAgentState,
         # 声明 skill 与 scope，工具才能读取币种、截止时间，且模型不能修改。
@@ -661,8 +701,6 @@ async def execute_skill(
 def build_dynamic_analysis_agent(
     smart_llm: Any, fast_llm: Any, retriever: KBRetriever
 ) -> CompiledStateGraph:
-    metric_agent = build_metric_agent(fast_llm)
-
     @timed_node
     async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
         with trace_span("crypto.plan") as node_span:
@@ -726,6 +764,7 @@ def build_dynamic_analysis_agent(
                 )
                 skill = skill_loader.load_definition(state["skill_name"])
                 scoring = skill.scoring
+                metric_agent = build_metric_agent(fast_llm, scoring)
                 result = await execute_skill(metric_agent, skill, state["scope"])
                 query = thought_retrieval_prompt(
                     state["scope"]["target_asset"],
