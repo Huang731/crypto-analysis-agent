@@ -1,6 +1,7 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
 import asyncio
+import json
 from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -11,9 +12,11 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, model_validator
 from typing_extensions import Self, TypedDict
 
+from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
+from app.tracing import estimate_tokens, trace_generation
 from prompts.routing import routing_prompt
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
@@ -78,14 +81,26 @@ def build_routing_graph(
 
     async def router(state: RoutingState) -> dict[str, Any]:
         """在固定超时内识别意图，异常由图和现有请求日志向上报告。"""
-        decision = await asyncio.wait_for(
-            route_model.ainvoke(
-                [SystemMessage(content=routing_prompt()), *state["messages"]]
-            ),
-            timeout=_ROUTE_TIMEOUT_SECONDS,
-        )
-        if not isinstance(decision, RouteDecision):
-            raise TypeError("路由模型未返回 RouteDecision 结构化结果")
+        messages = [SystemMessage(content=routing_prompt()), *state["messages"]]
+        with trace_generation(
+            "routing_decision", model=settings.smart_model
+        ) as generation:
+            decision = await asyncio.wait_for(
+                route_model.ainvoke(messages),
+                timeout=_ROUTE_TIMEOUT_SECONDS,
+            )
+            if not isinstance(decision, RouteDecision):
+                raise TypeError("路由模型未返回 RouteDecision 结构化结果")
+            # 沿用项目估算口径，仅统计本次输入和最终有效的结构化结果。
+            generation.usage = {
+                "input": estimate_tokens(
+                    json.dumps(
+                        [message.model_dump(mode="json") for message in messages],
+                        ensure_ascii=False,
+                    )
+                ),
+                "output": estimate_tokens(decision.model_dump_json()),
+            }
         return decision.model_dump()
 
     workflow = StateGraph(RoutingState)

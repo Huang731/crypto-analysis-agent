@@ -1,22 +1,17 @@
 """把 路由 的路由和回答输出为 SSE 事件。"""
 
 import json
-import time
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
-from uuid import UUID
 
-from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_core.outputs import LLMResult
+from langchain_core.messages import HumanMessage
 
 from api.schemas import AskRequest
-from app.config.config import settings
 from app.observability import get_logger, log_event
 from app.orchestration.query_rewriter import rewrite_question
-from app.tracing import estimate_tokens, trace_generation, trace_span
+from app.tracing import trace_span
 
 
 def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, str]:
@@ -40,90 +35,6 @@ _NODE_LABELS = {
     "calculate_metrics": "计算指标",
     "summarize": "汇总发现",
 }
-
-
-class RoutingDecisionTrace(AsyncCallbackHandler):
-    """图级回调只记录调度模型，子Agent继续使用已有追踪。"""
-
-    run_inline = True
-
-    def __init__(self) -> None:
-        self._calls: dict[UUID, tuple[float, int, str]] = {}
-
-    async def on_chat_model_start(
-        self,
-        serialized: dict[str, Any],
-        messages: list[list[BaseMessage]],
-        *,
-        run_id: UUID,
-        metadata: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> None:
-        metadata = metadata or {}
-        namespace = metadata.get("langgraph_checkpoint_ns", "").split("|")
-        # 只记录外层路由模型，专家子图继续使用自身的调用日志。
-        if (
-            metadata.get("langgraph_node") != "router"
-            or len(namespace) != 1
-            or namespace[0].split(":", 1)[0] != "router"
-        ):
-            return
-        input_text = json.dumps(
-            [
-                [message.model_dump(mode="json") for message in batch]
-                for batch in messages
-            ],
-            ensure_ascii=False,
-        )
-        self._calls[run_id] = (
-            time.perf_counter(),
-            estimate_tokens(input_text),
-            metadata.get("ls_model_name", settings.smart_model),
-        )
-
-    async def on_llm_end(
-        self, response: LLMResult, *, run_id: UUID, **kwargs: Any
-    ) -> None:
-        if run_id not in self._calls:
-            return
-        started, input_tokens, model = self._calls.pop(run_id)
-        # 记录完整结构化回复，用量沿用项目估算口径。
-        output_text = json.dumps(
-            [
-                [item.model_dump(mode="json") for item in batch]
-                for batch in response.generations
-            ],
-            ensure_ascii=False,
-        )
-        # 保留模型原始返回字段，用于排查空回复和结构化解析异常。
-        log_event(
-            _LOG,
-            "routing.decision.response",
-            run_id=str(run_id),
-            model=model,
-            duration_ms=round((time.perf_counter() - started) * 1000),
-            generations=[
-                [item.model_dump(mode="json", serialize_as_any=True) for item in batch]
-                for batch in response.generations
-            ],
-            llm_output=response.llm_output,
-        )
-        with trace_generation("routing_decision", model=model) as generation:
-            generation.start = started
-            generation.usage = {
-                "input": input_tokens,
-                "output": estimate_tokens(output_text),
-            }
-
-    async def on_llm_error(
-        self, error: BaseException, *, run_id: UUID, **kwargs: Any
-    ) -> None:
-        if run_id not in self._calls:
-            return
-        started, _, model = self._calls.pop(run_id)
-        with trace_generation("routing_decision", model=model) as generation:
-            generation.start = started
-            generation.metadata.update(status="error", error_type=type(error).__name__)
 
 
 @dataclass
@@ -277,7 +188,6 @@ class RoutingService:
         result = _RoutingStreamState()
         config = {
             "configurable": {"thread_id": thread_id},
-            "callbacks": [RoutingDecisionTrace()],
         }
         with trace_span("routing_graph"):
             # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
