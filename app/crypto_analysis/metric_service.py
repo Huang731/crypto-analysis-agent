@@ -1,9 +1,12 @@
 """指标工具的取数、证据处理、计算调用与结果标准化。"""
 
 import json
+import re
+import time
 from collections.abc import Awaitable, Callable
 from datetime import date
 from math import isfinite
+from traceback import format_tb
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -12,7 +15,21 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from app.crypto_analysis.crypto_analysis_state import MetricToolContext
+from app.observability import get_logger
 from app.tracing import trace_span
+
+_LOG = get_logger("crypto_analysis.metrics")
+
+
+def _log_reason(reason: str) -> str:
+    """隐藏日志原因中的完整请求地址，避免认证信息或参数携带密钥。"""
+    return re.sub(
+        r"https?://[^\s'\"<>]+",
+        "[请求地址已隐藏]",
+        reason,
+        flags=re.IGNORECASE,
+    )
+
 
 # 指标结果校验与计算
 
@@ -239,6 +256,15 @@ def _tool_message(
 
 def _tool_error(runtime: ToolRuntime[MetricToolContext], reason: str) -> ToolMessage:
     """把可纠正的调用参数错误交还模型，不产生指标数据或分数。"""
+    _LOG.warning(
+        "metric.tool.rejected",
+        extra={
+            "event": "metric.tool.rejected",
+            "skill_name": runtime.context["skill"].name,
+            "tool_call_id": runtime.tool_call_id,
+            "reason": _log_reason(reason),
+        },
+    )
     return ToolMessage(
         content=json.dumps({"status": "error", "reason": reason}, ensure_ascii=False),
         tool_call_id=runtime.tool_call_id,
@@ -255,6 +281,7 @@ async def _fetch_evidence(
 ) -> Command:
     """保存真实原始响应，只把证据标识与概要交给模型。"""
     evidence_id = runtime.tool_call_id
+    started = time.perf_counter()
     record = {"data_kind": data_kind, "source_action": source_action}
     with trace_span(
         "analysis.metric.fetch", data_kind=data_kind, source_action=source_action
@@ -271,6 +298,21 @@ async def _fetch_evidence(
             record.update(status="data_missing", reason=reason)
             summary = {"evidence_id": evidence_id, **record}
             span.metadata["status"] = "error"
+            _LOG.warning(
+                "metric.fetch.failed",
+                extra={
+                    "event": "metric.fetch.failed",
+                    "skill_name": runtime.context["skill"].name,
+                    "source_action": source_action,
+                    "data_kind": data_kind,
+                    "evidence_id": evidence_id,
+                    "status": "data_missing",
+                    "error_type": type(exc).__name__,
+                    "error_message": _log_reason(str(exc)),
+                    "reason": _log_reason(reason),
+                    "duration_ms": round((time.perf_counter() - started) * 1000),
+                },
+            )
         else:
             record.update(status="ok", raw=raw)
             summary = {
@@ -311,6 +353,10 @@ def _compute_metric(
         return _tool_error(
             runtime, f"证据类型不适用于指标 {metric_id}，请核对取数工具返回的 data_kind"
         )
+    started = time.perf_counter()
+    stage = "fetch"
+    error_type: str | None = None
+    traceback: str | None = None
     with trace_span(
         "analysis.metric.calculate", metric_id=metric_id, evidence_id=evidence_id
     ) as span:
@@ -320,19 +366,47 @@ def _compute_metric(
             )
         else:
             try:
+                stage = "calculate"
                 calculated = calculator(evidence["raw"])
+                stage = "normalize"
                 result = _normalize_result(
                     skill.name,
                     metric_id,
                     calculated,
                 )
+                if result["status"] != "ok":
+                    stage = "calculate"
             except (TypeError, ValueError) as exc:
+                error_type = type(exc).__name__
                 result = missing_metric(skill.name, metric_id, "data_missing", str(exc))
             except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断技能。
+                error_type = type(exc).__name__
+                # 只记录栈帧；异常消息单独处理，避免完整请求地址进入日志。
+                traceback = _log_reason("".join(format_tb(exc.__traceback__)))
                 result = missing_metric(
                     skill.name, metric_id, "calculation_error", str(exc)
                 )
         span.output = {"status": result["status"], "score": result["score"]}
+        if result["status"] != "ok":
+            fields = {
+                "event": "metric.result.unavailable",
+                "skill_name": skill.name,
+                "indicator_id": metric_id,
+                "evidence_id": evidence_id,
+                "source_action": evidence["source_action"],
+                "stage": stage,
+                "status": result["status"],
+                "reason": _log_reason(result["reason"]),
+                "error_type": error_type,
+                "duration_ms": round((time.perf_counter() - started) * 1000),
+            }
+            if traceback is not None:
+                _LOG.error(
+                    "metric.result.unavailable",
+                    extra={**fields, "traceback": traceback},
+                )
+            else:
+                _LOG.warning("metric.result.unavailable", extra=fields)
     return Command(
         update={
             "indicator_results": {metric_id: result},

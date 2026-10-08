@@ -106,6 +106,22 @@ async def create_analysis_plan(
 # 指标工具 Agent
 
 
+class MetricCompletionMiddleware(AgentMiddleware):
+    """所有指标已有可核验工具结果时结束，避免模型重复调用工具。"""
+
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[MetricToolContext],
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        skill = request.runtime.context["skill"]
+        records = request.state["indicator_results"]
+        if all(metric.id in records for metric in skill.scoring.metrics):
+            # 空消息不生成报告、不修改指标，只让工具图进入正常结束节点。
+            return ModelResponse(result=[AIMessage(content="")])
+        return await handler(request)
+
+
 class MetricModelTrace(AgentMiddleware):
     """把每轮工具决策模型调用接入项目已有的上下文追踪。"""
 
@@ -156,7 +172,7 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
         # 声明 skill 与 scope，工具才能读取币种、截止时间，且模型不能修改。
         context_schema=MetricToolContext,
         system_prompt=metric_agent_system_prompt(),
-        middleware=[MetricModelTrace()],
+        middleware=[MetricCompletionMiddleware(), MetricModelTrace()],
     )
 
 
@@ -218,9 +234,9 @@ def metric_agent_step_limit(metric_count: int) -> int:
 
     图的每一步是一次模型决策或一次工具执行。每个指标按取数、计算
     各占一轮，且一轮只调用一个工具；全部完成后还需要一步模型收尾，
-    并额外保留一轮用于纠正一次错误调用。
+    并额外保留一轮用于纠正一次错误调用，以及一步供图确认结束。
     """
-    return metric_count * 4 + 3
+    return metric_count * 4 + 4
 
 
 async def execute_skill(
