@@ -75,7 +75,7 @@ def build_routing_graph(
     crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
     topic_agent = build_topic_research_agent(smart, fast)
     # 结构化结果包含字段组合校验；失败重试仍属于同一次路由，不进入专家。
-    route_model = smart.with_structured_output(
+    route_model = fast.with_structured_output(
         RouteDecision, method="json_mode"
     ).with_retry(stop_after_attempt=2)
 
