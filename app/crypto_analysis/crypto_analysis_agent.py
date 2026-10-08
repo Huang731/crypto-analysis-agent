@@ -405,7 +405,39 @@ def build_dynamic_analysis_agent(
                 ordered = sorted(
                     state["skill_results"], key=lambda item: item["skill_name"]
                 )
-                facts = json.dumps(ordered, ensure_ascii=False)
+                # 只筛选报告输入，完整指标结果仍保留在图状态中。
+                report_results: list[dict[str, Any]] = []
+                thought_context: list[dict[str, Any]] = []
+                for item in ordered:
+                    skill_name = item["skill_name"]
+                    indicators = [
+                        indicator
+                        for indicator in item["indicators"]
+                        if indicator["status"] == "ok"
+                    ]
+                    if indicators:
+                        report_results.append(
+                            {
+                                "skill_name": skill_name,
+                                "name": item["name"],
+                                "score": item["score"],
+                                "indicators": indicators,
+                            }
+                        )
+                    # 没有有效指标时，仍保留已有理论材料。
+                    documents = item["thought_context"]["documents"]
+                    if documents:
+                        thought_context.append(
+                            {
+                                "skill_name": skill_name,
+                                "documents": documents,
+                            }
+                        )
+                report_input = {
+                    "skill_results": report_results,
+                    "thought_context": thought_context,
+                }
+                facts = json.dumps(report_input, ensure_ascii=False)
                 print(f"facts: {facts}", flush=True)
                 skill_loader = SkillLoader.from_snapshot(
                     {name: state["skill_sources"][name] for name in names}
@@ -413,7 +445,7 @@ def build_dynamic_analysis_agent(
                 output_templates = "\n\n".join(
                     f"技能 {item['skill_name']}：\n"
                     f"{skill_loader.load_analysis_output(item['skill_name'])}"
-                    for item in ordered
+                    for item in report_results
                 )
                 prompt = analysis_report_prompt(
                     state["scope"]["target_asset"],

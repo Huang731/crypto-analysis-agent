@@ -42,10 +42,6 @@ async def get_fed_target_range(as_of: str) -> dict[str, Any]:
         "file_type": "json",
         "observation_start": (baseline - timedelta(days=14)).isoformat(),
         "observation_end": today.isoformat(),
-        "realtime_start": today.isoformat(),
-        "realtime_end": today.isoformat(),
-        "units": "lin",
-        "sort_order": "asc",
     }
     async with httpx.AsyncClient(timeout=30) as client:
         responses = await asyncio.gather(
