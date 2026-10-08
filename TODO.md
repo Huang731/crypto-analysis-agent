@@ -22,16 +22,45 @@
 
 ## Supervisor 空结果问题
 
-记录日期：2026-10-08。反复出现，后续优化，本次仅记录待办。
+更新日期：2026-10-08。间歇性出现且频率较高，根因尚未完全定位。
+
+### 已确认的证据
+
+- 失败追踪号：`1a1f41b5`；SDK 响应 ID：`2026100811114286d1ea30fd4f43b8`。
+  流正常结束且未截断采样，仅收到一条 chunk：`content=""`、
+  `tool_calls=null`、`finish_reason="stop"`，接口报告 `completion_tokens=6`。
+- SDK 解析后、LangChain 转换前的数据已经为空，转换后仍为空；
+  本次未发现 LangChain 消息转换或现有元数据去重丢失内容的证据。
+  当前日志不是 HTTP SSE 原文字节，仍需区分服务端返回与 SDK 解码问题。
+- 同一路由链路也有成功交接记录；输入带“BTC”时仍出现空结果，
+  不能把问题归因于未补充币种代号，也不能认为调整提示词或完整历史已解决问题。
+- `final_state_keys=["findings", "skill_results"]` 是 SSE 服务的请求级收集容器，
+  不代表父图仍声明这两个字段；诊断事件中的 `run_id=null` 不代表模型未执行。
+
+### 已完成
+
+- [x] 增加 `supervisor.stream.diagnostics`，关联现有 `trace_id/thread_id`，
+  对比 SDK chunk 与 LangChain 消息；仅记录 Supervisor，保留采样上限、
+  全量计数、并发隔离、流结束状态和密钥脱敏，已通过本地模拟检查。
+- [x] 将 `output_mode` 改为 `full_history`，调整任务调度提示词；
+  明确完整历史用于查看交接过程，不负责修复空决策。
+- [x] 从父图移除 `findings/skill_results`，SSE 服务从子图事件收集明细；
+  简化 `stream_ask` 并同步迁移 LangGraph v2 事件读取，保留原 SSE 契约。
+  本地新旧事件对照和编译图验证通过，尚未据此确认真实模型链路稳定。
+
+### 后续优化
 
 - [ ] 排查并解决 `Supervisor 未分派研究 Agent 且未给出回复`。
-  已见日志：`supervisor.result.empty`，`routed_agent=null`、`direct_reply=""`，
-  `final_state_keys=["findings", "skill_results"]`；示例追踪号：`e201f93e`。
-- [ ] 按同一个 `trace_id` 关联 `supervisor.decision.response`、
-  `supervisor.state.update` 和 `supervisor.result.empty`，区分模型空返回、
-  工具调用解析失败与服务读取遗漏，先定位原因再修改。
+  按同一 `trace_id` 关联流诊断、决策返回、状态更新和最终失败日志。
+- [ ] 捕获脱敏后的 HTTP SSE 原文，与 SDK chunk 对照；不得重复消费响应流，
+  不记录认证请求头或密钥。保留响应 ID，必要时提供给智谱查证。
+- [ ] 固定同一问题、提示词、工具定义和模型参数，对比流式与非流式调用，
+  记录重复运行的空输出比例、结束原因、耗时及用量，不凭单次成功下结论。
 - [ ] 评估 Supervisor 决策输出校验与有限重试；正常交接可以没有正文，
-  不得仅凭正文为空判定失败。若重试，只重试尚未交接的决策阶段，
-  避免重复执行研究 Agent，不猜测路由或编造默认回复。
-- [ ] 验证 `output_mode="full_history"` 与当前提示词下的实际路由过程，
-  覆盖正常交接、直接回复、空决策和工具解析失败。
+  不得仅凭正文为空判定失败。若确认重试策略，先限制为额外一次，
+  只重试尚未交接的决策阶段，避免重复执行研究 Agent，
+  不猜测路由或编造默认回复；SDK 请求异常重试不能代替空输出校验。
+- [ ] 排查 `remaining_steps` 写入未知通道的警告，在父子图输出边界处理
+  框架托管字段，保留内部步数控制，不将该警告直接认定为空输出原因。
+- [ ] 完成真实模型链路回归：正常交接、直接回复、空决策、工具解析失败、
+  重试仍失败、取消及并发；确认完整历史、子图明细和 SSE 输出保持正确。

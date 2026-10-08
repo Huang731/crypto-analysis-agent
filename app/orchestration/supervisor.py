@@ -38,7 +38,7 @@ def build_supervisor_system(
     )  # 将主题研究 Agent 接入调度图。
     workflow = create_supervisor(  # 创建实际运行的中央分派图。
         agents=[crypto_agent, topic_agent],  # 注册两个独立的研究职责。
-        model=fast,  # 使用主模型判断用户问题意图。
+        model=smart,  # 使用主模型判断用户问题意图。
         prompt=supervisor_prompt(),  # 要求每轮只交给一个专业 Agent。
         state_schema=SupervisorState,  # 让请求范围和报告跨 Agent 传递。
         output_mode="full_history",  # 保留完整消息历史，便于查看路由过程。

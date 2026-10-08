@@ -299,7 +299,7 @@ def build_dynamic_analysis_agent(
                 if not isinstance(question, str) or not question.strip():
                     raise ValueError("技能分析缺少有效用户问题")
                 selection = await create_analysis_plan(
-                    fast_llm,
+                    smart_llm,
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
