@@ -65,14 +65,18 @@ _MAX_REVIEWS = 2  # 审稿最多执行两轮，避免图无限循环。
 
 def _latest_question(
     messages: list[Any],
-) -> str:  # 从 路由 消息历史中找用户原问题。
+    scope: dict[str, str],
+) -> str:  # 校验本轮用户消息并读取已补全的研究问题。
     for message in reversed(messages):  # 交接消息可能排在用户消息后面。
         if isinstance(message, HumanMessage) and isinstance(
             message.content, str
         ):  # 只接受真实用户文本。
             question = message.content.strip()  # 去除问题首尾空白。
             if question:  # 空问题不能进入研究图。
-                return question  # 返回最近的一轮用户主题。
+                resolved = scope["resolved_question"]
+                if not isinstance(resolved, str) or not resolved.strip():
+                    raise ValueError("主题研究缺少有效补全问题")
+                return resolved.strip()  # 拆题、写作和审稿使用相同的研究主题。
     raise ValueError("主题研究缺少有效用户问题")  # 不把交接工具消息当作主题。
 
 
@@ -374,7 +378,7 @@ def make_research_team(
         with trace_span("topic.research_team") as node_span:
             try:
                 question = _latest_question(
-                    state["messages"]
+                    state["messages"], state["scope"]
                 )  # 避免把 路由 交接消息当问题。
                 with trace_span("topic.research_subgraph"):
                     result = await sub_graph.ainvoke(
@@ -400,7 +404,7 @@ def make_writer(
     async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告消息。
         with trace_span("topic.writer") as node_span:
             try:
-                question = _latest_question(state["messages"])  # 读取本轮原始研究主题。
+                question = _latest_question(state["messages"], state["scope"])
                 feedback = state.get("feedback", "")  # 重写时读取审稿意见。
                 prompt = writer_prompt(
                     question,
@@ -459,7 +463,7 @@ def make_reviewer(
                 count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
                 prompt = review_prompt(
                     state["report"],
-                    _latest_question(state["messages"]),
+                    _latest_question(state["messages"], state["scope"]),
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 提供实际生成的报告。
                 with trace_generation(
@@ -546,7 +550,7 @@ async def main() -> None:  # 保留原有命令行入口。
         result = await agent.ainvoke(
             {
                 "messages": [HumanMessage(content=question)],
-                "scope": {},
+                "scope": {"original_question": question, "resolved_question": question},
                 "findings": [],
             }
         )  # 直接运行父图。

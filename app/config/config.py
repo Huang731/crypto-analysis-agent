@@ -53,6 +53,8 @@ class Settings(BaseSettings):
         "https://open.bigmodel.cn/api/paas/v4/"  # ChatOpenAI 调用智谱的兼容接口。
     )
     docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
+    # 会话状态数据库，可通过 CHECKPOINT_DB_PATH 环境变量覆盖。
+    checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
 
     # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
     smart_model: str = "glm-4.5-air"

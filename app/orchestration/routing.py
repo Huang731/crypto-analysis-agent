@@ -5,7 +5,8 @@ import json
 from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
@@ -14,9 +15,12 @@ from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
+from app.orchestration.memory import update_memory
+from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
-from app.tracing import estimate_tokens, trace_generation
+from app.tracing import estimate_tokens, trace_generation, trace_span
+from prompts.memory import summary_context
 from prompts.routing import routing_prompt
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
@@ -45,10 +49,19 @@ class RouteDecision(BaseModel):
 class RoutingState(TypedDict, total=False):
     """外层只保留路由和报告，研究明细由专家子图持有。"""
 
+    # 合并并保存用户原话和助手回复，不直接传给改写与路由模型。
     messages: Annotated[list[Any], add_messages]
+    # 本轮请求范围：分析截止时间、会话和追踪标识、原始及补全问题等。
     scope: dict[str, str]
+    # 结合历史摘要补全后的本轮问题，用于路由和专家分析。
+    resolved_question: str
+    # 历史报告的核心结论摘要，每轮改写前增量更新并跨轮保存。
+    summary: str
+    # 本轮路由目标：加密分析、主题研究或直接回复。
     route: RouteTarget
+    # 直接回复分支的正文；进入专家分支时为空字符串。
     direct_reply: str
+    # 本轮最终报告，由专家生成或由直接回复正文写入。
     report: str
 
 
@@ -69,7 +82,11 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
 
 
 def build_routing_graph(
-    smart: BaseChatModel, fast: BaseChatModel, retriever: KBRetriever
+    smart: BaseChatModel,
+    fast: BaseChatModel,
+    retriever: KBRetriever,
+    *,
+    checkpointer: BaseCheckpointSaver,
 ) -> CompiledStateGraph:
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
     crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
@@ -79,9 +96,31 @@ def build_routing_graph(
         RouteDecision, method="json_mode"
     ).with_retry(stop_after_attempt=2)
 
+    async def rewrite(state: RoutingState) -> dict[str, Any]:
+        """先更新上一轮报告摘要，再补全本轮问题，保留历史用户原话。"""
+        original = state["scope"]["original_question"]
+        memory_update = await update_memory(
+            smart, summary=state.get("summary", ""), report=state.get("report", "")
+        )
+        with trace_span("question_rewriter", question_chars=len(original)) as span:
+            question = await rewrite_question(
+                fast, original, summary=memory_update["summary"]
+            )
+            span.metadata["rewritten_chars"] = len(question)
+        return {
+            **memory_update,
+            "resolved_question": question,
+            "scope": {**state["scope"], "resolved_question": question},
+        }
+
     async def router(state: RoutingState) -> dict[str, Any]:
         """在固定超时内识别意图，异常由图和现有请求日志向上报告。"""
-        messages = [SystemMessage(content=routing_prompt()), *state["messages"]]
+        messages = [
+            SystemMessage(
+                content=routing_prompt() + summary_context(state.get("summary", ""))
+            ),
+            HumanMessage(content=state["resolved_question"]),
+        ]
         with trace_generation(
             "routing_decision", model=settings.smart_model
         ) as generation:
@@ -104,11 +143,13 @@ def build_routing_graph(
         return decision.model_dump()
 
     workflow = StateGraph(RoutingState)
+    workflow.add_node("rewrite", rewrite)
     workflow.add_node("router", router)
     workflow.add_node("crypto_analysis_agent", crypto_agent)
     workflow.add_node("topic_research_agent", topic_agent)
     workflow.add_node("finalize", finalize_report)
-    workflow.add_edge(START, "router")
+    workflow.add_edge(START, "rewrite")
+    workflow.add_edge("rewrite", "router")
     workflow.add_conditional_edges(
         "router",
         select_agent,
@@ -121,4 +162,4 @@ def build_routing_graph(
     workflow.add_edge("crypto_analysis_agent", "finalize")
     workflow.add_edge("topic_research_agent", "finalize")
     workflow.add_edge("finalize", END)
-    return workflow.compile(name="research_routing")
+    return workflow.compile(checkpointer=checkpointer, name="research_routing")

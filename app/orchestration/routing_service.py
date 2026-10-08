@@ -5,12 +5,10 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from api.schemas import AskRequest
 from app.observability import get_logger, log_event
-from app.orchestration.query_rewriter import rewrite_question
 from app.tracing import trace_span
 
 
@@ -21,6 +19,7 @@ def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[st
 
 _LOG = get_logger("crypto_analysis.routing")
 _NODE_LABELS = {
+    "rewrite": "理解问题",
     "router": "识别研究方向",
     "finalize": "整理最终报告",
     "crypto_analysis_agent": "加密货币研究",
@@ -62,6 +61,15 @@ class _RoutingStreamState:
         """解析图更新，按原顺序输出路由、进度并收集报告数据。"""
         agents = {"crypto_analysis_agent", "topic_research_agent"}
         is_root = not namespace
+        if is_root and node == "rewrite" and isinstance(delta, dict):
+            self.final_state.update(delta)
+            if delta["resolved_question"] != delta["scope"]["original_question"]:
+                yield _event(
+                    "progress",
+                    {"label": "问题改写", "status": delta["resolved_question"]},
+                )
+            yield _event("progress", {"detail": "正在判断问题意图"})
+            return
         if is_root and node == "router" and isinstance(delta, dict):
             agent = delta["route"]
             log_event(
@@ -156,7 +164,12 @@ def _token_event(payload: Any) -> dict[str, str] | None:
     message, metadata = payload
     content = message.content if hasattr(message, "content") else str(message)
     node = metadata.get("langgraph_node", "?") if isinstance(metadata, dict) else "?"
-    if not content or node in {"router", "summarize", "model"}:
+    if not content or node in {
+        "rewrite",
+        "router",
+        "summarize",
+        "model",
+    }:
         return None
     return _event("token", {"node": node, "content": content})
 
@@ -164,11 +177,8 @@ def _token_event(payload: Any) -> dict[str, str] | None:
 class RoutingService:
     """将用户问题交给 路由，并报告实际分派的 Agent。"""
 
-    def __init__(
-        self, routing_graph: Any, rewriter_llm: BaseChatModel | None = None
-    ) -> None:
+    def __init__(self, routing_graph: Any) -> None:
         self._routing_graph = routing_graph
-        self._rewriter_llm = rewriter_llm
 
     async def stream_ask(
         self, request: AskRequest, thread_id: str, trace_id: str, scope: dict[str, str]
@@ -176,15 +186,7 @@ class RoutingService:
         """依次完成问题改写、图事件转发和最终 SSE 回答。"""
         log_event(_LOG, "routing.start")
         scope = {**scope, "original_question": request.question}
-        question = request.question
-        if self._rewriter_llm is not None:
-            yield _event("progress", {"detail": "正在理解问题"})
-            with trace_span("question_rewriter", question_chars=len(question)) as span:
-                question = await rewrite_question(self._rewriter_llm, question)
-                span.metadata["rewritten_chars"] = len(question)
-            if question != request.question:
-                yield _event("progress", {"label": "问题改写", "status": question})
-        yield _event("progress", {"detail": "正在判断问题意图"})
+        yield _event("progress", {"detail": "正在理解问题"})
         result = _RoutingStreamState()
         config = {
             "configurable": {"thread_id": thread_id},
@@ -192,7 +194,7 @@ class RoutingService:
         with trace_span("routing_graph"):
             # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
             async for part in self._routing_graph.astream(
-                {"messages": [HumanMessage(content=question)], "scope": scope},
+                {"messages": [HumanMessage(content=request.question)], "scope": scope},
                 stream_mode=["updates", "messages"],
                 subgraphs=True,
                 version="v2",

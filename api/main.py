@@ -17,9 +17,12 @@ if __package__ in (None, ""):
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sse_starlette.sse import EventSourceResponse
 
 from api.schemas import AskRequest
+from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import create_request_scope
 from app.llm.model import make_fast_llm, make_smart_llm
 from app.observability import (
@@ -42,12 +45,17 @@ _ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """启动时加载知识库并构建服务，退出时等待在途检索结束。"""
+    """启动时加载知识库和会话存储，退出时释放连接并等待检索结束。"""
     with start_trace("app.startup"):
         retriever = await asyncio.to_thread(KBRetriever)
     try:
-        app.state.routing_service = _build_routing_service(retriever)
-        yield
+        checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        async with AsyncSqliteSaver.from_conn_string(
+            str(checkpoint_path)
+        ) as checkpointer:
+            app.state.routing_service = _build_routing_service(retriever, checkpointer)
+            yield
     finally:
         await retriever.aclose()
         if hasattr(app.state, "routing_service"):
@@ -82,10 +90,13 @@ def _elapsed_ms(started: float) -> int:
 # ---------- 依赖注入 ----------
 
 
-def _build_routing_service(retriever: KBRetriever) -> RoutingService:
-    """构建使用共享检索器的 路由 图，由应用生命周期持有。"""
+def _build_routing_service(
+    retriever: KBRetriever, checkpointer: BaseCheckpointSaver
+) -> RoutingService:
+    """构建共享检索器和会话存储的路由图，由应用生命周期持有。"""
     smart, fast = make_smart_llm(), make_fast_llm()
-    return RoutingService(build_routing_graph(smart, fast, retriever), fast)
+    graph = build_routing_graph(smart, fast, retriever, checkpointer=checkpointer)
+    return RoutingService(graph)
 
 
 async def get_routing_service(request: Request) -> RoutingService:

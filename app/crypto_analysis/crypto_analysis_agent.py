@@ -295,7 +295,7 @@ def build_dynamic_analysis_agent(
         with trace_span("crypto.plan") as node_span:
             try:
                 skill_loader = get_skill_loader()
-                question = state["scope"].get("original_question")
+                question = state["scope"].get("resolved_question")
                 if not isinstance(question, str) or not question.strip():
                     raise ValueError("技能分析缺少有效用户问题")
                 selection = await create_analysis_plan(
@@ -313,7 +313,6 @@ def build_dynamic_analysis_agent(
                 scope = {
                     **state["scope"],
                     "target_asset": selection["target_asset"],
-                    "original_question": question,
                 }
                 return {
                     "skill_sources": skill_loader.snapshot(),
@@ -448,7 +447,7 @@ def build_dynamic_analysis_agent(
                 )
                 prompt = analysis_report_prompt(
                     target_asset=state["scope"]["target_asset"],
-                    original_question=state["scope"]["original_question"],
+                    original_question=state["scope"]["resolved_question"],
                     skill_results=report_results,
                     thought_context=thought_context,
                     output_templates=output_templates,
