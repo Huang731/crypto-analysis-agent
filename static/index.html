@@ -247,7 +247,7 @@
             hour: "2-digit", minute: "2-digit", second: "2-digit",
             hourCycle: "h23"
           }).format(new Date(data.as_of));
-          addProgress("截止时间", displayTime + "（北京时间）");
+          addProgress("分析时间", displayTime + "（北京时间）");
         }
         if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
         if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。

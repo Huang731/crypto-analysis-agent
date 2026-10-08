@@ -26,7 +26,7 @@ async def get_fred_target_range(
         "fed_target_range",
         "fred.get_fed_target_range",
         get_fed_target_range,
-        {"as_of": runtime.context["scope"]["as_of"]},
+        {},
     )
 
 

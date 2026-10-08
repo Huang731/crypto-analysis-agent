@@ -33,7 +33,7 @@ async def get_eodhd_dxy(runtime: ToolRuntime[MetricToolContext]) -> Command:
         "dxy",
         "eodhd.get_historical_stock_prices",
         query_dxy_from_official_mcp,
-        {"as_of": runtime.context["scope"]["as_of"]},
+        {},
     )
 
 
@@ -47,7 +47,7 @@ async def get_cmc_stablecoin_market_cap(
         "stablecoin",
         "cmc.get_stablecoin_historical_market_cap",
         get_stablecoin_historical_market_cap,
-        {"as_of": runtime.context["scope"]["as_of"]},
+        {},
     )
 
 
@@ -61,7 +61,7 @@ async def get_fred_observations(
         "m2" if series_id == "M2SL" else "walcl",
         f"fred.get_m2_yoy_change({series_id})",
         get_m2_yoy_change,
-        {"series_id": series_id, "as_of": runtime.context["scope"]["as_of"]},
+        {"series_id": series_id},
     )
 
 

@@ -68,7 +68,7 @@ class AnalysisPlan(BaseModel):
 def create_request_scope(
     question: str, thread_id: str, trace_id: str
 ) -> dict[str, str]:
-    """在请求入口固定 UTC 截止时间和追踪标识。"""
+    """记录供前端展示的 UTC 分析时间和请求追踪标识。"""
     return {
         "as_of": datetime.now(timezone.utc).isoformat(),
         "thread_id": thread_id,
@@ -169,7 +169,7 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
         tools=tools,
         # 声明 evidence 与 indicator_results，工具才能写入原始数据和指标结果。
         state_schema=MetricAgentState,
-        # 声明 skill 与 scope，工具才能读取币种、截止时间，且模型不能修改。
+        # 声明 skill 与 scope，工具才能读取币种，且模型不能修改。
         context_schema=MetricToolContext,
         system_prompt=metric_agent_system_prompt(),
         middleware=[MetricCompletionMiddleware(), MetricModelTrace()],

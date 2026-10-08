@@ -27,15 +27,12 @@ class FREDSettings(BaseSettings):
     fred_api_key: str = ""
 
 
-async def get_fed_target_range(as_of: str) -> dict[str, Any]:
+async def get_fed_target_range() -> dict[str, Any]:
     """并行读取政策目标区间上下限，保留原始日度序列供程序配对计算。"""
     api_key = FREDSettings().fred_api_key
     if not api_key:
         raise RuntimeError("未配置 FRED_API_KEY")
-    cutoff = datetime.fromisoformat(as_of)
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    today = cutoff.astimezone(timezone.utc).date()
+    today = datetime.now(timezone.utc).date()
     baseline = comparison_date(today)
     params = {
         "api_key": api_key,
@@ -67,16 +64,13 @@ async def get_fed_target_range(as_of: str) -> dict[str, Any]:
 
 
 async def get_m2_yoy_change(
-    series_id: Literal["M2SL", "WALCL"], as_of: str
+    series_id: Literal["M2SL", "WALCL"]
 ) -> dict[str, Any]:  # 获取固定序列的原始观测。
     """查询 FRED 的 M2SL 或 WALCL 序列，返回原始观测与来源。"""
     api_key = FREDSettings().fred_api_key
     if not api_key:
         raise RuntimeError("未配置 FRED_API_KEY")
-    cutoff = datetime.fromisoformat(as_of)
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    today = cutoff.astimezone(timezone.utc).date()
+    today = datetime.now(timezone.utc).date()
     if series_id == "M2SL":
         first_day = date(today.year, today.month, 1)
         start = shift_month(first_day, -18)  # 保留既有的 18 个月请求范围。

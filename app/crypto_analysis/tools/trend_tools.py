@@ -24,7 +24,6 @@ async def get_binance_trend_data(runtime: ToolRuntime[MetricToolContext]) -> Com
         get_binance_trend_klines,
         {
             "target_asset": runtime.context["scope"]["target_asset"],
-            "as_of": runtime.context["scope"]["as_of"],
         },
     )
 

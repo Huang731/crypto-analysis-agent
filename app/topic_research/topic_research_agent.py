@@ -5,7 +5,6 @@ import json  # 将并行发现完整交给汇总模型。
 import re  # 清理拆题结果中的常见编号。
 import sys  # 读取命令行中的研究主题。
 from collections.abc import Awaitable, Callable  # 标注节点工厂返回的可调用对象。
-from datetime import datetime, timezone  # 为命令行研究记录分析时间。
 from typing import Any  # 标注模型和消息集合。
 
 import httpx
@@ -236,9 +235,7 @@ def make_researcher(
         with trace_span("topic.researcher") as node_span:
             try:
                 subquestion = state["subquestion"]
-                prompt = research_prompt(
-                    state["question"], subquestion, state["scope"]["as_of"]
-                )
+                prompt = research_prompt(state["question"], subquestion)
                 async with BrowserTool() as browser:
                     result = await research_agent.ainvoke(
                         {
@@ -549,7 +546,7 @@ async def main() -> None:  # 保留原有命令行入口。
         result = await agent.ainvoke(
             {
                 "messages": [HumanMessage(content=question)],
-                "scope": {"as_of": datetime.now(timezone.utc).isoformat()},
+                "scope": {},
                 "findings": [],
             }
         )  # 直接运行父图。

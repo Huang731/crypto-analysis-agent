@@ -24,7 +24,6 @@ async def get_etf_flows(runtime: ToolRuntime[MetricToolContext]) -> Command:
         get_crypto_etf_flows,
         {
             "target_asset": runtime.context["scope"]["target_asset"],
-            "as_of": runtime.context["scope"]["as_of"],
         },
     )
 

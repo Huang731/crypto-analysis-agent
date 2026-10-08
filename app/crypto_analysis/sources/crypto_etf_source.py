@@ -21,8 +21,8 @@ class CryptoETFSettings(BaseSettings):
     crypto_etf_mcp_url: str = "https://mcp.cryptoetf.today/api/mcp"
 
 
-async def get_crypto_etf_flows(target_asset: str, as_of: str) -> dict[str, Any]:
-    """通过MCP的get_asset_flows取得原始ETF流量，历史窗口由计算器按as_of校验。"""
+async def get_crypto_etf_flows(target_asset: str) -> dict[str, Any]:
+    """通过MCP的get_asset_flows取得原始ETF流量，交给计算器处理。"""
     asset = target_asset.lower()
     supported = {
         "btc",

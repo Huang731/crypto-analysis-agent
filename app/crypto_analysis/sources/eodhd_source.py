@@ -25,17 +25,12 @@ class AnalysisMCPSettings(BaseSettings):
     eodhd_api_key: str = ""
 
 
-async def query_dxy_from_official_mcp(
-    as_of: str,
-) -> dict[str, Any]:  # 只获取并解析 EODHD 原始日线。
+async def query_dxy_from_official_mcp() -> dict[str, Any]:  # 只获取并解析 EODHD 原始日线。
     """调用 EODHD 官方 MCP 日线工具，返回原始日线与来源。"""
     api_key = AnalysisMCPSettings().eodhd_api_key
     if not api_key:
         raise RuntimeError("未配置 EODHD_API_KEY")
-    cutoff = datetime.fromisoformat(as_of)
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
-    end_date = cutoff.astimezone(timezone.utc).date()
+    end_date = datetime.now(timezone.utc).date()
     start_date = end_date - timedelta(days=365)
     # 官方 v1 用 URL 查询参数传递密钥，关闭 HTTP 请求地址的常规日志。
     logging.getLogger("httpx").setLevel(logging.WARNING)

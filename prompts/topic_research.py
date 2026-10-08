@@ -31,17 +31,17 @@ def split_prompt(question: str) -> str:
     )
 
 
-def research_prompt(question: str, subquestion: str, as_of: str) -> str:
-    """为工具 Agent 提供主题、子问题和固定截止时间。"""
+def research_prompt(question: str, subquestion: str) -> str:
+    """为工具 Agent 提供主题、子问题和取证要求。"""
     return (
         "以专题研究员的职责完成当前子问题，遵循系统中的工具与取证规则。"
         "\n\n1. 任务目标\n围绕原主题搜索和取证，重点回答当前子问题。"
-        "\n\n2. 证据与时间边界\n以真实工具返回的资料为依据，"
+        "\n\n2. 证据要求\n以真实工具返回的资料为依据，"
         "区分网页原文、搜索摘要和研究推断；核对资料日期，"
-        "不把研究截止时间之后的事件作为已经发生的事实。"
+        "不把尚未发生的事件作为已经发生的事实。"
         "\n\n3. 输出要求\n先给出主要发现，再说明支持依据、来源 URL、日期和证据 ID；"
         "明确分歧和证据不足的部分，不机械罗列检索过程。"
-        f"\n\n原主题：{question}\n子问题：{subquestion}\n研究截止时间：{as_of}"
+        f"\n\n原主题：{question}\n子问题：{subquestion}"
     )
 
 

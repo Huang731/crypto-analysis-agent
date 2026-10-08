@@ -1,6 +1,5 @@
 """CoinMarketCap 稳定币市值与恐惧贪婪指数工具。"""
 
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -48,13 +47,8 @@ async def _get_cmc(path: str, params: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-async def get_stablecoin_historical_market_cap(
-    as_of: str,
-) -> dict[str, Any]:  # 获取稳定币历史原始报价。
+async def get_stablecoin_historical_market_cap() -> dict[str, Any]:  # 获取稳定币历史原始报价。
     """查询 CMC 的 USDT 和 USDC 日频历史市值，返回原始报价与来源。"""
-    cutoff = datetime.fromisoformat(as_of)
-    if cutoff.tzinfo is None:
-        raise ValueError("as_of 必须包含时区")
     payload = await _get_cmc(
         "/v3/cryptocurrency/quotes/historical",
         {"id": "825,3408", "count": 100, "interval": "daily", "convert": "USD"},

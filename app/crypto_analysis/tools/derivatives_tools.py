@@ -26,7 +26,6 @@ async def get_binance_derivatives_data(
         get_binance_derivatives,
         {
             "target_asset": runtime.context["scope"]["target_asset"],
-            "as_of": runtime.context["scope"]["as_of"],
         },
     )
 
