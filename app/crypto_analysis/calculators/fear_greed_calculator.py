@@ -5,9 +5,7 @@ from typing import Any
 from app.crypto_analysis.tools.source_time_utils import utc_time
 
 
-def calculate_fear_and_greed(
-    raw: dict[str, Any], scope: dict[str, str]
-) -> dict[str, Any]:
+def calculate_fear_and_greed(raw: dict[str, Any]) -> dict[str, Any]:
     """按指数固定分档评分，记录时间只用于展示。"""
     if raw.get("status") != "ok":
         return {

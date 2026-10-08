@@ -35,7 +35,11 @@ def calculate_etf_indicator(
 ) -> Command | ToolMessage:
     """读取ETF原始证据，按5日40%、20日60%的金额分档规则计算ETF_Flows。"""
     return _compute_metric(
-        runtime, evidence_id, "ETF_Flows", "etf", calculate_etf_flows
+        runtime,
+        evidence_id,
+        "ETF_Flows",
+        "etf",
+        lambda raw: calculate_etf_flows(raw, runtime.context["scope"]),
     )
 
 

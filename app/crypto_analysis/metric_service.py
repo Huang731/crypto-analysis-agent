@@ -293,7 +293,7 @@ def _compute_metric(
     evidence_id: str,
     metric_id: str,
     data_kind: str,
-    calculator: Callable[[dict[str, Any], dict[str, str]], dict[str, Any]],
+    calculator: Callable[[dict[str, Any]], dict[str, Any]],
 ) -> Command | ToolMessage:
     """计算器直接读取工具状态中的原始数据，模型不传入或修改数值。"""
     skill = runtime.context["skill"]
@@ -320,7 +320,7 @@ def _compute_metric(
             )
         else:
             try:
-                calculated = calculator(evidence["raw"], runtime.context["scope"])
+                calculated = calculator(evidence["raw"])
                 result = _normalize_result(
                     skill.name,
                     metric_id,

@@ -5,6 +5,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import pandas as pd
+
 
 def comparison_date(day: date) -> date:
     """按日历向前移动三个月，月末取目标月实际最后一天。"""
@@ -34,33 +36,39 @@ def _fed_target_values(payload: dict[str, Any]) -> dict[date, Decimal]:
     return values
 
 
-def calculate_fed_rate_change(
-    raw: dict[str, Any], scope: dict[str, str]
-) -> dict[str, Any]:
+def calculate_fed_rate_change(raw: dict[str, Any]) -> dict[str, Any]:
     """用同日上下限计算三个月中点净变化，并按五档评分。"""
     payload = raw["payload"]
     lower = _fed_target_values(payload["lower_payload"])
     upper = _fed_target_values(payload["upper_payload"])
-    common = lower.keys() & upper.keys()
-    if not common:
+    # 只保留上下限同日有效的观测；金额始终保留 Decimal。
+    rates = pd.DataFrame(
+        {
+            "lower": pd.Series(lower, dtype=object),
+            "upper": pd.Series(upper, dtype=object),
+        }
+    ).dropna()
+    if rates.empty:
         return {
             "status": "data_missing",
             "reason": "缺少上下限共同有效的观测日期",
         }
-    current_day = max(common)
+    current_day = max(rates.index)
     comparison_day = comparison_date(current_day)
-    baseline_days = [day for day in common if day <= comparison_day]
-    if not baseline_days:
+    baseline_days = rates.index[rates.index <= comparison_day]
+    if baseline_days.empty:
         return {
             "status": "data_missing",
             "reason": "缺少当前或三个月前上下限共同有效的观测日期",
         }
     baseline_day = max(baseline_days)
-    for day in (current_day, baseline_day):
-        if lower[day] > upper[day]:
+    current = rates.loc[current_day]
+    baseline = rates.loc[baseline_day]
+    for interval in (current, baseline):
+        if interval["lower"] > interval["upper"]:
             raise ValueError("FRED 政策目标区间下限大于上限")
-    current_midpoint = (lower[current_day] + upper[current_day]) / 2
-    baseline_midpoint = (lower[baseline_day] + upper[baseline_day]) / 2
+    current_midpoint = (current["lower"] + current["upper"]) / 2
+    baseline_midpoint = (baseline["lower"] + baseline["upper"]) / 2
     change_bp = (current_midpoint - baseline_midpoint) * 100
     if change_bp >= 50:
         score = 0
@@ -77,10 +85,10 @@ def calculate_fed_rate_change(
         "current_date": current_day.isoformat(),
         "baseline_date": baseline_day.isoformat(),
         "comparison_date": comparison_day.isoformat(),
-        "current_lower_pct": float(lower[current_day]),
-        "current_upper_pct": float(upper[current_day]),
-        "baseline_lower_pct": float(lower[baseline_day]),
-        "baseline_upper_pct": float(upper[baseline_day]),
+        "current_lower_pct": float(current["lower"]),
+        "current_upper_pct": float(current["upper"]),
+        "baseline_lower_pct": float(baseline["lower"]),
+        "baseline_upper_pct": float(baseline["upper"]),
         "current_midpoint_pct": float(current_midpoint),
         "baseline_midpoint_pct": float(baseline_midpoint),
         "change_bp": float(change_bp),

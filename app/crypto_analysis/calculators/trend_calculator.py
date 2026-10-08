@@ -5,6 +5,8 @@ from math import isfinite
 from typing import Any
 from zoneinfo import ZoneInfo
 
+import pandas as pd
+
 _DAY = 86_400_000
 
 
@@ -43,19 +45,10 @@ def validate_trend_klines(
     return selected
 
 
-def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
-    """程序计算完整300根日线，不调用大模型，不缩短计算窗口。"""
-    try:
-        rows = validate_trend_klines(raw, scope)
-    except (ValueError, TypeError, KeyError, OverflowError) as exc:
-        return {"status": "data_missing", "reason": str(exc)}
-    high = [float(row[2]) for row in rows]
-    low = [float(row[3]) for row in rows]
-    close = [float(row[4]) for row in rows]
-
-    def ma(period: int, index: int) -> float:
-        return sum(close[index - period + 1 : index + 1]) / period
-
+def _calculate_wilder_adx(
+    high: list[float], low: list[float], close: list[float]
+) -> dict[str, Any]:
+    """保留 Wilder 初始值和逐步递推，独立返回 ADX、DI 及中间值。"""
     tr, plus_dm, minus_dm = [], [], []
     for i in range(1, 300):
         up = high[i] - high[i - 1]
@@ -105,6 +98,38 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
                     f"dx_{i}": dx,
                 }
             )
+    return {
+        "adx": adx,
+        "plus_di": pdi,
+        "minus_di": mdi,
+        "intermediate_values": intermediate,
+    }
+
+
+def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
+    """程序计算完整300根日线，不调用大模型，不缩短计算窗口。"""
+    try:
+        rows = validate_trend_klines(raw, scope)
+    except (ValueError, TypeError, KeyError, OverflowError) as exc:
+        return {"status": "data_missing", "reason": str(exc)}
+    prices = pd.DataFrame(
+        {
+            "high": [float(row[2]) for row in rows],
+            "low": [float(row[3]) for row in rows],
+            "close": [float(row[4]) for row in rows],
+        }
+    )
+    high, low, close = (prices[column].tolist() for column in ("high", "low", "close"))
+
+    def ma(period: int, index: int) -> float:
+        # 使用原有求和顺序；窗口按日线条数计算。
+        window = prices["close"].iloc[index - period + 1 : index + 1]
+        return sum(window.tolist()) / period
+
+    adx_result = _calculate_wilder_adx(high, low, close)
+    adx = adx_result["adx"]
+    pdi, mdi = adx_result["plus_di"], adx_result["minus_di"]
+    intermediate = adx_result["intermediate_values"]
     ma50, ma200 = ma(50, 299), ma(200, 299)
     ma50_before, ma200_before = ma(50, 279), ma(200, 279)
     admission = close[-1] > ma200 > ma200_before

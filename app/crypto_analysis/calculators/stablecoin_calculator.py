@@ -1,130 +1,105 @@
-"""CMC 稳定币原始报价的校验、对齐与评分。"""
+"""CMC 稳定币原始报价的校验、日期对齐与评分。"""
 
-from datetime import date, datetime, timedelta  # 对齐 UTC 日期。
-from math import isfinite  # 排除无效市值。
-from typing import Any  # 接收 CMC 原始响应。
+from datetime import date, datetime, timedelta
+from math import isfinite
+from typing import Any
 
-from app.crypto_analysis.calculators.score_calculator import (
-    linear_score,  # 使用原有线性评分口径。
-)
-from app.crypto_analysis.tools.source_time_utils import (
-    utc_time,  # 复用数据源时间解析规则。
-)
+import pandas as pd
 
-_BASE_URL = "https://pro-api.coinmarketcap.com"  # 保留原有结果来源标识。
+from app.crypto_analysis.calculators.score_calculator import linear_score
+from app.crypto_analysis.tools.source_time_utils import utc_time
+
+_BASE_URL = "https://pro-api.coinmarketcap.com"
 
 
-def _stablecoin_metrics(
-    raw: dict[str, Any], scope: dict[str, str]
-) -> dict[str, Any]:  # 定义该指标的程序计算函数。
-    """按两个币种的 UTC 日期对齐，计算稳定币流动性指标。"""
-    data = raw["payload"].get("data")  # 计算或保存接口中的币种数据。
-    if not isinstance(data, dict):  # 校验当前条件并决定后续计算。
-        raise TypeError("CMC 稳定币响应缺少 data 对象")  # 拒绝无效或不足的数据。
-    by_coin: dict[
-        str, dict[date, tuple[float | None, datetime]]
-    ] = {}  # 计算或保存各稳定币按日期索引的报价。
-    for coin_id, symbol in (
-        ("825", "USDT"),
-        ("3408", "USDC"),
-    ):  # 依次处理原始数据中的记录。
-        coin = data.get(coin_id)  # 计算或保存当前稳定币原始报价。
-        if not isinstance(coin, dict) or not isinstance(
-            coin.get("quotes"), list
-        ):  # 校验当前条件并决定后续计算。
-            return {
-                "status": "data_missing",
-                "reason": f"缺少 {symbol} 历史报价",
-            }  # 返回本步骤的结果。
-        values: dict[
-            date, tuple[float | None, datetime]
-        ] = {}  # 计算或保存按日期整理的有效观测。
-        for row in coin["quotes"]:  # 依次处理原始数据中的记录。
-            if not isinstance(row, dict):  # 校验当前条件并决定后续计算。
-                raise TypeError(f"{symbol} 历史报价格式无效")  # 拒绝无效或不足的数据。
-            quote = row.get("quote")  # 计算或保存当前报价对象。
-            usd = (
-                quote.get("USD") if isinstance(quote, dict) else None
-            )  # 计算或保存美元计价报价。
-            if not isinstance(usd, dict):  # 校验当前条件并决定后续计算。
-                raise TypeError(f"{symbol} 缺少 USD 报价")  # 拒绝无效或不足的数据。
-            observed_at = utc_time(usd.get("timestamp"))  # 计算或保存实际观测时间。
-            market_cap = usd.get("market_cap")  # 计算或保存原始市值字段。
-            if market_cap is None:  # 校验当前条件并决定后续计算。
-                value = None  # 计算或保存已解析的有效数值。
-            elif isinstance(market_cap, bool) or not isinstance(
-                market_cap, (int, float)
-            ):  # 检查另一种明确的计算条件。
-                raise ValueError(f"{symbol} 市值格式无效")  # 拒绝无效或不足的数据。
-            else:  # 处理剩余的有效情况。
-                value = float(market_cap)  # 计算或保存已解析的有效数值。
-                if not isfinite(value) or value <= 0:  # 校验当前条件并决定后续计算。
-                    raise ValueError(
-                        f"{symbol} 市值必须是正的有限数值"
-                    )  # 拒绝无效或不足的数据。
-            day = observed_at.date()  # 计算或保存观测的 UTC 日期。
-            if day in values:  # 校验当前条件并决定后续计算。
-                raise ValueError(
-                    f"{symbol} 的 {day} UTC 日期重复"
-                )  # 拒绝无效或不足的数据。
-            values[day] = (value, observed_at)  # 计算或保存values[day]。
-        by_coin[symbol] = values  # 计算或保存by_coin[symbol]。
+def _parse_quotes(
+    quotes: list[Any], symbol: str
+) -> dict[date, tuple[float | None, datetime]]:
+    """校验单个币种的报价，保留 UTC 日期、市值和原始观测时间。"""
+    values: dict[date, tuple[float | None, datetime]] = {}
+    for row in quotes:
+        if not isinstance(row, dict):
+            raise TypeError(f"{symbol} 历史报价格式无效")
+        quote = row.get("quote")
+        usd = quote.get("USD") if isinstance(quote, dict) else None
+        if not isinstance(usd, dict):
+            raise TypeError(f"{symbol} 缺少 USD 报价")
+        observed_at = utc_time(usd.get("timestamp"))
+        market_cap = usd.get("market_cap")
+        if market_cap is None:
+            value = None
+        elif isinstance(market_cap, bool) or not isinstance(market_cap, (int, float)):
+            raise ValueError(f"{symbol} 市值格式无效")
+        else:
+            value = float(market_cap)
+            if not isfinite(value) or value <= 0:
+                raise ValueError(f"{symbol} 市值必须是正的有限数值")
+        day = observed_at.date()
+        if day in values:
+            raise ValueError(f"{symbol} 的 {day} UTC 日期重复")
+        values[day] = (value, observed_at)
+    return values
 
-    shared_days = sorted(set(by_coin["USDT"]) & set(by_coin["USDC"]))
-    if not shared_days:  # 校验当前条件并决定后续计算。
-        return {
-            "status": "data_missing",
-            "reason": "USDT 与 USDC 没有共同 UTC 日期",
-        }  # 返回本步骤的结果。
-    latest_day = shared_days[-1]  # 计算或保存最新有效观测日期。
+
+def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
+    """对齐连续 31 个 UTC 日期，沿用原有计算顺序和评分公式。"""
+    data = raw["payload"].get("data")
+    if not isinstance(data, dict):
+        raise TypeError("CMC 稳定币响应缺少 data 对象")
+
+    by_coin: dict[str, dict[date, tuple[float | None, datetime]]] = {}
+    market_caps: dict[str, pd.Series] = {}
+    for coin_id, symbol in (("825", "USDT"), ("3408", "USDC")):
+        coin = data.get(coin_id)
+        if not isinstance(coin, dict) or not isinstance(coin.get("quotes"), list):
+            return {"status": "data_missing", "reason": f"缺少 {symbol} 历史报价"}
+        quotes = _parse_quotes(coin["quotes"], symbol)
+        by_coin[symbol] = quotes
+        market_caps[symbol] = pd.Series(
+            {day: value for day, (value, _) in quotes.items()}, dtype="float64"
+        )
+
+    # 以两种币的共同最新日期为截止点，不能被某个币单独的新报价推进。
+    shared_days = market_caps["USDT"].index.intersection(market_caps["USDC"].index)
+    if shared_days.empty:
+        return {"status": "data_missing", "reason": "USDT 与 USDC 没有共同 UTC 日期"}
+    latest_day = max(shared_days)
     required_days = [
         latest_day - timedelta(days=offset) for offset in range(30, -1, -1)
-    ]  # 计算或保存连续三十一天的必要日期。
+    ]
+
+    # 先检查日期缺口，再检查市值缺失，保留原有错误优先级，不填充数据。
+    required_index = pd.Index(required_days)
     if any(
-        day not in by_coin["USDT"] or day not in by_coin["USDC"]
-        for day in required_days
-    ):  # 校验当前条件并决定后续计算。
+        not required_index.isin(series.index).all() for series in market_caps.values()
+    ):
         return {
             "status": "data_missing",
             "reason": "缺少连续 31 个 UTC 日期，无法核验 MA30、7 日和 30 日变化",
-        }  # 返回本步骤的结果。
-    if any(
-        by_coin[symbol][day][0] is None
-        for symbol in ("USDT", "USDC")
-        for day in required_days
-    ):  # 校验当前条件并决定后续计算。
-        return {
-            "status": "data_missing",
-            "reason": "所需日期的稳定币市值缺失",
-        }  # 返回本步骤的结果。
+        }
+    aligned = pd.DataFrame(market_caps).reindex(required_days)
+    if aligned.isna().any().any():
+        return {"status": "data_missing", "reason": "所需日期的稳定币市值缺失"}
 
-    totals = {  # 计算或保存每天两种稳定币的合计市值。
-        day: float(by_coin["USDT"][day][0])
-        + float(by_coin["USDC"][day][0])  # 延续上一行的数据处理。
-        for day in required_days  # 依次处理原始数据中的记录。
-    }  # 结束当前数据结构。
-    latest = totals[latest_day]  # 计算或保存最新指标原始值。
-    ma30 = (
-        sum(totals[day] for day in required_days[-30:]) / 30
-    )  # 计算或保存三十日平均市值。
-    seven_day = totals[latest_day - timedelta(days=7)]  # 计算或保存七日前的合计市值。
-    thirty_day = totals[
-        latest_day - timedelta(days=30)
-    ]  # 计算或保存三十日前的合计市值。
-    ma30_change = 100 * (latest / ma30 - 1)  # 计算或保存相对三十日均值的变化率。
-    seven_day_change = 100 * (latest / seven_day - 1)  # 计算或保存七日市值变化率。
-    ma30_score = linear_score(ma30_change, -0.5, 0.5)  # 计算或保存三十日均值子项分数。
-    seven_day_score = linear_score(
-        seven_day_change, -1, 1
-    )  # 计算或保存七日变化子项分数。
-    return {  # 返回本步骤的结果。
-        "status": "ok",  # 输出 status 字段供后续核对。
-        "source": f"{_BASE_URL}/v3/cryptocurrency/quotes/historical",  # 输出 source 字段供后续核对。
-        "observed_at": latest_day.isoformat(),  # 输出 observed_at 字段供后续核对。
-        "quote_timestamps": {  # 输出 quote_timestamps 字段供后续核对。
-            symbol: by_coin[symbol][latest_day][1].isoformat()  # 延续上一行的数据处理。
-            for symbol in ("USDT", "USDC")  # 依次处理原始数据中的记录。
-        },  # 结束当前数据结构。
+    totals = aligned["USDT"] + aligned["USDC"]
+    latest = float(totals.iloc[-1])
+    # 保留 Python 顺序求和，避免 pandas 聚合的浮点差异影响未舍入的分数。
+    ma30 = sum(totals.iloc[-30:].tolist()) / 30
+    seven_day = float(totals.iloc[-8])
+    thirty_day = float(totals.iloc[0])
+    ma30_change = 100 * (latest / ma30 - 1)
+    seven_day_change = 100 * (latest / seven_day - 1)
+    ma30_score = linear_score(ma30_change, -0.5, 0.5)
+    seven_day_score = linear_score(seven_day_change, -1, 1)
+
+    return {
+        "status": "ok",
+        "source": f"{_BASE_URL}/v3/cryptocurrency/quotes/historical",
+        "observed_at": latest_day.isoformat(),
+        "quote_timestamps": {
+            symbol: by_coin[symbol][latest_day][1].isoformat()
+            for symbol in ("USDT", "USDC")
+        },
         # 评分使用原始美元市值，返回的市值统一换算为亿美元。
         "unit": "亿美元",
         "usdt_market_cap": round(by_coin["USDT"][latest_day][0] / 100_000_000, 2),
@@ -135,11 +110,8 @@ def _stablecoin_metrics(
         "thirty_day_market_cap": round(thirty_day / 100_000_000, 2),
         "ma30_change_pct": round(ma30_change, 2),
         "seven_day_change_pct": round(seven_day_change, 2),
-        "score": 0.5 * ma30_score
-        + 0.5 * seven_day_score,  # 输出 score 字段供后续核对。
+        "score": 0.5 * ma30_score + 0.5 * seven_day_score,
         "thirty_day_change_pct": round(100 * (latest / thirty_day - 1), 2),
-        "conflict_flag": (
-            ma30_change > 0 > seven_day_change
-        )  # 输出 conflict_flag 字段供后续核对。
-        or (seven_day_change > 0 > ma30_change),  # 延续上一行的数据处理。
-    }  # 结束当前数据结构。
+        "conflict_flag": (ma30_change > 0 > seven_day_change)
+        or (seven_day_change > 0 > ma30_change),
+    }

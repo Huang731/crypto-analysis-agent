@@ -4,6 +4,8 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+import pandas as pd
+
 
 def _flow_score(value: Decimal, neutral: int, extreme: int) -> float:
     """中性区间包含两端，极端流量包含极值边界。"""
@@ -42,8 +44,10 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
             raise ValueError("ETF净流量不是有限金额")
         rows[day] = amount
     # 直接按日期取接口返回的最近20条记录。
-    window_dates = sorted(rows)[-20:]
-    values = [rows[day] for day in window_dates]
+    # object 类型保留 Decimal，窗口仍按记录条数而非自然日计算。
+    flows = pd.Series(rows, dtype=object).sort_index().tail(20)
+    window_dates = flows.index.tolist()
+    values = flows.tolist()
     five = sum(values[-5:], Decimal(0))
     twenty = sum(values, Decimal(0))
     five_score = _flow_score(five, 500, 1500)

@@ -34,7 +34,13 @@ def calculate_trend_indicator(
     evidence_id: str, runtime: ToolRuntime[MetricToolContext]
 ) -> Command | ToolMessage:
     """按既定公式用代码计算300根日线的均线、Wilder ADX、DI及固定评分。"""
-    return _compute_metric(runtime, evidence_id, "Trend", "trend", calculate_trend)
+    return _compute_metric(
+        runtime,
+        evidence_id,
+        "Trend",
+        "trend",
+        lambda raw: calculate_trend(raw, runtime.context["scope"]),
+    )
 
 
 def build_trend_tools() -> list[BaseTool]:

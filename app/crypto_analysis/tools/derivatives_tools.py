@@ -41,7 +41,7 @@ def calculate_oi_indicator(
         evidence_id,
         "OI",
         "derivatives",
-        lambda raw, scope: calculate_derivatives(raw, scope, "OI"),
+        lambda raw: calculate_derivatives(raw, runtime.context["scope"], "OI"),
     )
 
 
@@ -55,7 +55,7 @@ def calculate_funding_indicator(
         evidence_id,
         "Funding",
         "derivatives",
-        lambda raw, scope: calculate_derivatives(raw, scope, "Funding"),
+        lambda raw: calculate_derivatives(raw, runtime.context["scope"], "Funding"),
     )
 
 

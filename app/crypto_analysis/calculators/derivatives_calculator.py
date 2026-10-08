@@ -5,6 +5,8 @@ from decimal import Decimal
 from math import isfinite
 from typing import Any
 
+import pandas as pd
+
 _HOUR = 3_600_000
 _WEEK = 168 * _HOUR
 
@@ -27,9 +29,9 @@ def _rows(payload: dict[str, Any], key: str) -> list[Any]:
     return rows
 
 
-def _price(payload: dict[str, Any]) -> dict[int, float]:
+def _price(payload: dict[str, Any]) -> pd.Series:
     """小时线收盘价对应下一小时起点，按返回的UTC小时线计算。"""
-    prices = {}
+    prices: dict[int, float] = {}
     for row in _rows(payload, "klines"):
         start, close = int(row[0]), int(row[6])
         if start % _HOUR or close != start + _HOUR - 1:
@@ -39,10 +41,10 @@ def _price(payload: dict[str, Any]) -> dict[int, float]:
         if timestamp in prices or value <= 0:
             raise ValueError("现货小时线重复或价格无效")
         prices[timestamp] = value
-    return prices
+    return pd.Series(prices, dtype=object)
 
 
-def _change(values: dict[int, float], latest: int, hours: int) -> float | None:
+def _change(values: pd.Series, latest: int, hours: int) -> float | None:
     """按精确时间戳比较，不以相邻记录替代基准。"""
     base = values.get(latest - hours * _HOUR)
     return (
@@ -52,10 +54,10 @@ def _change(values: dict[int, float], latest: int, hours: int) -> float | None:
     )
 
 
-def _funding(payload: dict[str, Any], prices: dict[int, float]) -> dict[str, Any]:
+def _funding(payload: dict[str, Any], prices: pd.Series) -> dict[str, Any]:
     """按最新已返回结算记录取168小时窗口，起点记录不计入累计值。"""
-    records = {}
-    actual_times = {}
+    records: dict[int, float] = {}
+    actual_times: dict[int, int] = {}
     for row in _rows(payload, "funding"):
         actual = int(row["fundingTime"])
         if actual % _HOUR >= 1000:
@@ -68,21 +70,24 @@ def _funding(payload: dict[str, Any], prices: dict[int, float]) -> dict[str, Any
         if timestamp in records:
             raise ValueError("Funding 结算时间重复")
         records[timestamp] = _number(row["fundingRate"])
-    times = sorted(records)
-    if len(times) < 2:
+    rates = pd.Series(records, dtype=object).sort_index()
+    if len(rates) < 2:
         raise ValueError("Funding 缺少7日窗口记录")
-    latest = times[-1]
+    latest = int(rates.index[-1])
     start = latest - _WEEK
-    window = [t for t in times if start < t <= latest]
-    predecessors = [t for t in times if t <= start]
-    if not predecessors or predecessors[-1] != start:
+    # 保留开区间起点和精确基准；不重采样，不用相邻记录替代。
+    window = rates.loc[rates.index > start]
+    if start not in rates.index:
         raise ValueError("Funding 缺少7日窗口起点结算记录")
     if latest not in prices or start not in prices:
         raise ValueError("Funding 评分缺少同时间戳7日现货价格")
     price_change = _change(prices, latest, 168)
     # 使用十进制保留分档边界，不把0.03%误判到相邻档。
     average = (
-        sum((Decimal(str(records[t])) for t in window), Decimal(0)) * 100 * 8 / 168
+        sum((Decimal(str(rate)) for rate in window.tolist()), Decimal(0))
+        * 100
+        * 8
+        / 168
     )
     if average <= Decimal("-0.03") or average >= Decimal("0.05"):
         score = 0
@@ -93,13 +98,27 @@ def _funding(payload: dict[str, Any], prices: dict[int, float]) -> dict[str, Any
     else:
         score = 5
     return {
-        "funding_times": [actual_times[t] for t in window],
-        "funding_rates": [records[t] for t in window],
+        "funding_times": [actual_times[t] for t in window.index],
+        "funding_rates": window.tolist(),
         "funding_average_pct": float(average),
         "funding_score": score,
         "funding_timestamp": latest,
         "funding_price_change_pct": price_change,
     }
+
+
+def _parse_oi(payload: dict[str, Any]) -> pd.Series:
+    """校验持仓量后按精确采样时间索引，不填充缺失记录。"""
+    oi: dict[int, float] = {}
+    for row in _rows(payload, "oi"):
+        timestamp = int(row["timestamp"])
+        if row["symbol"] != payload["symbol"]:
+            raise ValueError("OI 合约与目标不一致")
+        value = _number(row["sumOpenInterest"])
+        if timestamp in oi or value <= 0:
+            raise ValueError("OI记录重复或数量无效")
+        oi[timestamp] = value
+    return pd.Series(oi, dtype=object)
 
 
 def calculate_derivatives(
@@ -113,7 +132,7 @@ def calculate_derivatives(
         if payload["symbol"] != f"{scope['target_asset'].upper()}USDT":
             raise ValueError("原始证据目标合约不一致")
         prices = _price(payload)
-        if not prices:
+        if prices.empty:
             raise ValueError("现货小时线缺失")
         funding = _funding(payload, prices)
         result = {**funding, "symbol": payload["symbol"]}
@@ -121,19 +140,11 @@ def calculate_derivatives(
         score = funding["funding_score"]
         source = raw["sources"]["funding"]
         if metric_id == "OI":
-            oi = {}
-            for row in _rows(payload, "oi"):
-                timestamp = int(row["timestamp"])
-                if row["symbol"] != payload["symbol"]:
-                    raise ValueError("OI 合约与目标不一致")
-                value = _number(row["sumOpenInterest"])
-                if timestamp in oi or value <= 0:
-                    raise ValueError("OI记录重复或数量无效")
-                oi[timestamp] = value
-            if not oi:
+            oi = _parse_oi(payload)
+            if oi.empty:
                 raise ValueError("OI 最新记录缺失")
-            latest = max(oi)
-            if abs(latest - max(prices)) > _HOUR:
+            latest = int(max(oi.index))
+            if abs(latest - max(prices.index)) > _HOUR:
                 raise ValueError("OI与现货小时线时间差超过1小时")
             if latest not in prices:
                 raise ValueError("OI 最新采样与现货收盘时间无法匹配")

@@ -81,7 +81,11 @@ def calculate_stablecoin_indicator(
 ) -> Command | ToolMessage:
     """用稳定币证据计算 Stable_MCap：USDT+USDC、MA30、7日及30日变化、分歧和固定评分。"""
     return _compute_metric(
-        runtime, evidence_id, "Stable_MCap", "stablecoin", _stablecoin_metrics
+        runtime,
+        evidence_id,
+        "Stable_MCap",
+        "stablecoin",
+        _stablecoin_metrics,
     )
 
 
