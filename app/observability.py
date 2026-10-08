@@ -1,4 +1,4 @@
-"""请求上下文与结构化日志，贯通 FastAPI、Supervisor 和分析任务。"""
+"""请求上下文与结构化日志，贯通 FastAPI、路由 和分析任务。"""
 
 from __future__ import annotations
 

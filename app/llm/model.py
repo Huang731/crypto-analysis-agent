@@ -2,7 +2,6 @@
 
 import json
 from collections.abc import AsyncIterator
-from contextvars import ContextVar
 from typing import Any
 
 import openai
@@ -10,7 +9,6 @@ from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatGenerationChunk
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, Field, PrivateAttr
 
 from app.config.config import settings
 from app.observability import get_logger
@@ -18,55 +16,8 @@ from app.observability import get_logger
 _LOG = get_logger("crypto_analysis.llm")
 
 
-class _StreamDiagnostics(BaseModel):
-    """保存单次 Supervisor 流的转换前后数据，不参与消息处理。"""
-
-    # 每层最多保留前 31 条和最后一条，避免逐 token 日志无限增长。
-    raw_chunks: list[dict[str, Any]] = Field(default_factory=list)
-    parsed_chunks: list[dict[str, Any]] = Field(default_factory=list)
-    raw_chunk_count: int = 0
-    parsed_chunk_count: int = 0
-    raw_content_present: bool = False
-    raw_tool_calls_present: bool = False
-
-    @staticmethod
-    def save_sample(samples: list[dict[str, Any]], chunk: dict[str, Any]) -> None:
-        """达到采样上限后持续更新末条，保留流结束信息。"""
-        if len(samples) < 32:
-            samples.append(chunk)
-        else:
-            samples[-1] = chunk
-
-
 class LoggedChatOpenAI(ChatOpenAI):
     """去除流式固定元数据的重复值，并记录智谱 HTTP 错误。"""
-
-    _stream_diagnostics: ContextVar[_StreamDiagnostics | None] = PrivateAttr(
-        default_factory=lambda: ContextVar(
-            "supervisor_stream_diagnostics", default=None
-        )
-    )
-
-    def _convert_chunk_to_generation_chunk(
-        self,
-        chunk: dict[str, Any],
-        default_chunk_class: type,
-        base_generation_info: dict[str, Any] | None,
-    ) -> ChatGenerationChunk | None:
-        """在父类转换前取证；这是 SDK 对象数据，不是 HTTP 原文字节。"""
-        diagnostics = self._stream_diagnostics.get()
-        if diagnostics is not None:
-            diagnostics.raw_chunk_count += 1
-            diagnostics.save_sample(diagnostics.raw_chunks, chunk)
-            # 检查所有 chunk，采样截断也不会丢失正文或工具调用是否存在的信息。
-            for choice in chunk.get("choices", []):
-                delta = choice.get("delta")
-                if isinstance(delta, dict):
-                    diagnostics.raw_content_present |= bool(delta.get("content"))
-                    diagnostics.raw_tool_calls_present |= bool(delta.get("tool_calls"))
-        return super()._convert_chunk_to_generation_chunk(
-            chunk, default_chunk_class, base_generation_info
-        )
 
     async def _astream(
         self,
@@ -77,46 +28,11 @@ class LoggedChatOpenAI(ChatOpenAI):
     ) -> AsyncIterator[ChatGenerationChunk]:
         # 固定元数据不是文本增量，同一次流中重复发送会被 LangChain 拼接。
         seen_metadata: dict[str, Any] = {}
-        # 按交接工具识别调度调用，避免给取数、计算、writer 等调用增加日志。
-        tool_names = [
-            tool["function"]["name"]
-            for tool in kwargs.get("tools", [])
-            if tool.get("type") == "function"
-        ]
-        diagnostics = (
-            _StreamDiagnostics()
-            if any(
-                name
-                in {
-                    "transfer_to_crypto_analysis_agent",
-                    "transfer_to_topic_research_agent",
-                }
-                for name in tool_names
-            )
-            else None
-        )
         stream = super()._astream(
             messages, stop=stop, run_manager=run_manager, **kwargs
         )
-        completed = False
         try:
-            while True:
-                # 仅在读取下一块时绑定上下文，不能跨向外 yield 保持。
-                # 这样独立 Task 并发、同一 Task 交错消费都不会串流。
-                token = self._stream_diagnostics.set(diagnostics)
-                try:
-                    chunk = await anext(stream)
-                except StopAsyncIteration:
-                    completed = True
-                    break
-                finally:
-                    self._stream_diagnostics.reset(token)
-                if diagnostics is not None:
-                    diagnostics.parsed_chunk_count += 1
-                    diagnostics.save_sample(
-                        diagnostics.parsed_chunks,
-                        chunk.model_dump(mode="json", serialize_as_any=True),
-                    )
+            async for chunk in stream:
                 if chunk.generation_info:
                     for key in (
                         "finish_reason",
@@ -153,27 +69,6 @@ class LoggedChatOpenAI(ChatOpenAI):
         finally:
             # 消费者提前关闭或任务取消时，也关闭父类流，释放 HTTP 响应资源。
             await stream.aclose()
-            if diagnostics is not None:
-                # 只记录响应与工具配置，不记录请求头、密钥或完整输入消息。
-                payload = diagnostics.model_dump_json()
-                api_key = settings.zhipuai_api_key.strip()
-                if api_key:
-                    payload = payload.replace(api_key, "[已隐藏]")
-                _LOG.info(
-                    "supervisor.stream.diagnostics",
-                    extra={
-                        "event": "supervisor.stream.diagnostics",
-                        "model": self.model_name,
-                        "run_id": str(run_manager.run_id) if run_manager else None,
-                        "tool_names": tool_names,
-                        "tool_choice": kwargs.get("tool_choice"),
-                        "capture_stage": "openai_sdk_before_langchain_conversion",
-                        "stream_completed": completed,
-                        "samples_truncated": diagnostics.raw_chunk_count > 32
-                        or diagnostics.parsed_chunk_count > 32,
-                        **json.loads(payload),
-                    },
-                )
 
     @staticmethod
     def _response_error(body: bytes) -> tuple[str, str]:

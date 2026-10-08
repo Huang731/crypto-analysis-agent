@@ -66,7 +66,7 @@ _MAX_REVIEWS = 2  # 审稿最多执行两轮，避免图无限循环。
 
 def _latest_question(
     messages: list[Any],
-) -> str:  # 从 Supervisor 消息历史中找用户原问题。
+) -> str:  # 从 路由 消息历史中找用户原问题。
     for message in reversed(messages):  # 交接消息可能排在用户消息后面。
         if isinstance(message, HumanMessage) and isinstance(
             message.content, str
@@ -378,7 +378,7 @@ def make_research_team(
             try:
                 question = _latest_question(
                     state["messages"]
-                )  # 避免把 Supervisor 交接消息当问题。
+                )  # 避免把 路由 交接消息当问题。
                 with trace_span("topic.research_subgraph"):
                     result = await sub_graph.ainvoke(
                         {"question": question, "findings": [], "scope": state["scope"]}
@@ -522,7 +522,7 @@ def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有�
 def build_topic_research_agent(
     smart_llm: Any, fast_llm: Any
 ) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
-    """把主题研究子图封装为 Supervisor 可调用的 Agent。"""
+    """把主题研究子图封装为 路由 可调用的 Agent。"""
     sub_graph = build_analysis_sub_graph(smart_llm, fast_llm)  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
@@ -532,9 +532,7 @@ def build_topic_research_agent(
     builder.add_edge("research_team", "writer")  # 研究完成后写报告。
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。
     builder.add_conditional_edges("reviewer", review_route)  # 通过或重写。
-    return builder.compile(
-        name="topic_research_agent"
-    )  # Supervisor 以此名称分派普通主题。
+    return builder.compile(name="topic_research_agent")  # 路由 以此名称分派普通主题。
 
 
 async def main() -> None:  # 保留原有命令行入口。

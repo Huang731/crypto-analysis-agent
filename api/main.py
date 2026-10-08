@@ -1,4 +1,4 @@
-"""FastAPI 入口：分析页面与 Supervisor 流式问答接口。"""
+"""FastAPI 入口：分析页面与 路由 流式问答接口。"""
 
 import asyncio
 import json
@@ -29,8 +29,8 @@ from app.observability import (
     new_trace_id,
     reset_request_context,
 )
-from app.orchestration.supervisor import build_supervisor_system
-from app.orchestration.supervisor_service import SupervisorService
+from app.orchestration.routing import build_routing_graph
+from app.orchestration.routing_service import RoutingService
 from app.rag.retriever import KBRetriever
 from app.tracing import start_trace
 
@@ -46,12 +46,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with start_trace("app.startup"):
         retriever = await asyncio.to_thread(KBRetriever)
     try:
-        app.state.supervisor_service = _build_supervisor_service(retriever)
+        app.state.routing_service = _build_routing_service(retriever)
         yield
     finally:
         await retriever.aclose()
-        if hasattr(app.state, "supervisor_service"):
-            del app.state.supervisor_service
+        if hasattr(app.state, "routing_service"):
+            del app.state.routing_service
 
 
 app = FastAPI(title="研究分析 Agent", version="0.1.0", lifespan=lifespan)
@@ -82,13 +82,13 @@ def _elapsed_ms(started: float) -> int:
 # ---------- 依赖注入 ----------
 
 
-def _build_supervisor_service(retriever: KBRetriever) -> SupervisorService:
-    """构建使用共享检索器的 Supervisor 图，由应用生命周期持有。"""
+def _build_routing_service(retriever: KBRetriever) -> RoutingService:
+    """构建使用共享检索器的 路由 图，由应用生命周期持有。"""
     smart, fast = make_smart_llm(), make_fast_llm()
-    return SupervisorService(build_supervisor_system(smart, fast, retriever), fast)
+    return RoutingService(build_routing_graph(smart, fast, retriever), fast)
 
 
-async def get_supervisor_service(request: Request) -> SupervisorService:
+async def get_routing_service(request: Request) -> RoutingService:
     """校验/生成请求 ID 并存入 request.state，再提供问答服务。
 
     前端可通过请求头传入 X-Thread-Id 以延续多轮会话；未传则每次新开会话。
@@ -102,7 +102,7 @@ async def get_supervisor_service(request: Request) -> SupervisorService:
     request.state.thread_id = thread_id
     request.state.trace_id = trace_id
 
-    return request.app.state.supervisor_service
+    return request.app.state.routing_service
 
 
 # ---------- 路由 ----------
@@ -124,7 +124,7 @@ async def health() -> dict[str, str]:
 async def ask(
     req: AskRequest,
     request: Request,
-    service: Annotated[SupervisorService, Depends(get_supervisor_service)],
+    service: Annotated[RoutingService, Depends(get_routing_service)],
 ) -> EventSourceResponse:
     """以 SSE 流返回分派进度和最终回答。
 
@@ -176,7 +176,7 @@ async def ask(
                 )
                 trace.output = {"status": "error", "error_type": type(exc).__name__}
                 error = {
-                    "code": "supervisor_failed",
+                    "code": "routing_failed",
                     "message": "问答执行失败，请根据 trace_id 检查服务日志。",
                     "thread_id": thread_id,
                     "trace_id": trace_id,

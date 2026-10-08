@@ -217,9 +217,9 @@
             state.outputNode = "writer";
             state.writerComplete = false;
           }
-        } else if (data.node === "supervisor") {
+        } else if (data.node === "finalize") {
           if (state.outputNode === "writer" || state.writerComplete) return;
-          state.outputNode = "supervisor";
+          state.outputNode = "finalize";
         } else {
           return;
         }

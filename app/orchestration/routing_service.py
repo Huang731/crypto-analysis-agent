@@ -1,4 +1,4 @@
-"""把 Supervisor 的路由和回答输出为 SSE 事件。"""
+"""把 路由 的路由和回答输出为 SSE 事件。"""
 
 import json
 import time
@@ -24,8 +24,10 @@ def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[st
     return {"event": name, "data": json.dumps(payload, ensure_ascii=False)}
 
 
-_LOG = get_logger("crypto_analysis.supervisor")
+_LOG = get_logger("crypto_analysis.routing")
 _NODE_LABELS = {
+    "router": "识别研究方向",
+    "finalize": "整理最终报告",
     "crypto_analysis_agent": "加密货币研究",
     "topic_research_agent": "主题研究",
     "plan": "识别币种与规划工具",
@@ -40,7 +42,7 @@ _NODE_LABELS = {
 }
 
 
-class SupervisorDecisionTrace(AsyncCallbackHandler):
+class RoutingDecisionTrace(AsyncCallbackHandler):
     """图级回调只记录调度模型，子Agent继续使用已有追踪。"""
 
     run_inline = True
@@ -59,12 +61,11 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
     ) -> None:
         metadata = metadata or {}
         namespace = metadata.get("langgraph_checkpoint_ns", "").split("|")
-        # Supervisor内部模型节点为agent，其他子图也可能同名，必须同时限定命名空间。
+        # 只记录外层路由模型，专家子图继续使用自身的调用日志。
         if (
-            metadata.get("langgraph_node") != "agent"
-            or len(namespace) != 2
-            or namespace[0].split(":", 1)[0] != "supervisor"
-            or namespace[1].split(":", 1)[0] != "agent"
+            metadata.get("langgraph_node") != "router"
+            or len(namespace) != 1
+            or namespace[0].split(":", 1)[0] != "router"
         ):
             return
         input_text = json.dumps(
@@ -86,7 +87,7 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
         if run_id not in self._calls:
             return
         started, input_tokens, model = self._calls.pop(run_id)
-        # 包含交接工具调用，不只统计回复正文；用量沿用项目估算口径。
+        # 记录完整结构化回复，用量沿用项目估算口径。
         output_text = json.dumps(
             [
                 [item.model_dump(mode="json") for item in batch]
@@ -94,10 +95,10 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
             ],
             ensure_ascii=False,
         )
-        # 保留模型原始返回字段，用于区分空回复与工具调用解析异常。
+        # 保留模型原始返回字段，用于排查空回复和结构化解析异常。
         log_event(
             _LOG,
-            "supervisor.decision.response",
+            "routing.decision.response",
             run_id=str(run_id),
             model=model,
             duration_ms=round((time.perf_counter() - started) * 1000),
@@ -107,7 +108,7 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
             ],
             llm_output=response.llm_output,
         )
-        with trace_generation("supervisor_decision", model=model) as generation:
+        with trace_generation("routing_decision", model=model) as generation:
             generation.start = started
             generation.usage = {
                 "input": input_tokens,
@@ -120,13 +121,13 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
         if run_id not in self._calls:
             return
         started, _, model = self._calls.pop(run_id)
-        with trace_generation("supervisor_decision", model=model) as generation:
+        with trace_generation("routing_decision", model=model) as generation:
             generation.start = started
             generation.metadata.update(status="error", error_type=type(error).__name__)
 
 
 @dataclass
-class _SupervisorStreamState:
+class _RoutingStreamState:
     """每个请求独立收集路由、回复与子图结果，不修改图状态。"""
 
     final_state: dict[str, Any] = field(
@@ -136,7 +137,7 @@ class _SupervisorStreamState:
     direct_reply: str = ""
 
     def route(self, agent: str, conflict_reason: str) -> dict[str, str] | None:
-        """首次路由通知前端，后续交接与实际执行必须指向同一 Agent。"""
+        """首次路由通知前端，实际执行必须与路由目标一致。"""
         if self.routed_agent is not None and self.routed_agent != agent:
             raise ValueError(conflict_reason)
         if self.routed_agent is not None:
@@ -150,31 +151,26 @@ class _SupervisorStreamState:
         """解析图更新，按原顺序输出路由、进度并收集报告数据。"""
         agents = {"crypto_analysis_agent", "topic_research_agent"}
         is_root = not namespace
-        if is_root and node == "supervisor" and isinstance(delta, dict):
-            messages = delta.get("messages", [])
+        if is_root and node == "router" and isinstance(delta, dict):
+            agent = delta["route"]
             log_event(
                 _LOG,
-                "supervisor.state.update",
-                messages=[message.model_dump(mode="json") for message in messages],
+                "routing.state.update",
+                route=agent,
+                direct_reply=delta["direct_reply"],
             )
-            for message in messages:
-                calls = getattr(message, "tool_calls", [])
-                if getattr(message, "type", "") == "ai" and not calls:
-                    self.direct_reply = message.text
-                for call in calls:
-                    name = call.get("name", "")
-                    if not name.startswith("transfer_to_"):
-                        continue
-                    agent = name.removeprefix("transfer_to_")
-                    if agent not in agents:
-                        raise ValueError(f"Supervisor 分派了未知 Agent：{agent}")
-                    event = self.route(agent, "Supervisor 一轮请求分派了多个 Agent")
-                    if event is not None:
-                        yield event
+            if agent == "direct":
+                self.direct_reply = delta["direct_reply"]
+            else:
+                if agent not in agents:
+                    raise ValueError(f"路由分派了未知 Agent：{agent}")
+                event = self.route(agent, "一轮请求分派了多个 Agent")
+                if event is not None:
+                    yield event
 
-        # 根节点的实际执行也需验证，不能只依赖模型声称的交接目标。
+        # 根节点的实际执行也需验证，不能只依赖模型返回的路由目标。
         if is_root and node in agents:
-            event = self.route(node, "Supervisor 实际分派与计划目标不一致")
+            event = self.route(node, "路由 实际分派与计划目标不一致")
             if event is not None:
                 yield event
         if (
@@ -233,15 +229,15 @@ class _SupervisorStreamState:
                 "done", {"kind": "direct", "report": self.direct_reply.strip()}
             )
         _LOG.error(
-            "supervisor.result.empty",
+            "routing.result.empty",
             extra={
-                "event": "supervisor.result.empty",
+                "event": "routing.result.empty",
                 "routed_agent": self.routed_agent,
                 "direct_reply": self.direct_reply,
                 "final_state_keys": sorted(state),
             },
         )
-        raise ValueError("Supervisor 未分派研究 Agent 且未给出回复")
+        raise ValueError("路由 未分派研究 Agent 且未给出回复")
 
 
 def _token_event(payload: Any) -> dict[str, str] | None:
@@ -249,25 +245,25 @@ def _token_event(payload: Any) -> dict[str, str] | None:
     message, metadata = payload
     content = message.content if hasattr(message, "content") else str(message)
     node = metadata.get("langgraph_node", "?") if isinstance(metadata, dict) else "?"
-    if not content or node in {"summarize", "model"}:
+    if not content or node in {"router", "summarize", "model"}:
         return None
     return _event("token", {"node": node, "content": content})
 
 
-class SupervisorService:
-    """将用户问题交给 Supervisor，并报告实际分派的 Agent。"""
+class RoutingService:
+    """将用户问题交给 路由，并报告实际分派的 Agent。"""
 
     def __init__(
-        self, supervisor: Any, rewriter_llm: BaseChatModel | None = None
+        self, routing_graph: Any, rewriter_llm: BaseChatModel | None = None
     ) -> None:
-        self._supervisor = supervisor
+        self._routing_graph = routing_graph
         self._rewriter_llm = rewriter_llm
 
     async def stream_ask(
         self, request: AskRequest, thread_id: str, trace_id: str, scope: dict[str, str]
     ) -> AsyncIterator[dict[str, str]]:
         """依次完成问题改写、图事件转发和最终 SSE 回答。"""
-        log_event(_LOG, "supervisor.start")
+        log_event(_LOG, "routing.start")
         scope = {**scope, "original_question": request.question}
         question = request.question
         if self._rewriter_llm is not None:
@@ -278,14 +274,14 @@ class SupervisorService:
             if question != request.question:
                 yield _event("progress", {"label": "问题改写", "status": question})
         yield _event("progress", {"detail": "正在判断问题意图"})
-        result = _SupervisorStreamState()
+        result = _RoutingStreamState()
         config = {
             "configurable": {"thread_id": thread_id},
-            "callbacks": [SupervisorDecisionTrace()],
+            "callbacks": [RoutingDecisionTrace()],
         }
-        with trace_span("supervisor_graph"):
+        with trace_span("routing_graph"):
             # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
-            async for part in self._supervisor.astream(
+            async for part in self._routing_graph.astream(
                 {"messages": [HumanMessage(content=question)], "scope": scope},
                 stream_mode=["updates", "messages"],
                 subgraphs=True,
@@ -306,7 +302,13 @@ class SupervisorService:
 def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     """把节点 state delta 摘要成前端可读的进度事件。"""
     info = {"node": node, "label": _NODE_LABELS.get(node, node)}
-    if node == "topic_research_agent":  # 显示通用研究完成进度。
+    if node == "router":
+        info["status"] = (
+            "直接回复" if delta["route"] == "direct" else _NODE_LABELS[delta["route"]]
+        )
+    elif node == "finalize":
+        info["status"] = "报告整理完成"
+    elif node == "topic_research_agent":  # 显示通用研究完成进度。
         info["status"] = "主题研究已完成"  # 与技能分开展示。
     elif node == "crypto_analysis_agent":  # 显示技能分析完成进度。
         info["status"] = "加密货币技能分析已完成"  # 保留币种分析语义。
