@@ -1,5 +1,8 @@
 """加密货币分析规划、技能执行和报告撰写提示词。"""
 
+import json
+from typing import Any
+
 import yaml
 
 
@@ -55,7 +58,8 @@ def thought_retrieval_prompt(
 def analysis_report_prompt(
     target_asset: str,
     original_question: str,
-    facts_json: str,
+    skill_results: list[dict[str, Any]],
+    thought_context: list[dict[str, Any]],
     output_templates: str,
 ) -> str:
     """有效指标按技能模板展示，无有效指标时围绕用户问题自然回答。"""
@@ -82,5 +86,6 @@ def analysis_report_prompt(
         "\n不编造内容、实时数据、分数或来源，不重算或修改数值和分数，"
         "不生成综合分；一般性分析和理论材料不能表述为已核验的当前市场结论。"
         f"\n技能分析输出模板：\n{output_templates}"
-        f"\n技能结果：{facts_json}"
+        f"\n技能结果（skill_results）：\n{json.dumps(skill_results, ensure_ascii=False)}"
+        f"\n理论参考材料（thought_context）：\n{json.dumps(thought_context, ensure_ascii=False)}"
     )

@@ -24,8 +24,6 @@ class SupervisorState(TypedDict, total=False):  # 两个 Agent 共用的外层�
     remaining_steps: NotRequired[RemainingSteps]  # 供 LangGraph 控制工具循环。
     scope: dict[str, str]  # 整轮请求固定的截止时间和追踪标识。
     report: str  # 当前被分派 Agent 生成的报告。
-    findings: list[Any]  # 子 Agent 已合并的事实，外层直接接收完整列表。
-    skill_results: list[dict[str, Any]]  # 子 Agent 已合并的技能结果。
 
 
 def build_supervisor_system(

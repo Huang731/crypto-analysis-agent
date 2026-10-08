@@ -19,3 +19,19 @@
   已完成与未完成指标、停止原因、耗时及 `trace_id`；日志不包含密钥。
 - [ ] 验证正常完成、一次错误调用后纠正、持续重复调用、部分完成后超限、
   外部数据缺失和超时取消；确认评分结果及其他技能执行不受影响。
+
+## Supervisor 空结果问题
+
+记录日期：2026-10-08。反复出现，后续优化，本次仅记录待办。
+
+- [ ] 排查并解决 `Supervisor 未分派研究 Agent 且未给出回复`。
+  已见日志：`supervisor.result.empty`，`routed_agent=null`、`direct_reply=""`，
+  `final_state_keys=["findings", "skill_results"]`；示例追踪号：`e201f93e`。
+- [ ] 按同一个 `trace_id` 关联 `supervisor.decision.response`、
+  `supervisor.state.update` 和 `supervisor.result.empty`，区分模型空返回、
+  工具调用解析失败与服务读取遗漏，先定位原因再修改。
+- [ ] 评估 Supervisor 决策输出校验与有限重试；正常交接可以没有正文，
+  不得仅凭正文为空判定失败。若重试，只重试尚未交接的决策阶段，
+  避免重复执行研究 Agent，不猜测路由或编造默认回复。
+- [ ] 验证 `output_mode="full_history"` 与当前提示词下的实际路由过程，
+  覆盖正常交接、直接回复、空决策和工具解析失败。

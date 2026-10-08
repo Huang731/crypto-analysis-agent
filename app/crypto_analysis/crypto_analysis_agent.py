@@ -433,12 +433,11 @@ def build_dynamic_analysis_agent(
                                 "documents": documents,
                             }
                         )
-                report_input = {
-                    "skill_results": report_results,
-                    "thought_context": thought_context,
-                }
-                facts = json.dumps(report_input, ensure_ascii=False)
-                print(f"facts: {facts}", flush=True)
+                print(
+                    f"skill_results: {json.dumps(report_results, ensure_ascii=False)}\n"
+                    f"thought_context: {json.dumps(thought_context, ensure_ascii=False)}",
+                    flush=True,
+                )
                 skill_loader = SkillLoader.from_snapshot(
                     {name: state["skill_sources"][name] for name in names}
                 )
@@ -448,10 +447,11 @@ def build_dynamic_analysis_agent(
                     for item in report_results
                 )
                 prompt = analysis_report_prompt(
-                    state["scope"]["target_asset"],
-                    state["scope"]["original_question"],
-                    facts,
-                    output_templates,
+                    target_asset=state["scope"]["target_asset"],
+                    original_question=state["scope"]["original_question"],
+                    skill_results=report_results,
+                    thought_context=thought_context,
+                    output_templates=output_templates,
                 )
                 with trace_generation(
                     "crypto_analysis_writer", model=settings.smart_model

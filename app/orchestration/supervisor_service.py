@@ -2,7 +2,8 @@
 
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -124,6 +125,135 @@ class SupervisorDecisionTrace(AsyncCallbackHandler):
             generation.metadata.update(status="error", error_type=type(error).__name__)
 
 
+@dataclass
+class _SupervisorStreamState:
+    """每个请求独立收集路由、回复与子图结果，不修改图状态。"""
+
+    final_state: dict[str, Any] = field(
+        default_factory=lambda: {"skill_results": [], "findings": []}
+    )
+    routed_agent: str | None = None
+    direct_reply: str = ""
+
+    def route(self, agent: str, conflict_reason: str) -> dict[str, str] | None:
+        """首次路由通知前端，后续交接与实际执行必须指向同一 Agent。"""
+        if self.routed_agent is not None and self.routed_agent != agent:
+            raise ValueError(conflict_reason)
+        if self.routed_agent is not None:
+            return None
+        self.routed_agent = agent
+        return _event("route", {"agent": agent})
+
+    def apply_update(
+        self, namespace: tuple[str, ...], node: str, delta: Any
+    ) -> Iterator[dict[str, str]]:
+        """解析图更新，按原顺序输出路由、进度并收集报告数据。"""
+        agents = {"crypto_analysis_agent", "topic_research_agent"}
+        is_root = not namespace
+        if is_root and node == "supervisor" and isinstance(delta, dict):
+            messages = delta.get("messages", [])
+            log_event(
+                _LOG,
+                "supervisor.state.update",
+                messages=[message.model_dump(mode="json") for message in messages],
+            )
+            for message in messages:
+                calls = getattr(message, "tool_calls", [])
+                if getattr(message, "type", "") == "ai" and not calls:
+                    self.direct_reply = message.text
+                for call in calls:
+                    name = call.get("name", "")
+                    if not name.startswith("transfer_to_"):
+                        continue
+                    agent = name.removeprefix("transfer_to_")
+                    if agent not in agents:
+                        raise ValueError(f"Supervisor 分派了未知 Agent：{agent}")
+                    event = self.route(agent, "Supervisor 一轮请求分派了多个 Agent")
+                    if event is not None:
+                        yield event
+
+        # 根节点的实际执行也需验证，不能只依赖模型声称的交接目标。
+        if is_root and node in agents:
+            event = self.route(node, "Supervisor 实际分派与计划目标不一致")
+            if event is not None:
+                yield event
+        if (
+            not isinstance(delta, dict)
+            or node not in _NODE_LABELS
+            or node == "calculate_metrics"
+        ):
+            return
+        yield _event("progress", _summarize_update(node, delta))
+
+        # 并行技能返回增量，父图返回公共状态；其余明细直接从子图收集。
+        if node == "skill_worker":
+            self.final_state["skill_results"].extend(delta["skill_results"])
+        elif is_root:
+            self.final_state.update(delta)
+        elif node == "writer" and "report" in delta:
+            self.final_state["report"] = delta["report"]
+        elif node == "research_team" and "findings" in delta:
+            self.final_state["findings"] = delta["findings"]
+
+    def completion_event(self) -> dict[str, str]:
+        """保持三类完成事件的字段，以及无路由、无回复时的明确失败。"""
+        state = self.final_state
+        if self.routed_agent == "crypto_analysis_agent":
+            skills = sorted(state["skill_results"], key=lambda item: item["skill_name"])
+            return _event(
+                "done",
+                {
+                    "kind": "crypto_analysis",
+                    "report": state["report"],
+                    "target_asset": state["scope"]["target_asset"],
+                    "as_of": state["scope"]["as_of"],
+                    "skill_results": skills,
+                    "indicators": [
+                        indicator
+                        for skill in skills
+                        for indicator in skill["indicators"]
+                    ],
+                },
+            )
+        if self.routed_agent == "topic_research_agent":
+            findings = state["findings"]
+            return _event(
+                "done",
+                {
+                    "kind": "topic_research",
+                    "report": state["report"],
+                    "findings": findings,
+                    "verification": "；".join(
+                        dict.fromkeys(item["verification"] for item in findings)
+                    ),
+                },
+            )
+        if self.direct_reply.strip():
+            return _event(
+                "done", {"kind": "direct", "report": self.direct_reply.strip()}
+            )
+        _LOG.error(
+            "supervisor.result.empty",
+            extra={
+                "event": "supervisor.result.empty",
+                "routed_agent": self.routed_agent,
+                "direct_reply": self.direct_reply,
+                "final_state_keys": sorted(state),
+            },
+        )
+        raise ValueError("Supervisor 未分派研究 Agent 且未给出回复")
+
+
+def _token_event(payload: Any) -> dict[str, str] | None:
+    """研究与汇总 token 保持内部使用，其余非空内容沿用现有输出规则。"""
+    message, metadata = payload
+    content = message.content if hasattr(message, "content") else str(message)
+    node = metadata.get("langgraph_node", "?") if isinstance(metadata, dict) else "?"
+    if not content or node in {"summarize", "model"}:
+        return None
+    return _event("token", {"node": node, "content": content})
+
+
 class SupervisorService:
     """将用户问题交给 Supervisor，并报告实际分派的 Agent。"""
 
@@ -131,205 +261,46 @@ class SupervisorService:
         self, supervisor: Any, rewriter_llm: BaseChatModel | None = None
     ) -> None:
         self._supervisor = supervisor
-        self._rewriter_llm = rewriter_llm  # 为空时跳过问题改写。
+        self._rewriter_llm = rewriter_llm
 
     async def stream_ask(
         self, request: AskRequest, thread_id: str, trace_id: str, scope: dict[str, str]
     ) -> AsyncIterator[dict[str, str]]:
-        """输出分派过程和 Supervisor 的最终回答。"""
+        """依次完成问题改写、图事件转发和最终 SSE 回答。"""
         log_event(_LOG, "supervisor.start")
-        scope = {
-            **scope,
-            "original_question": request.question,
-        }  # 保留用户原文，供报告撰写者回应具体问题。
+        scope = {**scope, "original_question": request.question}
         question = request.question
         if self._rewriter_llm is not None:
             yield _event("progress", {"detail": "正在理解问题"})
             with trace_span("question_rewriter", question_chars=len(question)) as span:
                 question = await rewrite_question(self._rewriter_llm, question)
                 span.metadata["rewritten_chars"] = len(question)
-            if question != request.question:  # 让用户看到系统实际按什么问题处理。
+            if question != request.question:
                 yield _event("progress", {"label": "问题改写", "status": question})
         yield _event("progress", {"detail": "正在判断问题意图"})
-        final_state: dict = {
-            "skill_results": [],
-            "findings": [],
-        }  # 累积所选 Agent 的结果。
-        routed_agent: str | None = None  # 记录 Supervisor 实际交接的 Agent。
-        direct_reply = ""  # Supervisor 未分派时的直接回复。
-
-        async def traced_supervisor_stream() -> AsyncIterator[tuple[Any, str, Any]]:
-            with trace_span("supervisor_graph"):
-                config = {
-                    "configurable": {"thread_id": thread_id},
-                    # 每个请求创建独立回调，只补充缺失的Supervisor决策追踪。
-                    "callbacks": [SupervisorDecisionTrace()],
-                }
-                async for event in self._supervisor.astream(
-                    {"messages": [HumanMessage(content=question)], "scope": scope},
-                    stream_mode=["updates", "messages"],
-                    subgraphs=True,
-                    config=config,
-                ):
-                    yield event
-
-        async for namespace, mode, payload in traced_supervisor_stream():
-            if mode == "updates":
-                # payload = {node_name: state_delta}
-                for node, delta in payload.items():
-                    if (
-                        not namespace
-                        and node == "supervisor"
-                        and isinstance(delta, dict)
-                    ):  # 从工具调用识别实际分派。
-                        # 同时记录父图实际交付的消息，核对模型返回与服务读取结果。
-                        log_event(
-                            _LOG,
-                            "supervisor.state.update",
-                            messages=[
-                                message.model_dump(mode="json")
-                                for message in delta.get("messages", [])
-                            ],
-                        )
-                        for message in delta.get(
-                            "messages", []
-                        ):  # Supervisor 可能一次返回多条消息。
-                            if getattr(message, "type", "") == "ai" and not getattr(
-                                message, "tool_calls", None
-                            ):
-                                direct_reply = (
-                                    message.text
-                                )  # 不带工具调用的 AI 消息即直接回复。
-                            for call in getattr(
-                                message, "tool_calls", []
-                            ):  # 只读取结构化交接工具。
-                                tool_name = call.get("name", "")  # 提取工具名称。
-                                if tool_name.startswith(
-                                    "transfer_to_"
-                                ):  # 默认交接工具以该前缀命名。
-                                    agent_name = tool_name.removeprefix(
-                                        "transfer_to_"
-                                    )  # 提取子 Agent 名称。
-                                    if agent_name not in {
-                                        "crypto_analysis_agent",
-                                        "topic_research_agent",
-                                    }:  # 拒绝未知交接目标。
-                                        raise ValueError(
-                                            f"Supervisor 分派了未知 Agent：{agent_name}"
-                                        )  # 不猜测路由。
-                                    if (
-                                        routed_agent is not None
-                                        and routed_agent != agent_name
-                                    ):  # 第一版只允许单个 Agent。
-                                        raise ValueError(
-                                            "Supervisor 一轮请求分派了多个 Agent"
-                                        )  # 避免混合两类报告。
-                                    if routed_agent is None:  # 首次识别交接时通知前端。
-                                        routed_agent = agent_name  # 固定本轮路由。
-                                        yield _event(
-                                            "route", {"agent": agent_name}
-                                        )  # 推送分派事件。
-                    if not namespace and node in {
-                        "crypto_analysis_agent",
-                        "topic_research_agent",
-                    }:  # 再根据实际执行节点确认分派。
-                        if (
-                            routed_agent is not None and routed_agent != node
-                        ):  # 工具交接与实际节点不得冲突。
-                            raise ValueError(
-                                "Supervisor 实际分派与计划目标不一致"
-                            )  # 防止展示错误类型。
-                        if routed_agent is None:  # 某些更新模式只显示已执行的节点。
-                            routed_agent = node  # 以实际执行节点确定本轮类型。
-                            yield _event("route", {"agent": node})  # 通知前端分派对象。
-                    if (
-                        not isinstance(delta, dict)
-                        or node not in _NODE_LABELS
-                        or node == "calculate_metrics"
-                    ):
-                        continue
-                    # 进度事件：告诉前端哪个节点完成了什么
-                    progress = _summarize_update(node, delta)
-                    yield _event("progress", progress)
-                    # 父图更新构成最终状态，并行列表需要逐项累积。
-                    if not namespace:
-                        if node == "skill_worker":  # 每个技能会单独返回一次增量。
-                            final_state["skill_results"].extend(
-                                delta["skill_results"]
-                            )  # 合并技能结果。
-                        else:
-                            final_state.update(delta)  # 保存计划范围或最终报告。
-                    elif node == "writer" and "report" in delta:
-                        final_state["report"] = delta["report"]
-                    elif node == "research_team" and "findings" in delta:
-                        final_state["findings"] = delta["findings"]
-
-            elif mode == "messages":
-                # payload = (message_chunk, metadata)
-                msg_chunk, meta = payload
-                content = (
-                    msg_chunk.content
-                    if hasattr(msg_chunk, "content")
-                    else str(msg_chunk)
-                )
-                if content:  # 空 chunk 跳过
-                    node = (
-                        meta.get("langgraph_node", "?")
-                        if isinstance(meta, dict)
-                        else "?"
-                    )
-                    if node in {"summarize", "model"}:
-                        continue  # 研究与汇总文本仅供内部写作使用。
-                    yield _event("token", {"node": node, "content": content})
-
-        if routed_agent == "crypto_analysis_agent":  # 技能路径沿用原有完成事件字段。
-            skills = sorted(
-                final_state["skill_results"], key=lambda item: item["skill_name"]
-            )  # 固定技能展示顺序。
-            indicators = [
-                indicator for skill in skills for indicator in skill["indicators"]
-            ]  # 汇总各技能指标。
-            yield _event(  # 保留前端现有技能数据结构。
-                "done",  # 标记本轮分析完成。
-                {  # 技能报告及结构化事实。
-                    "kind": "crypto_analysis",  # 标记当前返回类型。
-                    "report": final_state["report"],  # 已生成的技能报告。
-                    "target_asset": final_state["scope"][
-                        "target_asset"
-                    ],  # 使用校验过的币种。
-                    "as_of": final_state["scope"]["as_of"],  # 返回固定截止时间。
-                    "skill_results": skills,  # 返回技能状态。
-                    "indicators": indicators,  # 返回全部指标记录。
-                },  # 结束技能数据结构。
-            )  # 推送技能完成事件。
-        elif routed_agent == "topic_research_agent":  # 通用研究不依赖币种和技能字段。
-            yield _event(  # 推送独立的主题研究结果。
-                "done",  # 标记本轮研究完成。
-                {  # 返回实际取证后的主题研究结果。
-                    "kind": "topic_research",  # 标记普通主题研究。
-                    "report": final_state["report"],  # 已审稿的主题报告。
-                    "findings": final_state["findings"],  # 三个子问题的研究发现。
-                    "verification": "；".join(
-                        dict.fromkeys(
-                            item["verification"] for item in final_state["findings"]
-                        )
-                    ),  # 根据各子问题实际取得的证据说明资料范围。
-                },  # 结束主题研究数据结构。
-            )  # 完成主题研究输出。
-        elif direct_reply.strip():  # 闲聊或超出研究范围的问题，由 Supervisor 直接回复。
-            # 以独立 kind 返回，前端不会把它当作研究报告展示。
-            yield _event("done", {"kind": "direct", "report": direct_reply.strip()})
-        else:  # 既未分派也没有回复内容。
-            _LOG.error(
-                "supervisor.result.empty",
-                extra={
-                    "event": "supervisor.result.empty",
-                    "routed_agent": routed_agent,
-                    "direct_reply": direct_reply,
-                    "final_state_keys": sorted(final_state),
-                },
-            )
-            raise ValueError("Supervisor 未分派研究 Agent 且未给出回复")
+        result = _SupervisorStreamState()
+        config = {
+            "configurable": {"thread_id": thread_id},
+            "callbacks": [SupervisorDecisionTrace()],
+        }
+        with trace_span("supervisor_graph"):
+            # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
+            async for part in self._supervisor.astream(
+                {"messages": [HumanMessage(content=question)], "scope": scope},
+                stream_mode=["updates", "messages"],
+                subgraphs=True,
+                version="v2",
+                config=config,
+            ):
+                if part["type"] == "updates":
+                    for node, delta in part["data"].items():
+                        for event in result.apply_update(part["ns"], node, delta):
+                            yield event
+                elif part["type"] == "messages":
+                    event = _token_event(part["data"])
+                    if event is not None:
+                        yield event
+        yield result.completion_event()
 
 
 def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
