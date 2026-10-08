@@ -43,7 +43,7 @@ def build_supervisor_system(
         model=fast,  # 使用主模型判断用户问题意图。
         prompt=supervisor_prompt(),  # 要求每轮只交给一个专业 Agent。
         state_schema=SupervisorState,  # 让请求范围和报告跨 Agent 传递。
-        output_mode="last_message",  # 只把子 Agent 的最终消息交回调度中心。
+        output_mode="full_history",  # 保留完整消息历史，便于查看路由过程。
         parallel_tool_calls=None,  # 智谱未声明此参数，不向兼容接口发送。
     )  # 返回尚未编译的 Supervisor 图。
     return workflow.compile(name="research_supervisor")  # 向现有 API 提供可运行图。
