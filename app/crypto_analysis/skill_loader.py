@@ -200,7 +200,7 @@ class SkillLoader:
         return self._definitions[name]
 
     def load_analysis_output(self, name: str) -> str:
-        """从请求快照提取完整的分析输出章节，供最终写作使用。"""
+        """从请求快照提取完整的分析输出章节，供技能生成表格使用。"""
         _, body = _parse_document(self.load_skill(name))
         lines = body.splitlines()
         try:

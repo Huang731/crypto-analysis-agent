@@ -227,17 +227,18 @@
         reportEl.textContent += data.content;
       } else if (name === "done") {
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "技能指标记录（点击展开）"; // 两条路径分别展示对应内容。
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "技能分析内容（点击展开）";
         reportEl.classList.remove("blink");
         if (typeof data.report === "string" && data.report) {
           reportEl.classList.remove("placeholder");
           reportEl.textContent = data.report;
         }
-        const records = Array.isArray(data.indicators) ? data.indicators.slice() : []; // 先展示全部指标记录。
-        if (Array.isArray(data.skill_results)) { // 技能结果存在时补充技能汇总。
-          for (const skill of data.skill_results) records.push({ skill_result: skill }); // 保留各技能得分和缺失原因。
-        } // 结束技能汇总。
-        renderFindings(data.kind === "topic_research" ? data.findings : records); // 主题研究展示发现，技能分析展示结构化指标。
+        // 技能内容已经包含指标表格和思想解读，直接展示原文，不反解析数值。
+        const records = Array.isArray(data.skill_results)
+          ? data.skill_results.filter(skill => skill.content).map(skill =>
+              `${skill.name}${skill.cache_hit ? "（复用缓存）" : ""}\n\n${skill.content}`)
+          : [];
+        renderFindings(data.kind === "topic_research" ? data.findings : records);
         if (data.target_asset) addProgress("标的", data.target_asset + " · 技能分析"); // 展示统一目标币种。
         if (data.as_of) {
           // 内部保留 UTC，页面统一按北京时间展示到秒。

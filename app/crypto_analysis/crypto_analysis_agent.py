@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from math import fsum
-from typing import Any
+from typing import Any, TypeVar
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -17,9 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
+    AnalysisConclusion,
     DynamicAnalysisState,
+    HistorySummaryOutput,
     MetricAgentState,
     MetricToolContext,
+    SkillOutput,
+    SkillResult,
     SkillWorkerState,
 )
 from app.crypto_analysis.metric_service import missing_metric
@@ -41,12 +45,42 @@ from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
+    history_summary_prompt,
     metric_agent_system_prompt,
     metric_execution_prompt,
+    skill_output_prompt,
     thought_retrieval_prompt,
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
+_OutputT = TypeVar("_OutputT", bound=BaseModel)
+
+
+async def _invoke_structured_output(
+    llm: Any,
+    schema: type[_OutputT],
+    prompt: str,
+    trace_name: str,
+    model_name: str,
+) -> _OutputT:
+    """注入输出 Schema 并校验结果，保留流过滤标记和用量追踪。"""
+    # JSON 模式不向接口传递字段类型，需在提示词中明确完整输出约束。
+    prompt = (
+        f"{prompt}\n\n仅输出符合以下 JSON Schema 的 JSON 对象：\n"
+        f"{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
+    )
+    model = llm.with_structured_output(schema, method="json_mode")
+    with trace_generation(trace_name, model=model_name) as generation:
+        response = await model.ainvoke(
+            prompt, config={"tags": ["crypto_structured_output"]}
+        )
+        if not isinstance(response, schema):
+            raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
+        generation.usage = {
+            "input": estimate_tokens(prompt),
+            "output": estimate_tokens(response.model_dump_json()),
+        }
+        return response
 
 
 # 请求规划模型
@@ -93,19 +127,13 @@ async def create_analysis_plan(
         skill_descriptions,
         question,
     )
-    # 规划只提取字段，使用 JSON 模式，避免把普通文本输出误当作工具调用结果。
-    structured_llm = llm.with_structured_output(AnalysisPlan, method="json_mode")
-    with trace_generation(
-        "crypto_analysis_plan", model=settings.fast_model
-    ) as generation:
-        plan = await structured_llm.ainvoke(prompt)
-        if isinstance(plan, AnalysisPlan):
-            generation.usage = {
-                "input": estimate_tokens(prompt),
-                "output": estimate_tokens(plan.model_dump_json()),
-            }
-    if not isinstance(plan, AnalysisPlan):
-        raise TypeError("规划模型未返回 AnalysisPlan 结构化结果")
+    plan = await _invoke_structured_output(
+        llm,
+        AnalysisPlan,
+        prompt,
+        "crypto_analysis_plan",
+        settings.fast_model,
+    )
     return plan.model_dump()
 
 
@@ -323,26 +351,60 @@ async def _retrieve_thought_context(
         }
 
 
-def _build_skill_update(
-    skill: LoadedSkill, key: SkillMemoryKey, result: dict[str, Any]
-) -> DynamicAnalysisState:
-    """始终回传本轮结果，仅将指标与检索均成功的结果写入会话缓存。"""
-    update: DynamicAnalysisState = {"skill_results": [result]}
-    if result["status"] != "ok" or result["thought_context"]["status"] not in {
-        "ok",
-        "no_results",
-    }:
-        return update
-    entry = validate_skill_memory(
-        {
-            **key.model_dump(),
-            "indicators": result["indicators"],
-            "thought_context": result["thought_context"],
-        },
-        key,
-        skill,
+async def _generate_skill_content(
+    llm: Any,
+    skill_loader: SkillLoader,
+    skill: LoadedSkill,
+    result: dict[str, Any],
+    analysis_subject: str,
+) -> str:
+    """按技能模板生成表格与思想解读，只使用成功指标和实际检索材料。"""
+    indicators = [item for item in result["indicators"] if item["status"] == "ok"]
+    thought_context = result["thought_context"]
+    # 全部缺失时返回空展示，不调用模型；只有思想材料时仍可解读已有原则。
+    if not indicators and not thought_context["documents"]:
+        return ""
+    prompt = skill_output_prompt(
+        analysis_subject=analysis_subject,
+        skill_name=skill.name,
+        indicators=indicators,
+        thought_context=thought_context,
+        output_template=skill_loader.load_analysis_output(skill.name),
     )
-    update["skill_memory"] = {key.cache_key: entry.model_dump(mode="json")}
+    # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
+    with trace_generation(
+        "crypto_skill_output", model=settings.smart_model
+    ) as generation:
+        response = await llm.ainvoke(prompt, config={"tags": ["crypto_skill_output"]})
+        output = SkillOutput(content=response.content)
+        generation.usage = {
+            "input": estimate_tokens(prompt),
+            "output": estimate_tokens(output.content),
+        }
+        return output.content
+
+
+def _build_skill_update(
+    skill: LoadedSkill,
+    key: SkillMemoryKey,
+    result: dict[str, Any],
+    content: str,
+) -> DynamicAnalysisState:
+    """回传展示内容，沿用指标完整成功且检索正常的缓存写入条件。"""
+    output: SkillResult = {
+        "skill_name": skill.name,
+        "name": skill.scoring.name,
+        "content": content,
+        "cache_hit": False,
+    }
+    update: DynamicAnalysisState = {"skill_results": [output]}
+    if (
+        not content.strip()
+        or result["status"] != "ok"
+        or result["thought_context"]["status"] not in {"ok", "no_results"}
+    ):
+        return update
+    update["skill_memory"] = {key.cache_key: validate_skill_memory(content, key)}
     return update
 
 
@@ -365,18 +427,17 @@ def build_dynamic_analysis_agent(
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
-                unknown_names = set(selection["skill_names"]) - {
-                    meta.name for meta in skill_loader.list_skills()
-                }
-                if unknown_names:
-                    raise ValueError(
-                        f"分析计划包含未知技能：{'、'.join(sorted(unknown_names))}"
-                    )
                 scope = {
                     **state["scope"],
                     "target_asset": selection["target_asset"],
                 }
+                history_summary = state.get("history_summary", "")
+                if not isinstance(history_summary, str) or len(history_summary) > 2000:
+                    raise ValueError("历史摘要必须是不超过 2000 字符的字符串")
                 return {
+                    "history_summary": history_summary,
+                    "conclusion": "",
+                    "report": "",
                     "skill_sources": skill_loader.snapshot(),
                     "plan": selection,
                     "scope": scope,
@@ -410,7 +471,7 @@ def build_dynamic_analysis_agent(
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_worker(state: SkillWorkerState) -> DynamicAnalysisState:
-        """优先复用会话指标与理论材料，未命中时保留原执行流程。"""
+        """命中时直接返回完整技能内容，未命中时执行指标、检索并生成内容。"""
         with trace_span(
             "crypto.skill_worker", skill_name=state["skill_name"]
         ) as node_span:
@@ -428,30 +489,34 @@ def build_dynamic_analysis_agent(
                 # 只记录是否找到缓存；缓存内容是否有效由后续校验判断。
                 node_span.metadata["cache_hit"] = cached is not None
                 if cached is not None:
-                    # 命中后校验原始指标，按当前技能权重重新聚合，不再取数或检索。
-                    entry = validate_skill_memory(cached, key, skill)
-                    result = aggregate_skill_results(
-                        skill,
-                        [item.model_dump(mode="json") for item in entry.indicators],
-                    )
-                    result["thought_context"] = entry.thought_context.model_dump(
-                        mode="json"
-                    )
-                    # 返回本轮报告输入，已有缓存不需要重复写入。
-                    return {"skill_results": [result]}
+                    content = validate_skill_memory(cached, key)
+                    return {
+                        "skill_results": [
+                            {
+                                "skill_name": skill.name,
+                                "name": skill.scoring.name,
+                                "content": content,
+                                "cache_hit": True,
+                            }
+                        ]
+                    }
+                analysis_subject = (
+                    "加密市场"
+                    if key.asset_scope == "GLOBAL"
+                    else state["scope"]["target_asset"]
+                )
                 # 未命中时沿用原指标 Agent，执行取数、计算和结果聚合。
                 metric_agent = build_metric_agent(fast_llm, skill)
                 result = await execute_skill(metric_agent, skill, state["scope"])
-                # 全局技能使用通用检索语境，币种技能使用当前资产。
+                # 检索与内容生成使用同一对象，避免全局缓存混入特定币种判断。
                 result["thought_context"] = await _retrieve_thought_context(
-                    retriever,
-                    skill,
-                    "加密市场"
-                    if key.asset_scope == "GLOBAL"
-                    else state["scope"]["target_asset"],
+                    retriever, skill, analysis_subject
                 )
-                # 始终回传本轮结果；指标完整成功且检索正常时才新增缓存。
-                return _build_skill_update(skill, key, result)
+                content = await _generate_skill_content(
+                    smart_llm, skill_loader, skill, result, analysis_subject
+                )
+                # 只回传当前技能的结果与缓存增量，由主图 reducer 合并并行更新。
+                return _build_skill_update(skill, key, result, content)
             except Exception:
                 # 标记当前节点失败并继续抛出，不将异常当作缓存未命中。
                 node_span.metadata["status"] = "error"
@@ -459,89 +524,78 @@ def build_dynamic_analysis_agent(
 
     @timed_node
     async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
+        """只撰写结论，由程序原样拼接技能展示内容。"""
         with trace_span("crypto.writer") as node_span:
             try:
-                names = state["plan"]["skill_names"]
-                if not names:
+                if not state["plan"]["skill_names"]:
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
-                    return {"report": report, "messages": [AIMessage(content=report)]}
+                    return {
+                        "conclusion": "",
+                        "report": report,
+                        "messages": [AIMessage(content=report)],
+                    }
                 ordered = sorted(
                     state["skill_results"], key=lambda item: item["skill_name"]
                 )
-                # 只筛选报告输入，完整指标结果仍保留在图状态中。
-                report_results: list[dict[str, Any]] = []
-                thought_context: list[dict[str, Any]] = []
-                for item in ordered:
-                    skill_name = item["skill_name"]
-                    indicators = [
-                        indicator
-                        for indicator in item["indicators"]
-                        if indicator["status"] == "ok"
-                    ]
-                    if indicators:
-                        report_results.append(
-                            {
-                                "skill_name": skill_name,
-                                "name": item["name"],
-                                "score": item["score"],
-                                "indicators": indicators,
-                            }
-                        )
-                    # 没有有效指标时，仍保留已有理论材料。
-                    documents = item["thought_context"]["documents"]
-                    if documents:
-                        thought_context.append(
-                            {
-                                "skill_name": skill_name,
-                                "documents": documents,
-                            }
-                        )
-                print(
-                    f"skill_results: {json.dumps(report_results, ensure_ascii=False)}\n"
-                    f"thought_context: {json.dumps(thought_context, ensure_ascii=False)}",
-                    flush=True,
-                )
-                skill_loader = SkillLoader.from_snapshot(
-                    {name: state["skill_sources"][name] for name in names}
-                )
-                output_templates = "\n\n".join(
-                    f"技能 {item['skill_name']}：\n"
-                    f"{skill_loader.load_analysis_output(item['skill_name'])}"
-                    for item in report_results
-                )
+                # 只采用本轮技能内容，历史摘要不能替代本轮证据。
                 prompt = analysis_report_prompt(
                     target_asset=state["scope"]["target_asset"],
                     original_question=state["scope"]["resolved_question"],
-                    skill_results=report_results,
-                    thought_context=thought_context,
-                    output_templates=output_templates,
+                    skill_results=ordered,
+                    history_summary=state["history_summary"],
                 )
-                with trace_generation(
-                    "crypto_analysis_writer", model=settings.smart_model
-                ) as generation:
-                    response = await smart_llm.ainvoke(prompt)
-                    if isinstance(response.content, str):
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }
-                if (
-                    not isinstance(response.content, str)
-                    or not response.content.strip()
-                ):
-                    raise ValueError("报告模型未返回有效文本")
-                report = response.content.strip()
-                return {"report": report, "messages": [AIMessage(content=report)]}
+                output = await _invoke_structured_output(
+                    smart_llm,
+                    AnalysisConclusion,
+                    prompt,
+                    "crypto_analysis_writer",
+                    settings.smart_model,
+                )
+                sections = [
+                    f"## {item['name']}\n\n{item['content']}"
+                    for item in ordered
+                    if item["content"]
+                ]
+                sections.append(f"## 整体结论\n\n{output.conclusion}")
+                report = "\n\n".join(sections)
+                return {
+                    "conclusion": output.conclusion,
+                    "report": report,
+                    "messages": [AIMessage(content=report)],
+                }
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
+
+    @timed_node
+    async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
+        """在结论完成后更新摘要，不将全部表格重复写入历史。"""
+        if not state["conclusion"]:
+            return {}
+        prompt = history_summary_prompt(
+            previous_summary=state["history_summary"],
+            target_asset=state["scope"]["target_asset"],
+            original_question=state["scope"]["resolved_question"],
+            analysis_time=state["scope"]["as_of"],
+            conclusion=state["conclusion"],
+        )
+        output = await _invoke_structured_output(
+            fast_llm,
+            HistorySummaryOutput,
+            prompt,
+            "crypto_history_summary",
+            settings.fast_model,
+        )
+        return {"history_summary": output.history_summary}
 
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", plan)
     builder.add_node("skill_worker", skill_worker)
     builder.add_node("writer", writer)
+    builder.add_node("summarize_history", summarize_history)
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
-    builder.add_edge("writer", END)
+    builder.add_edge("writer", "summarize_history")
+    builder.add_edge("summarize_history", END)
     return builder.compile(name="crypto_analysis_agent")

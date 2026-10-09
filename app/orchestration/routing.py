@@ -54,8 +54,10 @@ class RoutingState(TypedDict, total=False):
     scope: dict[str, str]
     # 本轮原话规范改写后的问题，用于路由和专家分析。
     resolved_question: str
-    # 同会话各技能的成功指标与 RAG，按共享范围和技能名合并保存。
-    skill_memory: Annotated[dict[str, dict[str, Any]], merge_skill_memory]
+    # 同会话各技能的指标表格与思想体系解读，按原共享范围和技能名保存。
+    skill_memory: Annotated[dict[str, str], merge_skill_memory]
+    # 加密分析分支更新累计结论摘要，其余分支保持已有内容。
+    history_summary: str
     # 本轮路由目标：加密分析、主题研究或直接回复。
     route: RouteTarget
     # 直接回复分支的正文；进入专家分支时为空字符串。

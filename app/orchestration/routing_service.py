@@ -33,6 +33,7 @@ _NODE_LABELS = {
     "researcher": "并行分析子问题",
     "calculate_metrics": "计算指标",
     "summarize": "汇总发现",
+    "summarize_history": "更新历史摘要",
 }
 
 
@@ -123,11 +124,6 @@ class _RoutingStreamState:
                     "target_asset": state["scope"]["target_asset"],
                     "as_of": state["scope"]["as_of"],
                     "skill_results": skills,
-                    "indicators": [
-                        indicator
-                        for skill in skills
-                        for indicator in skill["indicators"]
-                    ],
                 },
             )
         if self.routed_agent == "topic_research_agent":
@@ -167,9 +163,17 @@ def _token_event(payload: Any) -> dict[str, str] | None:
     if not content or node in {
         "rewrite",
         "router",
+        "plan",
         "summarize",
         "model",
+        "skill_worker",
+        "summarize_history",
     }:
+        return None
+    # 加密结论使用结构化输出，JSON 增量不能作为报告正文展示。
+    if isinstance(metadata, dict) and "crypto_structured_output" in metadata.get(
+        "tags", []
+    ):
         return None
     return _event("token", {"node": node, "content": content})
 
@@ -235,9 +239,14 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
         info["status"] = f"报告已生成（{len(delta.get('report', ''))} 字）"
     elif node == "plan":  # 计划完成时显示模型识别的币种。
         info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行技能"
-    elif node == "skill_worker":  # 技能执行完成时显示状态。
-        item = delta["skill_results"][0]  # 当前增量只对应一个技能。
-        info["status"] = f"技能 {item['name']}：{item['status']}"
+    elif node == "skill_worker":
+        item = delta["skill_results"][0]
+        status = "已复用缓存" if item["cache_hit"] else "已生成"
+        if not item["content"]:
+            status = "暂无可展示内容"
+        info["status"] = f"技能 {item['name']}：{status}"
+    elif node == "summarize_history":
+        info["status"] = "历史摘要已更新" if delta else "无需更新历史摘要"
     elif node == "reviewer":
         info["status"] = f"审稿：{delta.get('review_decision', '?')}"
         info["review_count"] = delta.get("review_count", 0)  # 展示当前审稿轮次。
