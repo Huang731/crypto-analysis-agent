@@ -34,6 +34,9 @@ def analysis_plan_prompt(skill_descriptions: str, question: str) -> str:
         "\n1. 识别单个目标币种；未指定时使用 BTC，多个或无法识别时不自行选择。"
         "\n2. 用户未明确限定或排除分析领域时，选择全部技能；"
         "\n3. 技能名称使用目录中的完整名称，按目录顺序排列，不重复。"
+        "\n4. 必须输出 refresh 布尔值；用户明确要求重新取数、刷新数据、"
+        "不要用缓存或获取最新数据时设为 true，本轮选中的全部技能跳过缓存；"
+        "普通分析、仅要求再分析一次或解释此前结论时设为 false。"
         f"\n技能目录：{skill_descriptions}"
         f"\n用户问题：{question}"
     )
@@ -72,7 +75,7 @@ def analysis_report_prompt(
 ) -> str:
     """仅依据技能内容和此前结论摘要撰写本轮整体结论。"""
     return (
-        "根据各技能表格、思想解读和历史摘要，用中文回答本轮问题并撰写整体结论，字数200字左右"
+        "根据各技能表格、思想解读和历史摘要，用中文回答本轮问题并撰写整体结论，字数500字左右"
         f"\n目标资产：{target_asset}；用户问题：{original_question}"
         f"\n各技能内容：\n{json.dumps(skill_results, ensure_ascii=False)}"
         f"\n此前结论摘要：\n{history_summary}"

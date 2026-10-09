@@ -89,6 +89,10 @@ class AnalysisPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target_asset: str = Field(pattern=r"^[A-Z0-9]+$", strict=True)
     skill_names: list[str]
+    refresh: bool = Field(
+        strict=True,
+        description="用户是否明确要求重新获取数据，跳过已有技能缓存",
+    )
 
     @field_validator("skill_names")
     @classmethod
@@ -452,9 +456,13 @@ def build_dynamic_analysis_agent(
                     "skill_name": name,
                     "skill_source": state["skill_sources"][name],
                     "scope": state["scope"],
-                    "cached_memory": read_skill_memory(
-                        state.get("skill_memory", {}),
-                        resolve_memory_key(state["scope"]["target_asset"], name),
+                    "cached_memory": (
+                        None
+                        if state["plan"]["refresh"]
+                        else read_skill_memory(
+                            state.get("skill_memory", {}),
+                            resolve_memory_key(state["scope"]["target_asset"], name),
+                        )
                     ),
                 },
             )
