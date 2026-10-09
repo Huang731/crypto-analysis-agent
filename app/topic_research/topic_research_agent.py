@@ -19,7 +19,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
     ToolCallRequest,
 )
-from langchain_core.messages import (  # 读取原问题并回写报告。
+from langchain_core.messages import (  # 工具 Agent 的消息交互。
     AIMessage,
     HumanMessage,
     ToolMessage,
@@ -63,20 +63,15 @@ _MAX_REVIEWS = 2  # 审稿最多执行两轮，避免图无限循环。
 
 
 def _latest_question(
-    messages: list[Any],
     scope: dict[str, str],
-) -> str:  # 校验本轮用户消息并读取已补全的研究问题。
-    for message in reversed(messages):  # 交接消息可能排在用户消息后面。
-        if isinstance(message, HumanMessage) and isinstance(
-            message.content, str
-        ):  # 只接受真实用户文本。
-            question = message.content.strip()  # 去除问题首尾空白。
-            if question:  # 空问题不能进入研究图。
-                resolved = scope["resolved_question"]
-                if not isinstance(resolved, str) or not resolved.strip():
-                    raise ValueError("主题研究缺少有效补全问题")
-                return resolved.strip()  # 拆题、写作和审稿使用相同的研究主题。
-    raise ValueError("主题研究缺少有效用户问题")  # 不把交接工具消息当作主题。
+) -> str:  # 校验本轮原始问题并读取已补全的研究问题。
+    original = scope["original_question"]
+    if not isinstance(original, str) or not original.strip():
+        raise ValueError("主题研究缺少有效用户问题")
+    resolved = scope["resolved_question"]
+    if not isinstance(resolved, str) or not resolved.strip():
+        raise ValueError("主题研究缺少有效补全问题")
+    return resolved.strip()  # 拆题、写作和审稿使用相同的研究主题。
 
 
 def make_split(
@@ -369,15 +364,13 @@ def make_research_team(
 ) -> Callable[
     [SystemState], Awaitable[dict[str, Any]]
 ]:  # 保留原有父图对子图的调用边界。
-    """从用户消息取得主题，并把子图结果回写父图。"""
+    """从本轮请求范围取得主题，并把子图结果回写父图。"""
 
     @timed_node  # 记录并行研究整体耗时。
     async def research_team(state: SystemState) -> dict[str, Any]:  # 返回摘要和发现。
         with trace_span("topic.research_team") as node_span:
             try:
-                question = _latest_question(
-                    state["messages"], state["scope"]
-                )  # 避免把 路由 交接消息当问题。
+                question = _latest_question(state["scope"])
                 with trace_span("topic.research_subgraph"):
                     result = await sub_graph.ainvoke(
                         {"question": question, "findings": [], "scope": state["scope"]}
@@ -399,10 +392,10 @@ def make_writer(
     """依据研究摘要写报告，并处理审稿意见。"""
 
     @timed_node  # 保留原有写作节点观测。
-    async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告消息。
+    async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告正文。
         with trace_span("topic.writer") as node_span:
             try:
-                question = _latest_question(state["messages"], state["scope"])
+                question = _latest_question(state["scope"])
                 feedback = state.get("feedback", "")  # 重写时读取审稿意见。
                 prompt = writer_prompt(
                     question,
@@ -440,8 +433,7 @@ def make_writer(
                 )
                 return {
                     "report": report,
-                    "messages": [AIMessage(content=report)],
-                }  # 保存最终报告及消息。
+                }  # 保存最终报告。
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -461,7 +453,7 @@ def make_reviewer(
                 count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
                 prompt = review_prompt(
                     state["report"],
-                    _latest_question(state["messages"], state["scope"]),
+                    _latest_question(state["scope"]),
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 提供实际生成的报告。
                 with trace_generation(
@@ -547,7 +539,6 @@ async def main() -> None:  # 保留原有命令行入口。
     ) as trace:  # 为命令行运行建立根 trace。
         result = await agent.ainvoke(
             {
-                "messages": [HumanMessage(content=question)],
                 "scope": {"original_question": question, "resolved_question": question},
                 "findings": [],
             }

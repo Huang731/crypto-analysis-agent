@@ -4,12 +4,10 @@ import operator  # 合并并行研究节点的发现。
 from typing import Annotated, Any  # 声明共享状态字段。
 
 from langchain.agents import AgentState
-from langgraph.graph.message import add_messages  # 累积对话消息。
 from typing_extensions import TypedDict  # 定义 LangGraph 状态。
 
 
 class SystemState(TypedDict, total=False):  # 主题研究父图的状态。
-    messages: Annotated[list[Any], add_messages]  # 用户问题与最终报告。
     scope: dict[str, str]  # 请求追踪信息和固定的分析时间。
     findings: Annotated[list[dict[str, Any]], operator.add]  # 并行研究发现。
     research_summary: str  # 子图汇总的主题摘要。

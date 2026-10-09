@@ -5,10 +5,9 @@ import json
 from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, model_validator
 from typing_extensions import Self, TypedDict
@@ -47,8 +46,6 @@ class RouteDecision(BaseModel):
 class RoutingState(TypedDict, total=False):
     """外层只保留路由和报告，研究明细由专家子图持有。"""
 
-    # 合并并保存用户原话和助手回复；改写与路由只接收本轮问题。
-    messages: Annotated[list[Any], add_messages]
     # 本轮请求范围：分析截止时间、会话和追踪标识、原始及补全问题等。
     scope: dict[str, str]
     # 本轮原话规范改写后的问题，用于路由和专家分析。
@@ -75,9 +72,6 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
     report = state["direct_reply"] if state["route"] == "direct" else state["report"]
     if not isinstance(report, str) or not report.strip():
         raise ValueError("最终报告为空")
-    if state["route"] == "direct":
-        return {"report": report, "messages": [AIMessage(content=report)]}
-    # 专家已经写入报告消息，汇总时不重复追加。
     return {"report": report}
 
 

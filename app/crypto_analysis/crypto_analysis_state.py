@@ -4,7 +4,6 @@ import operator
 from typing import Annotated, Any
 
 from langchain.agents import AgentState
-from langgraph.graph.message import add_messages
 from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
@@ -63,7 +62,6 @@ class HistorySummaryOutput(BaseModel):
 
 
 class DynamicAnalysisState(TypedDict, total=False):
-    messages: Annotated[list[Any], add_messages]
     scope: dict[str, str]
     skill_sources: dict[str, str]
     plan: dict[str, Any]

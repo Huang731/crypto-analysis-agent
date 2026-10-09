@@ -5,8 +5,6 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from langchain_core.messages import HumanMessage
-
 from api.schemas import AskRequest
 from app.observability import get_logger, log_event
 from app.tracing import trace_span
@@ -198,7 +196,7 @@ class RoutingService:
         with trace_span("routing_graph"):
             # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
             async for part in self._routing_graph.astream(
-                {"messages": [HumanMessage(content=request.question)], "scope": scope},
+                {"scope": scope},
                 stream_mode=["updates", "messages"],
                 subgraphs=True,
                 version="v2",
@@ -241,7 +239,7 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
         info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行技能"
     elif node == "skill_worker":
         item = delta["skill_results"][0]
-        status = "已复用缓存" if item["cache_hit"] else "已生成"
+        status = "读取记忆" if item["cache_hit"] else "已生成"
         if not item["content"]:
             status = "暂无可展示内容"
         info["status"] = f"技能 {item['name']}：{status}"

@@ -63,7 +63,10 @@ async def _invoke_structured_output(
     model_name: str,
 ) -> BaseModel:
     """通过函数调用提交结构化结果，保留类型校验、流过滤标记和用量追踪。"""
-    model = llm.with_structured_output(schema, method="function_calling")
+    # 流式响应中途断开时重试完整调用，最多尝试三次。
+    model = llm.with_structured_output(
+        schema, method="function_calling"
+    ).with_retry(stop_after_attempt=3)
     with trace_generation(trace_name, model=model_name) as generation:
         response = await model.ainvoke(
             prompt, config={"tags": ["crypto_structured_output"]}
@@ -520,7 +523,6 @@ def build_dynamic_analysis_agent(
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
                     return {
                         "report": report,
-                        "messages": [AIMessage(content=report)],
                     }
                 ordered = sorted(
                     state["skill_results"], key=lambda item: item["skill_name"]
@@ -542,7 +544,6 @@ def build_dynamic_analysis_agent(
                 report = output.report
                 return {
                     "report": report,
-                    "messages": [AIMessage(content=report)],
                 }
             except Exception:
                 node_span.metadata["status"] = "error"
