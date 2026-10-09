@@ -23,7 +23,7 @@ _NODE_LABELS = {
     "crypto_analysis_agent": "加密货币研究",
     "topic_research_agent": "主题研究",
     "plan": "识别币种与规划工具",
-    "skill_worker": "执行技能",
+    "skill_worker": "执行维度",
     "research_team": "并行研究",
     "writer": "撰写报告",
     "reviewer": "审稿",
@@ -225,7 +225,7 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     elif node == "topic_research_agent":  # 显示通用研究完成进度。
         info["status"] = "主题研究已完成"  # 与技能分开展示。
     elif node == "crypto_analysis_agent":  # 显示技能分析完成进度。
-        info["status"] = "加密货币技能分析已完成"  # 保留币种分析语义。
+        info["status"] = "加密货币维度分析已完成"  # 保留币种分析语义。
     elif node == "researcher" and "findings" in delta:  # 显示单个子问题完成。
         info["status"] = (
             f"已分析：{delta['findings'][0]['question']}"  # 读取研究节点的结构化问题。
@@ -236,13 +236,13 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     elif node == "writer" and "report" in delta:
         info["status"] = f"报告已生成（{len(delta.get('report', ''))} 字）"
     elif node == "plan":  # 计划完成时显示模型识别的币种。
-        info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行技能"
+        info["status"] = f"已识别 {delta['scope']['target_asset']}，准备执行维度"
     elif node == "skill_worker":
         item = delta["skill_results"][0]
         status = "读取记忆" if item["cache_hit"] else "已生成"
         if not item["content"]:
             status = "暂无可展示内容"
-        info["status"] = f"技能 {item['name']}：{status}"
+        info["status"] = f"维度 {item['name']}：{status}"
     elif node == "summarize_history":
         info["status"] = "历史摘要已更新" if delta else "无需更新历史摘要"
     elif node == "reviewer":

@@ -117,7 +117,7 @@
 <body>
   <main class="container">
     <h1>研究分析 AI</h1>
-    <p class="subtitle">加密货币问题进入技能分析，其他主题进入模型知识研究。</p>
+    <p class="subtitle">加密货币问题进入维度分析，其他主题进入模型知识研究。</p>
 
     <form id="ask-form" class="input-row">
       <input id="question" type="text" maxlength="2000" required aria-label="分析问题" placeholder="例如：分析 BTC，或分析人工智能对教育的影响">
@@ -227,7 +227,7 @@
         reportEl.textContent += data.content;
       } else if (name === "done") {
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "技能分析内容（点击展开）";
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "维度分析内容（点击展开）";
         reportEl.classList.remove("blink");
         if (typeof data.report === "string" && data.report) {
           reportEl.classList.remove("placeholder");
@@ -239,7 +239,7 @@
               `${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
           : [];
         renderFindings(data.kind === "topic_research" ? data.findings : records);
-        if (data.target_asset) addProgress("标的", data.target_asset + " · 技能分析"); // 展示统一目标币种。
+        if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
         if (data.as_of) {
           // 内部保留 UTC，页面统一按北京时间展示到秒。
           const displayTime = new Intl.DateTimeFormat("sv-SE", {

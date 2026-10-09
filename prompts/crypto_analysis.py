@@ -86,7 +86,7 @@ def analysis_report_prompt(
 ) -> str:
     """仅依据技能内容和此前结论摘要撰写本轮整体结论。"""
     return (
-        "根据各技能内容、思想解读和历史摘要，用中文回答本轮问题并撰写整体结论，字数500字左右"
+        "根据各技能内容、思想解读和历史摘要，用中文回答本轮问题并撰写整体结论，字数500-600字左右"
         f"\n目标资产：{target_asset}；用户问题：{original_question}"
         f"\n各技能内容：\n{json.dumps(skill_results, ensure_ascii=False)}"
         f"\n此前结论摘要：\n{history_summary}"
@@ -95,17 +95,12 @@ def analysis_report_prompt(
 
 def history_summary_prompt(
     previous_summary: str,
-    target_asset: str,
-    original_question: str,
-    analysis_time: str,
     report: str,
 ) -> str:
     """只将本轮问题与结论纳入累计摘要，不重复保存技能表格。"""
     return (
-        "合并旧摘要与本轮问题、结论，生成同会话的中文历史摘要，不超过 300 字符"
+        "合并旧摘要与本轮结论，提炼【值得下次分析复用】的记忆摘要"
+        "。只返回摘要正文，不添加 JSON 包装或解释。"
         f"\n旧摘要：{previous_summary}"
-        f"\n本轮目标资产：{target_asset}"
-        f"\n本轮讨论时间：{analysis_time}"
-        f"\n本轮问题：{original_question}"
         f"\n本轮结论：{report}"
     )

@@ -55,10 +55,10 @@ class AnalysisReport(BaseModel):
 
 
 class HistorySummaryOutput(BaseModel):
-    """同会话累计结论摘要，限制长度以控制后续输入。"""
+    """同会话累计结论摘要，校验非空字符串。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    history_summary: str = Field(min_length=1, max_length=2000, strict=True)
+    history_summary: str = Field(min_length=1, strict=True)
 
 
 class DynamicAnalysisState(TypedDict, total=False):

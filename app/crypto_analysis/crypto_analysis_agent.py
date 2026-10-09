@@ -438,8 +438,8 @@ def build_dynamic_analysis_agent(
                     "target_asset": selection["target_asset"],
                 }
                 history_summary = state.get("history_summary", "")
-                if not isinstance(history_summary, str) or len(history_summary) > 2000:
-                    raise ValueError("历史摘要必须是不超过 2000 字符的字符串")
+                if not isinstance(history_summary, str):
+                    raise TypeError("历史摘要必须是字符串")
                 return {
                     "history_summary": history_summary,
                     "report": "",

@@ -18,10 +18,7 @@ from tenacity import (
 from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
-from app.crypto_analysis.crypto_analysis_agent import (
-    _invoke_structured_output,
-    build_dynamic_analysis_agent,
-)
+from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
 from app.crypto_analysis.crypto_analysis_state import HistorySummaryOutput
 from app.crypto_analysis.skill_memory import merge_skill_memory
 from app.observability import get_logger, timed_node
@@ -35,6 +32,20 @@ from prompts.routing import routing_prompt
 _LOG = get_logger("crypto_analysis.routing")
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    before_sleep=before_sleep_log(_LOG, logging.WARNING),
+    reraise=True,
+)
+@trace_generation_call(name="crypto_history_summary", model=settings.smart_model)
+async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
+    """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
+    response = await llm.ainvoke(prompt, config={"tags": ["crypto_history_summary"]})
+    output = HistorySummaryOutput(history_summary=response.content)
+    return output.history_summary
 
 
 class RouteDecision(BaseModel):
@@ -146,7 +157,9 @@ def build_routing_graph(
             RouteDecision, method="function_calling"
         ).ainvoke(messages)
         if not isinstance(decision, RouteDecision):
-            raise TypeError("路由模型未返回 RouteDecision 结构化结果")
+            return RouteDecision(
+                route="direct", direct_reply="暂时无法处理这次提问，请重试。"
+            )
         return decision
 
     @timed_node
@@ -159,19 +172,10 @@ def build_routing_graph(
             return {}
         prompt = history_summary_prompt(
             previous_summary=state.get("history_summary", ""),
-            target_asset=state["scope"]["target_asset"],
-            original_question=state["scope"]["resolved_question"],
-            analysis_time=state["scope"]["as_of"],
             report=state["report"],
         )
-        output = await _invoke_structured_output(
-            smart,
-            HistorySummaryOutput,
-            prompt,
-            "crypto_history_summary",
-            settings.smart_model,
-        )
-        return {"history_summary": output.history_summary}
+        summary = await _invoke_history_summary(smart, prompt)
+        return {"history_summary": summary}
 
     workflow = StateGraph(RoutingState)
     workflow.add_node("rewrite", rewrite)
