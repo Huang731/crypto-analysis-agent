@@ -236,7 +236,7 @@
         // 技能内容已经包含指标表格和思想解读，直接展示原文，不反解析数值。
         const records = Array.isArray(data.skill_results)
           ? data.skill_results.filter(skill => skill.content).map(skill =>
-              `${skill.name}${skill.cache_hit ? "（复用缓存）" : ""}\n\n${skill.content}`)
+              `${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
           : [];
         renderFindings(data.kind === "topic_research" ? data.findings : records);
         if (data.target_asset) addProgress("标的", data.target_asset + " · 技能分析"); // 展示统一目标币种。
