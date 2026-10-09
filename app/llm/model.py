@@ -99,8 +99,6 @@ def _make_model(model_name: str) -> LoggedChatOpenAI:
         model=model_name,
         api_key=api_key,
         base_url=base_url,
-        max_retries=0,
-        timeout=60,
         # 智谱兼容接口不支持此参数。
         disabled_params={"parallel_tool_calls": None},
     )

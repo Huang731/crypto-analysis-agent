@@ -4,7 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from math import fsum
-from typing import Any, TypeVar
+from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -53,23 +53,17 @@ from prompts.crypto_analysis import (
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
-_OutputT = TypeVar("_OutputT", bound=BaseModel)
 
 
 async def _invoke_structured_output(
     llm: Any,
-    schema: type[_OutputT],
+    schema: type[BaseModel],
     prompt: str,
     trace_name: str,
     model_name: str,
-) -> _OutputT:
-    """注入输出 Schema 并校验结果，保留流过滤标记和用量追踪。"""
-    # JSON 模式不向接口传递字段类型，需在提示词中明确完整输出约束。
-    prompt = (
-        f"{prompt}\n\n仅输出符合以下 JSON Schema 的 JSON 对象：\n"
-        f"{json.dumps(schema.model_json_schema(), ensure_ascii=False)}"
-    )
-    model = llm.with_structured_output(schema, method="json_mode")
+) -> BaseModel:
+    """通过函数调用提交结构化结果，保留类型校验、流过滤标记和用量追踪。"""
+    model = llm.with_structured_output(schema, method="function_calling")
     with trace_generation(trace_name, model=model_name) as generation:
         response = await model.ainvoke(
             prompt, config={"tags": ["crypto_structured_output"]}
@@ -122,11 +116,7 @@ async def create_analysis_plan(
     skill_descriptions: str,
 ) -> dict[str, Any]:
     """LLM 根据任务和技能描述选择资产、研究重点与所需 Skill。"""
-    prompt = analysis_plan_prompt(
-        json.dumps(AnalysisPlan.model_json_schema(), ensure_ascii=False),
-        skill_descriptions,
-        question,
-    )
+    prompt = analysis_plan_prompt(skill_descriptions, question)
     plan = await _invoke_structured_output(
         llm,
         AnalysisPlan,
