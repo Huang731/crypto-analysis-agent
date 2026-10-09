@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
-    AnalysisConclusion,
+    AnalysisReport,
     DynamicAnalysisState,
     HistorySummaryOutput,
     MetricAgentState,
@@ -426,7 +426,6 @@ def build_dynamic_analysis_agent(
                     raise ValueError("历史摘要必须是不超过 2000 字符的字符串")
                 return {
                     "history_summary": history_summary,
-                    "conclusion": "",
                     "report": "",
                     "skill_sources": skill_loader.snapshot(),
                     "plan": selection,
@@ -514,13 +513,12 @@ def build_dynamic_analysis_agent(
 
     @timed_node
     async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
-        """只撰写结论，由程序原样拼接技能展示内容。"""
+        """依据技能内容与历史摘要撰写结论，报告只包含结论正文。"""
         with trace_span("crypto.writer") as node_span:
             try:
                 if not state["plan"]["skill_names"]:
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
                     return {
-                        "conclusion": "",
                         "report": report,
                         "messages": [AIMessage(content=report)],
                     }
@@ -536,20 +534,13 @@ def build_dynamic_analysis_agent(
                 )
                 output = await _invoke_structured_output(
                     smart_llm,
-                    AnalysisConclusion,
+                    AnalysisReport,
                     prompt,
                     "crypto_analysis_writer",
                     settings.smart_model,
                 )
-                sections = [
-                    f"## {item['name']}\n\n{item['content']}"
-                    for item in ordered
-                    if item["content"]
-                ]
-                sections.append(f"## 整体结论\n\n{output.conclusion}")
-                report = "\n\n".join(sections)
+                report = output.report
                 return {
-                    "conclusion": output.conclusion,
                     "report": report,
                     "messages": [AIMessage(content=report)],
                 }
@@ -560,14 +551,15 @@ def build_dynamic_analysis_agent(
     @timed_node
     async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
         """在结论完成后更新摘要，不将全部表格重复写入历史。"""
-        if not state["conclusion"]:
+        # 无适用技能时报告为提示语，不纳入历史分析摘要。
+        if not state["plan"]["skill_names"]:
             return {}
         prompt = history_summary_prompt(
             previous_summary=state["history_summary"],
             target_asset=state["scope"]["target_asset"],
             original_question=state["scope"]["resolved_question"],
             analysis_time=state["scope"]["as_of"],
-            conclusion=state["conclusion"],
+            report=state["report"],
         )
         output = await _invoke_structured_output(
             fast_llm,

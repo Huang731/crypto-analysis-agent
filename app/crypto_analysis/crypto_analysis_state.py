@@ -48,11 +48,11 @@ class SkillOutput(BaseModel):
     content: str = Field(min_length=1, strict=True)
 
 
-class AnalysisConclusion(BaseModel):
-    """结论模型不重复输出技能表格。"""
+class AnalysisReport(BaseModel):
+    """报告模型只输出整体结论。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    conclusion: str = Field(min_length=1, strict=True)
+    report: str = Field(min_length=1, strict=True)
 
 
 class HistorySummaryOutput(BaseModel):
@@ -70,7 +70,6 @@ class DynamicAnalysisState(TypedDict, total=False):
     skill_results: Annotated[list[SkillResult], operator.add]
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
     history_summary: str
-    conclusion: str
     report: str
 
 

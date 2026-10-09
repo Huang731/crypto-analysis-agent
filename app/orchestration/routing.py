@@ -23,7 +23,6 @@ from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.routing import routing_prompt
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
-_ROUTE_TIMEOUT_SECONDS = 60
 
 
 class RouteDecision(BaseModel):
@@ -93,7 +92,7 @@ def build_routing_graph(
     crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
     topic_agent = build_topic_research_agent(smart, fast)
     # 结构化结果包含字段组合校验；调用失败直接向上报告，不进入专家。
-    route_model = fast.with_structured_output(RouteDecision, method="json_mode")
+    route_model = fast.with_structured_output(RouteDecision, method="function_calling")
 
     async def rewrite(state: RoutingState) -> dict[str, Any]:
         """仅规范改写本轮问题，保留用户原话，不生成或注入历史摘要。"""
@@ -115,10 +114,7 @@ def build_routing_graph(
         with trace_generation(
             "routing_decision", model=settings.smart_model
         ) as generation:
-            decision = await asyncio.wait_for(
-                route_model.ainvoke(messages),
-                timeout=_ROUTE_TIMEOUT_SECONDS,
-            )
+            decision = await fast.with_structured_output(RouteDecision, method="function_calling").ainvoke(messages)
             if not isinstance(decision, RouteDecision):
                 raise TypeError("路由模型未返回 RouteDecision 结构化结果")
             # 沿用项目估算口径，仅统计本次输入和最终有效的结构化结果。

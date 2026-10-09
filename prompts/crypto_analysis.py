@@ -84,7 +84,7 @@ def history_summary_prompt(
     target_asset: str,
     original_question: str,
     analysis_time: str,
-    conclusion: str,
+    report: str,
 ) -> str:
     """只将本轮问题与结论纳入累计摘要，不重复保存技能表格。"""
     return (
@@ -93,5 +93,5 @@ def history_summary_prompt(
         f"\n本轮目标资产：{target_asset}"
         f"\n本轮讨论时间：{analysis_time}"
         f"\n本轮问题：{original_question}"
-        f"\n本轮结论：{conclusion}"
+        f"\n本轮结论：{report}"
     )
