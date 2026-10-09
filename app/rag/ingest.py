@@ -14,6 +14,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 import faiss
 
@@ -32,7 +33,7 @@ from langchain_core.documents import Document
 
 from app.config.config import settings
 from app.rag.loader import file_md5, list_documents, load_and_split
-from app.tracing import estimate_tokens, start_trace, trace_generation, trace_span
+from app.tracing import start_trace, trace_generation_call, trace_span
 
 
 @contextmanager
@@ -158,26 +159,37 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
     step = settings.embed_batch_size
     for i in range(0, len(docs), step):
         batch = docs[i : i + step]
-        with trace_generation(
-            "ingest.embedding",
-            model=settings.embedding_model,
-            batch_index=i // step + 1,
-            chunk_count=len(batch),
-        ) as generation:
-            try:
-                vs.add_documents(batch, ids=ids[i : i + step])
-            except Exception as exc:
-                generation.metadata.update(
-                    status="error", error_type=type(exc).__name__
-                )
-                raise
-            # 向量化接口未返回用量，此处仅估算输入 token；向量不计为输出 token。
-            generation.usage = {
-                "input": sum(estimate_tokens(doc.page_content) for doc in batch),
-                "output": 0,
-                "unit": "TOKENS",
-            }
-            generation.metadata["status"] = "done"
+        _embed_batch(vs, batch, ids[i : i + step], i // step + 1)
+
+
+@trace_generation_call(
+    name="ingest.embedding",
+    model=settings.embedding_model,
+    input_arg="batch",
+    input_format="documents",
+    output_format="none",
+    metadata=lambda arguments: {
+        "batch_index": arguments.arguments["batch_index"],
+        "chunk_count": len(arguments.arguments["batch"]),
+    },
+    generation_arg="generation",
+    unit="TOKENS",
+)
+def _embed_batch(
+    vs: FAISS,
+    batch: list[Document],
+    ids: list[str],
+    batch_index: int,
+    *,
+    generation: Any,
+) -> None:
+    """沿用批次入库与异常标记，输入用量由装饰器逐条估算。"""
+    try:
+        vs.add_documents(batch, ids=ids)
+    except Exception as exc:
+        generation.metadata.update(status="error", error_type=type(exc).__name__)
+        raise
+    generation.metadata["status"] = "done"
 
 
 def ingest_directory(

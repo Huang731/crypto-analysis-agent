@@ -1,6 +1,5 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-import json
 import logging
 from typing import Annotated, Any, Literal
 
@@ -29,7 +28,7 @@ from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
-from app.tracing import estimate_tokens, trace_generation, trace_span
+from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import history_summary_prompt
 from prompts.routing import routing_prompt
 
@@ -129,25 +128,26 @@ def build_routing_graph(
             SystemMessage(content=routing_prompt()),
             HumanMessage(content=state["resolved_question"]),
         ]
-        with trace_generation(
-            "routing_decision", model=settings.smart_model
-        ) as generation:
-            decision = await fast.with_structured_output(
-                RouteDecision, method="function_calling"
-            ).ainvoke(messages)
-            if not isinstance(decision, RouteDecision):
-                raise TypeError("路由模型未返回 RouteDecision 结构化结果")
-            # 沿用项目估算口径，仅统计本次输入和最终有效的结构化结果。
-            generation.usage = {
-                "input": estimate_tokens(
-                    json.dumps(
-                        [message.model_dump(mode="json") for message in messages],
-                        ensure_ascii=False,
-                    )
-                ),
-                "output": estimate_tokens(decision.model_dump_json()),
-            }
+        decision = await route_decision(messages)
         return decision.model_dump()
+
+    @trace_generation_call(
+        name="routing_decision",
+        model=settings.smart_model,
+        input_arg="messages",
+        input_format="messages",
+        output_format="json",
+    )
+    async def route_decision(
+        messages: list[SystemMessage | HumanMessage],
+    ) -> RouteDecision:
+        """沿用路由结构化结果校验，追踪范围只覆盖模型调用和校验。"""
+        decision = await fast.with_structured_output(
+            RouteDecision, method="function_calling"
+        ).ainvoke(messages)
+        if not isinstance(decision, RouteDecision):
+            raise TypeError("路由模型未返回 RouteDecision 结构化结果")
+        return decision
 
     @timed_node
     async def summarize_history(state: RoutingState) -> dict[str, str]:

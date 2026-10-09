@@ -41,9 +41,8 @@ from app.topic_research.topic_research_state import (  # 使用主题研究专�
     SystemState,
 )
 from app.tracing import (  # 记录请求与模型调用。
-    estimate_tokens,
     start_trace,
-    trace_generation,
+    trace_generation_call,
     trace_span,
 )
 from app.web_search_tool import build_web_search_tools
@@ -88,19 +87,9 @@ def make_split(
         with trace_span("topic.split") as node_span:
             try:
                 prompt = split_prompt(state["question"])  # 提供原始研究主题。
-                with trace_generation(
-                    "topic_split", model=settings.fast_model
-                ) as generation:  # 记录拆题模型调用。
-                    response = await _invoke_model(
-                        fast_llm, prompt
-                    )  # 让快模型生成子问题。
-                    if isinstance(
-                        response.content, str
-                    ):  # 仅文本输出可估算 token 用量。
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }  # 估算输入输出用量。
+                response = await _invoke_traced_model(
+                    fast_llm, prompt, "topic_split", settings.fast_model
+                )
                 if not isinstance(response.content, str):  # 消息内容必须是文本。
                     raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
                 subquestions = [  # 按行读取研究任务。
@@ -137,39 +126,36 @@ async def _invoke_model(llm: Any, prompt: str) -> Any:
     )
 
 
+@trace_generation_call(
+    name=lambda arguments: arguments.arguments["trace_name"],
+    model=lambda arguments: arguments.arguments["model_name"],
+    output_attr="content",
+    skip_non_text_output=True,
+)
+async def _invoke_traced_model(
+    llm: Any, prompt: str, trace_name: str, model_name: str
+) -> Any:
+    """保留整体重试统计与非文本用量未知的处理。"""
+    return await _invoke_model(llm, prompt)
+
+
 class ResearchModelTrace(AgentMiddleware):
     """逐轮记录工具决策模型调用，并限制单轮等待时间。"""
 
+    @trace_generation_call(
+        name="topic_researcher",
+        model=settings.fast_model,
+        input_arg="request",
+        input_format="model_request",
+        output_attr="result",
+        output_format="messages",
+    )
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        with trace_generation(
-            "topic_researcher", model=settings.fast_model
-        ) as generation:
-            response = await asyncio.wait_for(handler(request), timeout=60)
-            messages = [*request.messages]
-            if request.system_message is not None:
-                messages.insert(0, request.system_message)
-            generation.usage = {
-                "input": estimate_tokens(
-                    json.dumps(
-                        [message.model_dump(mode="json") for message in messages],
-                        ensure_ascii=False,
-                    )
-                ),
-                "output": estimate_tokens(
-                    json.dumps(
-                        [
-                            message.model_dump(mode="json")
-                            for message in response.result
-                        ],
-                        ensure_ascii=False,
-                    )
-                ),
-            }
-            return response
+        return await asyncio.wait_for(handler(request), timeout=60)
 
     async def awrap_tool_call(
         self,
@@ -324,19 +310,9 @@ def make_summarize(
                 prompt = summarize_prompt(
                     json.dumps(findings, ensure_ascii=False)
                 )  # 提供全部并行结果。
-                with trace_generation(
-                    "topic_summarize", model=settings.smart_model
-                ) as generation:  # 记录汇总模型调用。
-                    response = await _invoke_model(
-                        smart_llm, prompt
-                    )  # 调用主模型生成摘要。
-                    if isinstance(
-                        response.content, str
-                    ):  # 仅文本输出可估算 token 用量。
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }  # 估算输入输出用量。
+                response = await _invoke_traced_model(
+                    smart_llm, prompt, "topic_summarize", settings.smart_model
+                )
                 if (
                     not isinstance(response.content, str)
                     or not response.content.strip()
@@ -413,19 +389,9 @@ def make_writer(
                     feedback,
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
-                with trace_generation(
-                    "topic_writer", model=settings.smart_model
-                ) as generation:  # 记录写作模型调用。
-                    response = await _invoke_model(
-                        smart_llm, prompt
-                    )  # 主模型撰写报告。
-                    if isinstance(
-                        response.content, str
-                    ):  # 仅文本输出可估算 token 用量。
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }  # 估算输入输出用量。
+                response = await _invoke_traced_model(
+                    smart_llm, prompt, "topic_writer", settings.smart_model
+                )
                 if (
                     not isinstance(response.content, str)
                     or not response.content.strip()
@@ -466,19 +432,9 @@ def make_reviewer(
                     _latest_question(state["scope"]),
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 提供实际生成的报告。
-                with trace_generation(
-                    "topic_reviewer", model=settings.smart_model
-                ) as generation:  # 记录审稿模型调用。
-                    response = await _invoke_model(
-                        smart_llm, prompt
-                    )  # 主模型评估报告。
-                    if isinstance(
-                        response.content, str
-                    ):  # 仅文本输出可估算 token 用量。
-                        generation.usage = {
-                            "input": estimate_tokens(prompt),
-                            "output": estimate_tokens(response.content),
-                        }  # 估算输入输出用量。
+                response = await _invoke_traced_model(
+                    smart_llm, prompt, "topic_reviewer", settings.smart_model
+                )
                 if (
                     not isinstance(response.content, str)
                     or not response.content.strip()

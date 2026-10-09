@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from http import HTTPStatus
+from typing import Any
 
 import jieba
 from dashscope import TextReRank
@@ -15,7 +16,7 @@ from langchain_core.retrievers import BaseRetriever
 from app.config.config import settings
 from app.llm.model import make_fast_llm
 from app.rag.ingest import get_vectorstore
-from app.tracing import trace_generation, trace_span
+from app.tracing import trace_generation_call, trace_span
 
 
 def _tokenize_zh(text: str) -> list[str]:
@@ -70,6 +71,30 @@ def build_hybrid_retriever() -> BaseRetriever:
             raise
 
 
+@trace_generation_call(
+    name="rag.rerank",
+    model=settings.rerank_model,
+    usage_attr="usage.total_tokens",
+    metadata=lambda arguments: {"candidate_count": len(arguments.arguments["docs"])},
+    generation_arg="generation",
+)
+def _call_rerank(query: str, docs: list[Document], *, generation: Any) -> Any:
+    """保留重排返回值检查，用量直接采用接口返回的总输入 token。"""
+    resp = TextReRank.call(
+        api_key=settings.dashscope_api_key,
+        model=settings.rerank_model,
+        query=query,
+        documents=[doc.page_content for doc in docs],
+        top_n=len(docs),
+        return_documents=False,
+    )
+    if resp.status_code != HTTPStatus.OK:
+        generation.metadata["status"] = "error"
+        raise RuntimeError(f"百炼重排失败：{resp.code}，{resp.message}")
+    generation.output = {"result_count": len(resp.output.results)}
+    return resp
+
+
 def rerank_documents(
     query: str,
     docs: list[Document],
@@ -89,24 +114,8 @@ def rerank_documents(
             if not settings.dashscope_api_key:
                 raise ValueError("百炼重排需要配置 DASHSCOPE_API_KEY")
 
-            with trace_generation(
-                "rag.rerank", model=settings.rerank_model, candidate_count=len(docs)
-            ) as generation:
-                resp = TextReRank.call(
-                    api_key=settings.dashscope_api_key,
-                    model=settings.rerank_model,
-                    query=query,
-                    documents=[doc.page_content for doc in docs],
-                    top_n=len(docs),  # 获取全部分数，在本地统一排序和截断。
-                    return_documents=False,
-                )
-                if resp.status_code != HTTPStatus.OK:
-                    generation.metadata["status"] = "error"
-                    raise RuntimeError(f"百炼重排失败：{resp.code}，{resp.message}")
-                results = resp.output.results
-                # 重排只产生相关性分数，用量采用接口返回的总输入 token。
-                generation.usage = {"input": resp.usage.total_tokens, "output": 0}
-                generation.output = {"result_count": len(results)}
+            resp = _call_rerank(query, docs)
+            results = resp.output.results
             ordered = sorted(results, key=lambda r: (-r.relevance_score, r.index))[
                 :top_n
             ]

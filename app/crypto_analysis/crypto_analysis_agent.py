@@ -1,6 +1,5 @@
 """加密货币分析：请求规划、技能执行、并行汇总及报告生成。"""
 
-import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -47,7 +46,7 @@ from app.crypto_analysis.skill_memory import (
 from app.crypto_analysis.tools.registry import get_tool_registry
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
-from app.tracing import estimate_tokens, trace_generation, trace_span
+from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
@@ -75,17 +74,28 @@ async def _invoke_structured_output(
 ) -> BaseModel:
     """函数调用、解析和类型校验整体重试，保留流标记和用量追踪。"""
     model = llm.with_structured_output(schema, method="function_calling")
-    with trace_generation(trace_name, model=model_name) as generation:
-        response = await model.ainvoke(
-            prompt, config={"tags": ["crypto_structured_output"]}
-        )
-        if not isinstance(response, schema):
-            raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
-        generation.usage = {
-            "input": estimate_tokens(prompt),
-            "output": estimate_tokens(response.model_dump_json()),
-        }
-        return response
+    return await _invoke_structured_model(model, schema, prompt, trace_name, model_name)
+
+
+@trace_generation_call(
+    name=lambda arguments: arguments.arguments["trace_name"],
+    model=lambda arguments: arguments.arguments["model_name"],
+    output_format="json",
+)
+async def _invoke_structured_model(
+    model: Any,
+    schema: type[BaseModel],
+    prompt: str,
+    trace_name: str,
+    model_name: str,
+) -> BaseModel:
+    """保留模型结果的类型校验，由装饰器记录本次调用用量。"""
+    response = await model.ainvoke(
+        prompt, config={"tags": ["crypto_structured_output"]}
+    )
+    if not isinstance(response, schema):
+        raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
+    return response
 
 
 # 请求规划模型
@@ -167,36 +177,20 @@ class MetricModelTrace(AgentMiddleware):
     def __init__(self, model_name: str = settings.fast_model) -> None:
         self.model_name = model_name
 
+    @trace_generation_call(
+        name="crypto_metric_decision",
+        model=lambda arguments: arguments.arguments["self"].model_name,
+        input_arg="request",
+        input_format="model_request",
+        output_attr="result",
+        output_format="messages",
+    )
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        with trace_generation(
-            "crypto_metric_decision", model=self.model_name
-        ) as generation:
-            response = await handler(request)
-            messages = [*request.messages]
-            if request.system_message is not None:
-                messages.insert(0, request.system_message)
-            generation.usage = {
-                "input": estimate_tokens(
-                    json.dumps(
-                        [message.model_dump(mode="json") for message in messages],
-                        ensure_ascii=False,
-                    )
-                ),
-                "output": estimate_tokens(
-                    json.dumps(
-                        [
-                            message.model_dump(mode="json")
-                            for message in response.result
-                        ],
-                        ensure_ascii=False,
-                    )
-                ),
-            }
-            return response
+        return await handler(request)
 
 
 def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
@@ -383,18 +377,17 @@ async def _generate_skill_content(
         output_template=skill_loader.load_analysis_output(skill.name),
     )
     # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
-    with trace_generation(
-        "crypto_skill_output", model=settings.smart_model
-    ) as generation:
-        response = await llm.with_retry(stop_after_attempt=2).ainvoke(
-            prompt, config={"tags": ["crypto_skill_output"]}
-        )
-        output = SkillOutput(content=response.content)
-        generation.usage = {
-            "input": estimate_tokens(prompt),
-            "output": estimate_tokens(output.content),
-        }
-        return output.content
+    return await _invoke_skill_output(llm, prompt)
+
+
+@trace_generation_call(name="crypto_skill_output", model=settings.smart_model)
+async def _invoke_skill_output(llm: Any, prompt: str) -> str:
+    """沿用技能文本校验与重试，用量统一由装饰器记录。"""
+    response = await llm.with_retry(stop_after_attempt=2).ainvoke(
+        prompt, config={"tags": ["crypto_skill_output"]}
+    )
+    output = SkillOutput(content=response.content)
+    return output.content
 
 
 def _build_skill_update(

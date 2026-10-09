@@ -7,13 +7,16 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any
+from functools import wraps
+from inspect import BoundArguments, iscoroutinefunction, signature
+from typing import Any, Literal, TypeVar, cast
 
 from app.config.config import settings
 
@@ -219,6 +222,133 @@ def trace_generation(name: str, model: str, **meta: Any) -> Iterator[Any]:
     """
     with _ConsoleBackend().generation(name, model=model, **meta) as g:
         yield g
+
+
+_TraceFunction = TypeVar("_TraceFunction", bound=Callable[..., Any])
+_TraceLabel = str | Callable[[BoundArguments], str]
+_TraceFormat = Literal["text", "messages", "json", "model_request"]
+
+
+def _trace_text(value: Any, value_format: _TraceFormat) -> str:
+    """按明确配置序列化，不猜测输入或输出的类型。"""
+    if value_format == "text":
+        if not isinstance(value, str):
+            raise TypeError("Trace 文本统计要求字符串")
+        return value
+    if value_format == "json":
+        return value.model_dump_json()
+    if value_format == "model_request":
+        messages = [*value.messages]
+        if value.system_message is not None:
+            messages.insert(0, value.system_message)
+        value = messages
+    elif value_format != "messages":
+        raise ValueError(f"不支持的 Trace 序列化格式：{value_format}")
+    return json.dumps(
+        [message.model_dump(mode="json") for message in value],
+        ensure_ascii=False,
+    )
+
+
+def _trace_attribute(value: Any, path: str) -> Any:
+    """按配置读取字段路径，缺失字段直接报错。"""
+    for name in path.split("."):
+        value = getattr(value, name)
+    return value
+
+
+def trace_generation_call(
+    name: _TraceLabel,
+    model: _TraceLabel,
+    *,
+    input_arg: str = "prompt",
+    input_format: _TraceFormat | Literal["documents"] = "text",
+    output_attr: str | None = None,
+    output_format: _TraceFormat | Literal["none"] = "text",
+    usage_attr: str | None = None,
+    metadata: Callable[[BoundArguments], dict[str, Any]] | None = None,
+    generation_arg: str | None = None,
+    skip_non_text_output: bool = False,
+    unit: str | None = None,
+) -> Callable[[_TraceFunction], _TraceFunction]:
+    """统一同步与异步调用追踪，按配置统计用量，保留返回值和异常。"""
+
+    def decorate(func: _TraceFunction) -> _TraceFunction:
+        func_signature = signature(func)
+
+        def prepare(args: tuple[Any, ...], kwargs: dict[str, Any]) -> BoundArguments:
+            # 仅 SDK 边界注入 generation，保留原有元数据和结果摘要写入。
+            if generation_arg is not None:
+                kwargs = {**kwargs, generation_arg: None}
+            arguments = func_signature.bind(*args, **kwargs)
+            arguments.apply_defaults()
+            return arguments
+
+        def finish(generation: _Span, arguments: BoundArguments, output: Any) -> None:
+            if usage_attr is not None:
+                generation.usage = {
+                    "input": _trace_attribute(output, usage_attr),
+                    "output": 0,
+                }
+                return
+            output_value = (
+                _trace_attribute(output, output_attr)
+                if output_attr is not None
+                else output
+            )
+            # 主题研究原本只统计文本响应，非文本保持用量未知，由调用方校验。
+            if skip_non_text_output and not isinstance(output_value, str):
+                return
+            input_value = arguments.arguments[input_arg]
+            input_tokens = (
+                sum(estimate_tokens(doc.page_content) for doc in input_value)
+                if input_format == "documents"
+                else estimate_tokens(_trace_text(input_value, input_format))
+            )
+            generation.usage = {
+                "input": input_tokens,
+                "output": (
+                    0
+                    if output_format == "none"
+                    else estimate_tokens(_trace_text(output_value, output_format))
+                ),
+            }
+            if unit is not None:
+                generation.usage["unit"] = unit
+
+        def context(arguments: BoundArguments) -> Any:
+            trace_name = name(arguments) if callable(name) else name
+            model_name = model(arguments) if callable(model) else model
+            meta = metadata(arguments) if metadata is not None else {}
+            return trace_generation(trace_name, model=model_name, **meta)
+
+        if iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                arguments = prepare(args, kwargs)
+                with context(arguments) as generation:
+                    if generation_arg is not None:
+                        arguments.arguments[generation_arg] = generation
+                    output = await func(*arguments.args, **arguments.kwargs)
+                    finish(generation, arguments, output)
+                    return output
+
+            return cast(_TraceFunction, async_wrapper)
+
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            arguments = prepare(args, kwargs)
+            with context(arguments) as generation:
+                if generation_arg is not None:
+                    arguments.arguments[generation_arg] = generation
+                output = func(*arguments.args, **arguments.kwargs)
+                finish(generation, arguments, output)
+                return output
+
+        return cast(_TraceFunction, sync_wrapper)
+
+    return decorate
 
 
 @contextmanager
