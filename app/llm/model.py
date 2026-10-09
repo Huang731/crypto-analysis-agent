@@ -99,6 +99,9 @@ def _make_model(model_name: str) -> LoggedChatOpenAI:
         model=model_name,
         api_key=api_key,
         base_url=base_url,
+        # 重试由调用层统一控制，避免 SDK 重试与调用层叠加。
+        max_retries=0,
+        timeout=120,
         # 智谱兼容接口不支持此参数。
         disabled_params={"parallel_tool_calls": None},
     )

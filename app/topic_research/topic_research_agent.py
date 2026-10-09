@@ -12,6 +12,7 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelCallLimitMiddleware,
+    ModelRetryMiddleware,
     ToolCallLimitMiddleware,
 )
 from langchain.agents.middleware.types import (
@@ -28,6 +29,7 @@ from langgraph.graph import END, START, StateGraph  # 保留原有父图和子�
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
 from langgraph.types import Command, Send  # 并行分派研究子问题。
 from playwright.async_api import Error as BrowserError
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
 from app.config.config import settings  # 读取模型配置用于成本估算。
@@ -122,8 +124,13 @@ def make_split(
     return split  # 返回可注册到子图的节点。
 
 
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
 async def _invoke_model(llm: Any, prompt: str) -> Any:
-    """为专题研究的单次模型调用设置超时，失败直接向上报告。"""
+    """每次调用保留超时，失败最多尝试两次，耗尽后向上报告。"""
     return await asyncio.wait_for(
         llm.ainvoke(prompt),
         timeout=120,
@@ -214,6 +221,9 @@ def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
             ),
             ToolCallLimitMiddleware(
                 run_limit=settings.browser_max_steps * 2, exit_behavior="error"
+            ),
+            ModelRetryMiddleware(
+                max_retries=1, retry_on=(Exception,), on_failure="error"
             ),
             ResearchModelTrace(),
         ],

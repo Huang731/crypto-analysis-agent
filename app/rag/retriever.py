@@ -62,7 +62,7 @@ def build_hybrid_retriever() -> BaseRetriever:
             if settings.enable_multi_query:
                 return MultiQueryRetriever.from_llm(
                     retriever=hybrid,
-                    llm=make_fast_llm(),
+                    llm=make_fast_llm().with_retry(stop_after_attempt=2),
                 )
             return hybrid
         except Exception:

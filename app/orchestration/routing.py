@@ -1,6 +1,5 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-import asyncio
 import json
 from typing import Annotated, Any, Literal
 
@@ -13,12 +12,18 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
-from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
+from app.crypto_analysis.crypto_analysis_agent import (
+    _invoke_structured_output,
+    build_dynamic_analysis_agent,
+)
+from app.crypto_analysis.crypto_analysis_state import HistorySummaryOutput
 from app.crypto_analysis.skill_memory import merge_skill_memory
+from app.observability import timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import estimate_tokens, trace_generation, trace_span
+from prompts.crypto_analysis import history_summary_prompt
 from prompts.routing import routing_prompt
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
@@ -52,8 +57,10 @@ class RoutingState(TypedDict, total=False):
     resolved_question: str
     # 同会话各技能的指标表格与思想体系解读，按原共享范围和技能名保存。
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
-    # 加密分析分支更新累计结论摘要，其余分支保持已有内容。
+    # 父图更新加密分析的累计结论摘要，其余分支保持已有内容。
     history_summary: str
+    # 承接加密分析计划，沿用无适用技能时不更新摘要的条件。
+    plan: dict[str, Any]
     # 本轮路由目标：加密分析、主题研究或直接回复。
     route: RouteTarget
     # 直接回复分支的正文；进入专家分支时为空字符串。
@@ -85,20 +92,22 @@ def build_routing_graph(
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
     crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
     topic_agent = build_topic_research_agent(smart, fast)
-    # 结构化结果包含字段组合校验；调用失败直接向上报告，不进入专家。
-    route_model = fast.with_structured_output(RouteDecision, method="function_calling")
 
+    @timed_node
     async def rewrite(state: RoutingState) -> dict[str, Any]:
-        """仅规范改写本轮问题，保留用户原话，不生成或注入历史摘要。"""
+        """结合父图历史摘要补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
         with trace_span("question_rewriter", question_chars=len(original)) as span:
-            question = await rewrite_question(fast, original)
+            question = await rewrite_question(
+                fast, original, state.get("history_summary", "")
+            )
             span.metadata["rewritten_chars"] = len(question)
         return {
             "resolved_question": question,
             "scope": {**state["scope"], "resolved_question": question},
         }
 
+    @timed_node
     async def router(state: RoutingState) -> dict[str, Any]:
         """在固定超时内识别意图，异常由图和现有请求日志向上报告。"""
         messages = [
@@ -108,7 +117,11 @@ def build_routing_graph(
         with trace_generation(
             "routing_decision", model=settings.smart_model
         ) as generation:
-            decision = await fast.with_structured_output(RouteDecision, method="function_calling").ainvoke(messages)
+            decision = await (
+                fast.with_structured_output(RouteDecision, method="function_calling")
+                .with_retry(stop_after_attempt=2)
+                .ainvoke(messages)
+            )
             if not isinstance(decision, RouteDecision):
                 raise TypeError("路由模型未返回 RouteDecision 结构化结果")
             # 沿用项目估算口径，仅统计本次输入和最终有效的结构化结果。
@@ -123,12 +136,37 @@ def build_routing_graph(
             }
         return decision.model_dump()
 
+    @timed_node
+    async def summarize_history(state: RoutingState) -> dict[str, str]:
+        """在父图报告整理完成后，沿用加密分析的历史摘要更新规则。"""
+        if (
+            state["route"] != "crypto_analysis_agent"
+            or not state["plan"]["skill_names"]
+        ):
+            return {}
+        prompt = history_summary_prompt(
+            previous_summary=state.get("history_summary", ""),
+            target_asset=state["scope"]["target_asset"],
+            original_question=state["scope"]["resolved_question"],
+            analysis_time=state["scope"]["as_of"],
+            report=state["report"],
+        )
+        output = await _invoke_structured_output(
+            fast,
+            HistorySummaryOutput,
+            prompt,
+            "crypto_history_summary",
+            settings.fast_model,
+        )
+        return {"history_summary": output.history_summary}
+
     workflow = StateGraph(RoutingState)
     workflow.add_node("rewrite", rewrite)
     workflow.add_node("router", router)
     workflow.add_node("crypto_analysis_agent", crypto_agent)
     workflow.add_node("topic_research_agent", topic_agent)
     workflow.add_node("finalize", finalize_report)
+    workflow.add_node("summarize_history", summarize_history)
     workflow.add_edge(START, "rewrite")
     workflow.add_edge("rewrite", "router")
     workflow.add_conditional_edges(
@@ -142,5 +180,6 @@ def build_routing_graph(
     )
     workflow.add_edge("crypto_analysis_agent", "finalize")
     workflow.add_edge("topic_research_agent", "finalize")
-    workflow.add_edge("finalize", END)
+    workflow.add_edge("finalize", "summarize_history")
+    workflow.add_edge("summarize_history", END)
     return workflow.compile(checkpointer=checkpointer, name="research_routing")

@@ -7,7 +7,7 @@ from math import fsum
 from typing import Any
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
@@ -19,7 +19,6 @@ from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
     AnalysisReport,
     DynamicAnalysisState,
-    HistorySummaryOutput,
     MetricAgentState,
     MetricToolContext,
     SkillOutput,
@@ -45,7 +44,6 @@ from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
-    history_summary_prompt,
     metric_agent_system_prompt,
     metric_execution_prompt,
     skill_output_prompt,
@@ -63,10 +61,10 @@ async def _invoke_structured_output(
     model_name: str,
 ) -> BaseModel:
     """通过函数调用提交结构化结果，保留类型校验、流过滤标记和用量追踪。"""
-    # 流式响应中途断开时重试完整调用，最多尝试三次。
-    model = llm.with_structured_output(
-        schema, method="function_calling"
-    ).with_retry(stop_after_attempt=3)
+    # 流式响应中途断开时重试完整调用，最多尝试两次。
+    model = llm.with_structured_output(schema, method="function_calling").with_retry(
+        stop_after_attempt=2
+    )
     with trace_generation(trace_name, model=model_name) as generation:
         response = await model.ainvoke(
             prompt, config={"tags": ["crypto_structured_output"]}
@@ -203,7 +201,13 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
         # 声明 skill 与 scope，工具才能读取币种，且模型不能修改。
         context_schema=MetricToolContext,
         system_prompt=metric_agent_system_prompt(),
-        middleware=[MetricCompletionMiddleware(), MetricModelTrace()],
+        middleware=[
+            MetricCompletionMiddleware(),
+            ModelRetryMiddleware(
+                max_retries=1, retry_on=(Exception,), on_failure="error"
+            ),
+            MetricModelTrace(),
+        ],
     )
 
 
@@ -372,7 +376,9 @@ async def _generate_skill_content(
     with trace_generation(
         "crypto_skill_output", model=settings.smart_model
     ) as generation:
-        response = await llm.ainvoke(prompt, config={"tags": ["crypto_skill_output"]})
+        response = await llm.with_retry(stop_after_attempt=2).ainvoke(
+            prompt, config={"tags": ["crypto_skill_output"]}
+        )
         output = SkillOutput(content=response.content)
         generation.usage = {
             "input": estimate_tokens(prompt),
@@ -557,36 +563,12 @@ def build_dynamic_analysis_agent(
                 node_span.metadata["status"] = "error"
                 raise
 
-    @timed_node
-    async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
-        """在结论完成后更新摘要，不将全部表格重复写入历史。"""
-        # 无适用技能时报告为提示语，不纳入历史分析摘要。
-        if not state["plan"]["skill_names"]:
-            return {}
-        prompt = history_summary_prompt(
-            previous_summary=state["history_summary"],
-            target_asset=state["scope"]["target_asset"],
-            original_question=state["scope"]["resolved_question"],
-            analysis_time=state["scope"]["as_of"],
-            report=state["report"],
-        )
-        output = await _invoke_structured_output(
-            fast_llm,
-            HistorySummaryOutput,
-            prompt,
-            "crypto_history_summary",
-            settings.fast_model,
-        )
-        return {"history_summary": output.history_summary}
-
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", plan)
     builder.add_node("skill_worker", skill_worker)
     builder.add_node("writer", writer)
-    builder.add_node("summarize_history", summarize_history)
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
-    builder.add_edge("writer", "summarize_history")
-    builder.add_edge("summarize_history", END)
+    builder.add_edge("writer", END)
     return builder.compile(name="crypto_analysis_agent")
