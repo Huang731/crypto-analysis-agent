@@ -8,6 +8,7 @@ from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
 
 from app.crypto_analysis.skill_loader import LoadedSkill
+from app.crypto_analysis.skill_memory import merge_skill_memory
 
 
 def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -36,6 +37,7 @@ class DynamicAnalysisState(TypedDict, total=False):
     skill_sources: dict[str, str]
     plan: dict[str, Any]
     skill_results: Annotated[list[dict[str, Any]], operator.add]
+    skill_memory: Annotated[dict[str, dict[str, Any]], merge_skill_memory]
     report: str
 
 
@@ -45,3 +47,4 @@ class SkillWorkerState(TypedDict):
     skill_name: str
     skill_source: str
     scope: dict[str, str]
+    cached_memory: dict[str, Any] | None

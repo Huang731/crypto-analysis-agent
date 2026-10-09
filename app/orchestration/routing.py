@@ -15,6 +15,7 @@ from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
+from app.crypto_analysis.skill_memory import merge_skill_memory
 from app.orchestration.memory import update_memory
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
@@ -57,6 +58,8 @@ class RoutingState(TypedDict, total=False):
     resolved_question: str
     # 历史报告的核心结论摘要，每轮改写前增量更新并跨轮保存。
     summary: str
+    # 同会话各技能的成功指标与 RAG，按共享范围和技能名合并保存。
+    skill_memory: Annotated[dict[str, dict[str, Any]], merge_skill_memory]
     # 本轮路由目标：加密分析、主题研究或直接回复。
     route: RouteTarget
     # 直接回复分支的正文；进入专家分支时为空字符串。

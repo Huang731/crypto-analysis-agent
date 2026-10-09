@@ -12,7 +12,7 @@ from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Send
+from langgraph.types import Overwrite, Send
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.config.config import settings
@@ -27,6 +27,12 @@ from app.crypto_analysis.skill_loader import (
     LoadedSkill,
     SkillLoader,
     get_skill_loader,
+)
+from app.crypto_analysis.skill_memory import (
+    SkillMemoryKey,
+    read_skill_memory,
+    resolve_memory_key,
+    validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
 from app.observability import get_logger, timed_node
@@ -88,7 +94,9 @@ async def create_analysis_plan(
         question,
     )
     # 规划只提取字段，使用 JSON 模式，避免把普通文本输出误当作工具调用结果。
-    structured_llm = llm.with_structured_output(AnalysisPlan, method="json_mode")
+    structured_llm = llm.with_structured_output(
+        AnalysisPlan, method="json_mode"
+    ).with_retry(stop_after_attempt=2)
     with trace_generation(
         "crypto_analysis_plan", model=settings.fast_model
     ) as generation:
@@ -284,6 +292,62 @@ async def execute_skill(
             raise
 
 
+async def _retrieve_thought_context(
+    retriever: KBRetriever, skill: LoadedSkill, target_asset: str
+) -> dict[str, Any]:
+    """检索技能理论材料，检索失败仍保留指标并记录明确的失败状态。"""
+    scoring = skill.scoring
+    query = thought_retrieval_prompt(
+        target_asset,
+        scoring.name,
+        [metric.label for metric in scoring.metrics],
+    )
+    with trace_span("analysis.skill.thought_retrieval", skill_name=skill.name) as span:
+        try:
+            documents = await retriever.aretrieve(query)
+        except Exception:  # noqa: BLE001 - 沿用原检索错误处理，不替换已计算指标。
+            span.metadata["status"] = "error"
+            _LOG.exception("思想材料检索失败：%s", skill.name)
+            return {"query": query, "status": "error", "documents": []}
+        # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
+        span.output = {"document_count": len(documents)}
+        return {
+            "query": query,
+            "status": "ok" if documents else "no_results",
+            "documents": [
+                {
+                    "id": doc.id,
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                }
+                for doc in documents
+            ],
+        }
+
+
+def _build_skill_update(
+    skill: LoadedSkill, key: SkillMemoryKey, result: dict[str, Any]
+) -> DynamicAnalysisState:
+    """始终回传本轮结果，仅将指标与检索均成功的结果写入会话缓存。"""
+    update: DynamicAnalysisState = {"skill_results": [result]}
+    if result["status"] != "ok" or result["thought_context"]["status"] not in {
+        "ok",
+        "no_results",
+    }:
+        return update
+    entry = validate_skill_memory(
+        {
+            **key.model_dump(),
+            "indicators": result["indicators"],
+            "thought_context": result["thought_context"],
+        },
+        key,
+        skill,
+    )
+    update["skill_memory"] = {key.cache_key: entry.model_dump(mode="json")}
+    return update
+
+
 # 分析主图：规划、并行技能、报告
 
 
@@ -318,6 +382,8 @@ def build_dynamic_analysis_agent(
                     "skill_sources": skill_loader.snapshot(),
                     "plan": selection,
                     "scope": scope,
+                    # 缓存跨轮保留，追加型报告输入每轮从空列表开始。
+                    "skill_results": Overwrite([]),
                 }
             except Exception:
                 node_span.metadata["status"] = "error"
@@ -335,6 +401,10 @@ def build_dynamic_analysis_agent(
                     "skill_name": name,
                     "skill_source": state["skill_sources"][name],
                     "scope": state["scope"],
+                    "cached_memory": read_skill_memory(
+                        state.get("skill_memory", {}),
+                        resolve_memory_key(state["scope"]["target_asset"], name),
+                    ),
                 },
             )
             for name in names
@@ -342,54 +412,50 @@ def build_dynamic_analysis_agent(
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_worker(state: SkillWorkerState) -> DynamicAnalysisState:
-        """执行当前技能并附加理论材料，指标只保存在技能结果中。"""
+        """优先复用会话指标与理论材料，未命中时保留原执行流程。"""
         with trace_span(
             "crypto.skill_worker", skill_name=state["skill_name"]
         ) as node_span:
             try:
+                # 根据本轮派发的快照加载技能，保持定义与规划时一致。
                 skill_loader = SkillLoader.from_snapshot(
                     {state["skill_name"]: state["skill_source"]}
                 )
                 skill = skill_loader.load_definition(state["skill_name"])
-                scoring = skill.scoring
+                # 全局技能共用 GLOBAL 范围，其他技能按本轮币种区分缓存。
+                key = resolve_memory_key(
+                    state["scope"]["target_asset"], state["skill_name"]
+                )
+                cached = state["cached_memory"]
+                # 只记录是否找到缓存；缓存内容是否有效由后续校验判断。
+                node_span.metadata["cache_hit"] = cached is not None
+                if cached is not None:
+                    # 命中后校验原始指标，按当前技能权重重新聚合，不再取数或检索。
+                    entry = validate_skill_memory(cached, key, skill)
+                    result = aggregate_skill_results(
+                        skill,
+                        [item.model_dump(mode="json") for item in entry.indicators],
+                    )
+                    result["thought_context"] = entry.thought_context.model_dump(
+                        mode="json"
+                    )
+                    # 返回本轮报告输入，已有缓存不需要重复写入。
+                    return {"skill_results": [result]}
+                # 未命中时沿用原指标 Agent，执行取数、计算和结果聚合。
                 metric_agent = build_metric_agent(fast_llm, skill)
                 result = await execute_skill(metric_agent, skill, state["scope"])
-                query = thought_retrieval_prompt(
-                    state["scope"]["target_asset"],
-                    scoring.name,
-                    [metric.label for metric in scoring.metrics],
+                # 全局技能使用通用检索语境，币种技能使用当前资产。
+                result["thought_context"] = await _retrieve_thought_context(
+                    retriever,
+                    skill,
+                    "加密市场"
+                    if key.asset_scope == "GLOBAL"
+                    else state["scope"]["target_asset"],
                 )
-                with trace_span(
-                    "analysis.skill.thought_retrieval",
-                    skill_name=skill.name,
-                ) as span:
-                    try:
-                        documents = await retriever.aretrieve(query)
-                    except Exception:  # noqa: BLE001 - 检索失败保留已计算指标，明确记录失败状态。
-                        span.metadata["status"] = "error"
-                        _LOG.exception("思想材料检索失败：%s", skill.name)
-                        result["thought_context"] = {
-                            "query": query,
-                            "status": "error",
-                            "documents": [],
-                        }
-                    else:
-                        # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
-                        result["thought_context"] = {
-                            "query": query,
-                            "status": "ok" if documents else "no_results",
-                            "documents": [
-                                {
-                                    "id": doc.id,
-                                    "content": doc.page_content,
-                                    "metadata": doc.metadata,
-                                }
-                                for doc in documents
-                            ],
-                        }
-                        span.output = {"document_count": len(documents)}
-                return {"skill_results": [result]}
+                # 始终回传本轮结果；指标完整成功且检索正常时才新增缓存。
+                return _build_skill_update(skill, key, result)
             except Exception:
+                # 标记当前节点失败并继续抛出，不将异常当作缓存未命中。
                 node_span.metadata["status"] = "error"
                 raise
 
