@@ -12,7 +12,6 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelCallLimitMiddleware,
-    ModelRetryMiddleware,
     ToolCallLimitMiddleware,
 )
 from langchain.agents.middleware.types import (
@@ -129,9 +128,9 @@ def make_split(
 
 
 async def _invoke_model(llm: Any, prompt: str) -> Any:
-    """为专题研究的直接模型调用设置有限重试和总超时。"""
+    """为专题研究的单次模型调用设置超时，失败直接向上报告。"""
     return await asyncio.wait_for(
-        llm.with_retry(stop_after_attempt=2).ainvoke(prompt),
+        llm.ainvoke(prompt),
         timeout=120,
     )
 
@@ -221,7 +220,6 @@ def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
             ToolCallLimitMiddleware(
                 run_limit=settings.browser_max_steps * 2, exit_behavior="error"
             ),
-            ModelRetryMiddleware(max_retries=1, on_failure="error"),
             ResearchModelTrace(),
         ],
         name="topic_evidence_agent",

@@ -10,11 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.config.config import settings
 from app.observability import get_logger, log_event
 from app.tracing import estimate_tokens, trace_generation
-from prompts.memory import summary_context
 from prompts.query_rewriter import query_rewriter_prompt
 
 _LOG = get_logger("crypto_analysis.query_rewriter")
-_TIMEOUT_SECONDS = 15  # 限制包含重试在内的问题改写总耗时。
+_TIMEOUT_SECONDS = 15  # 限制单次问题改写调用耗时。
 _MAX_CHARS = 200  # 改写结果超过该长度视为模型跑题。
 
 
@@ -29,16 +28,13 @@ class RewrittenQuestion(BaseModel):
 async def rewrite_question(
     llm: BaseChatModel,
     question: str,
-    summary: str = "",
 ) -> str:
-    """结合历史摘要补全本轮问题，失败时记录日志并向上报告。"""
+    """仅规范改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = [
-        SystemMessage(content=query_rewriter_prompt() + summary_context(summary)),
+        SystemMessage(content=query_rewriter_prompt()),
         HumanMessage(content=question),
     ]
-    rewrite_model = llm.with_structured_output(
-        RewrittenQuestion, method="json_mode"
-    ).with_retry(stop_after_attempt=2)
+    rewrite_model = llm.with_structured_output(RewrittenQuestion, method="json_mode")
     try:
         with trace_generation(
             "question_rewriter", model=settings.fast_model

@@ -94,9 +94,7 @@ async def create_analysis_plan(
         question,
     )
     # 规划只提取字段，使用 JSON 模式，避免把普通文本输出误当作工具调用结果。
-    structured_llm = llm.with_structured_output(
-        AnalysisPlan, method="json_mode"
-    ).with_retry(stop_after_attempt=2)
+    structured_llm = llm.with_structured_output(AnalysisPlan, method="json_mode")
     with trace_generation(
         "crypto_analysis_plan", model=settings.fast_model
     ) as generation:

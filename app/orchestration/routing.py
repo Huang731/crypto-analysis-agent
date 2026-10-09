@@ -16,12 +16,10 @@ from typing_extensions import Self, TypedDict
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
 from app.crypto_analysis.skill_memory import merge_skill_memory
-from app.orchestration.memory import update_memory
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import estimate_tokens, trace_generation, trace_span
-from prompts.memory import summary_context
 from prompts.routing import routing_prompt
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
@@ -50,14 +48,12 @@ class RouteDecision(BaseModel):
 class RoutingState(TypedDict, total=False):
     """外层只保留路由和报告，研究明细由专家子图持有。"""
 
-    # 合并并保存用户原话和助手回复，不直接传给改写与路由模型。
+    # 合并并保存用户原话和助手回复；改写与路由只接收本轮问题。
     messages: Annotated[list[Any], add_messages]
     # 本轮请求范围：分析截止时间、会话和追踪标识、原始及补全问题等。
     scope: dict[str, str]
-    # 结合历史摘要补全后的本轮问题，用于路由和专家分析。
+    # 本轮原话规范改写后的问题，用于路由和专家分析。
     resolved_question: str
-    # 历史报告的核心结论摘要，每轮改写前增量更新并跨轮保存。
-    summary: str
     # 同会话各技能的成功指标与 RAG，按共享范围和技能名合并保存。
     skill_memory: Annotated[dict[str, dict[str, Any]], merge_skill_memory]
     # 本轮路由目标：加密分析、主题研究或直接回复。
@@ -94,24 +90,16 @@ def build_routing_graph(
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
     crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
     topic_agent = build_topic_research_agent(smart, fast)
-    # 结构化结果包含字段组合校验；失败重试仍属于同一次路由，不进入专家。
-    route_model = fast.with_structured_output(
-        RouteDecision, method="json_mode"
-    ).with_retry(stop_after_attempt=2)
+    # 结构化结果包含字段组合校验；调用失败直接向上报告，不进入专家。
+    route_model = fast.with_structured_output(RouteDecision, method="json_mode")
 
     async def rewrite(state: RoutingState) -> dict[str, Any]:
-        """先更新上一轮报告摘要，再补全本轮问题，保留历史用户原话。"""
+        """仅规范改写本轮问题，保留用户原话，不生成或注入历史摘要。"""
         original = state["scope"]["original_question"]
-        memory_update = await update_memory(
-            smart, summary=state.get("summary", ""), report=state.get("report", "")
-        )
         with trace_span("question_rewriter", question_chars=len(original)) as span:
-            question = await rewrite_question(
-                fast, original, summary=memory_update["summary"]
-            )
+            question = await rewrite_question(fast, original)
             span.metadata["rewritten_chars"] = len(question)
         return {
-            **memory_update,
             "resolved_question": question,
             "scope": {**state["scope"], "resolved_question": question},
         }
@@ -119,9 +107,7 @@ def build_routing_graph(
     async def router(state: RoutingState) -> dict[str, Any]:
         """在固定超时内识别意图，异常由图和现有请求日志向上报告。"""
         messages = [
-            SystemMessage(
-                content=routing_prompt() + summary_context(state.get("summary", ""))
-            ),
+            SystemMessage(content=routing_prompt()),
             HumanMessage(content=state["resolved_question"]),
         ]
         with trace_generation(
