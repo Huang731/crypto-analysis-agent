@@ -1,6 +1,7 @@
 """加密货币分析：请求规划、技能执行、并行汇总及报告生成。"""
 
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from math import fsum
@@ -14,6 +15,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Overwrite, Send
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
@@ -53,6 +60,12 @@ from prompts.crypto_analysis import (
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    before_sleep=before_sleep_log(_LOG, logging.WARNING),
+    reraise=True,
+)
 async def _invoke_structured_output(
     llm: Any,
     schema: type[BaseModel],
@@ -60,11 +73,8 @@ async def _invoke_structured_output(
     trace_name: str,
     model_name: str,
 ) -> BaseModel:
-    """通过函数调用提交结构化结果，保留类型校验、流过滤标记和用量追踪。"""
-    # 流式响应中途断开时重试完整调用，最多尝试两次。
-    model = llm.with_structured_output(schema, method="function_calling").with_retry(
-        stop_after_attempt=2
-    )
+    """函数调用、解析和类型校验整体重试，保留流标记和用量追踪。"""
+    model = llm.with_structured_output(schema, method="function_calling")
     with trace_generation(trace_name, model=model_name) as generation:
         response = await model.ainvoke(
             prompt, config={"tags": ["crypto_structured_output"]}

@@ -1,6 +1,7 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
 import json
+import logging
 from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -9,6 +10,12 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, model_validator
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
@@ -18,13 +25,15 @@ from app.crypto_analysis.crypto_analysis_agent import (
 )
 from app.crypto_analysis.crypto_analysis_state import HistorySummaryOutput
 from app.crypto_analysis.skill_memory import merge_skill_memory
-from app.observability import timed_node
+from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import estimate_tokens, trace_generation, trace_span
 from prompts.crypto_analysis import history_summary_prompt
 from prompts.routing import routing_prompt
+
+_LOG = get_logger("crypto_analysis.routing")
 
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
 
@@ -108,8 +117,14 @@ def build_routing_graph(
         }
 
     @timed_node
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        before_sleep=before_sleep_log(_LOG, logging.WARNING),
+        reraise=True,
+    )
     async def router(state: RoutingState) -> dict[str, Any]:
-        """在固定超时内识别意图，异常由图和现有请求日志向上报告。"""
+        """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = [
             SystemMessage(content=routing_prompt()),
             HumanMessage(content=state["resolved_question"]),
@@ -117,11 +132,9 @@ def build_routing_graph(
         with trace_generation(
             "routing_decision", model=settings.smart_model
         ) as generation:
-            decision = await (
-                fast.with_structured_output(RouteDecision, method="function_calling")
-                .with_retry(stop_after_attempt=2)
-                .ainvoke(messages)
-            )
+            decision = await fast.with_structured_output(
+                RouteDecision, method="function_calling"
+            ).ainvoke(messages)
             if not isinstance(decision, RouteDecision):
                 raise TypeError("路由模型未返回 RouteDecision 结构化结果")
             # 沿用项目估算口径，仅统计本次输入和最终有效的结构化结果。
@@ -152,11 +165,11 @@ def build_routing_graph(
             report=state["report"],
         )
         output = await _invoke_structured_output(
-            fast,
+            smart,
             HistorySummaryOutput,
             prompt,
             "crypto_history_summary",
-            settings.fast_model,
+            settings.smart_model,
         )
         return {"history_summary": output.history_summary}
 
