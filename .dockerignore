@@ -23,6 +23,8 @@ venv/
 
 # 数据通过挂载提供，开发资料不打入镜像。
 data/
+logs/
+*.tar.gz
 docs/
 tests/
 *.md

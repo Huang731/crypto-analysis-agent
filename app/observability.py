@@ -10,9 +10,11 @@ import time
 import uuid
 from collections.abc import Callable
 from contextvars import ContextVar, Token
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +23,7 @@ _thread_id: ContextVar[str] = ContextVar("crypto_thread_id", default="-")
 
 
 class LogSettings(BaseSettings):
-    """从环境变量或项目 .env 读取日志格式和级别。"""
+    """从环境变量或项目 .env 读取日志格式、级别和文件配置。"""
 
     model_config = SettingsConfigDict(
         env_file=_ROOT / ".env", env_file_encoding="utf-8", extra="ignore"
@@ -29,6 +31,9 @@ class LogSettings(BaseSettings):
 
     log_json: bool = True
     log_level: str = "INFO"
+    log_dir: Path | None = None
+    log_max_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
+    log_backup_count: int = Field(default=5, ge=1)
 
 
 def new_trace_id() -> str:
@@ -103,9 +108,26 @@ def setup_logging() -> None:
     for handler in list(root.handlers):
         root.removeHandler(handler)
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(JsonFormatter() if settings.log_json else TextFormatter())
+    formatter = JsonFormatter() if settings.log_json else TextFormatter()
+    handler.setFormatter(formatter)
     handler.setLevel(level)
     root.addHandler(handler)
+    # 指定日志目录时追加文件输出，保留控制台日志和原有请求上下文。
+    if settings.log_dir is not None:
+        settings.log_dir.mkdir(parents=True, exist_ok=True)
+        for filename, file_level in (
+            ("app.log", level),
+            ("error.log", logging.ERROR),
+        ):
+            file_handler = RotatingFileHandler(
+                settings.log_dir / filename,
+                maxBytes=settings.log_max_bytes,
+                backupCount=settings.log_backup_count,
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            file_handler.setLevel(file_level)
+            root.addHandler(file_handler)
     root.setLevel(level)
     for name in ("httpx", "httpx2", "httpcore", "urllib3"):
         logging.getLogger(name).setLevel(logging.WARNING)

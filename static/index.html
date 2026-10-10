@@ -152,7 +152,11 @@
     const findingsTitleEl = document.getElementById("findings-title"); // 根据完成类型设置发现列表标题。
     const findingsList = document.getElementById("findings-list");
     const savedThreadId = sessionStorage.getItem("crypto_analysis_thread_id");
-    const threadId = savedThreadId || "web-" + crypto.randomUUID().slice(0, 8);
+    // 公网 HTTP 下使用可用的随机数接口，保持原有会话 ID 格式。
+    const threadId = savedThreadId || "web-" + Array.from(
+      crypto.getRandomValues(new Uint8Array(4)),
+      byte => byte.toString(16).padStart(2, "0")
+    ).join("");
     const agentLabels = {
       crypto_analysis_agent: "加密货币分析 Agent",
       topic_research_agent: "主题研究 Agent", // 普通主题进入独立研究图。

@@ -14,6 +14,7 @@ services:
       CHECKPOINT_DB_PATH: /app/data/checkpoints.sqlite
       SKILLS_DIR: /app/skills
       BROWSER_HEADLESS: "true"
+      LOG_DIR: /app/logs
     # 使用已有知识库索引，同时持久化会话与分析数据。
     volumes:
       - type: bind
@@ -21,6 +22,10 @@ services:
         target: /app/data
         bind:
           create_host_path: false
+      # 日志存放在服务器磁盘，重建容器后仍然保留。
+      - type: bind
+        source: ./logs
+        target: /app/logs
     shm_size: "1gb"
     healthcheck:
       test:
