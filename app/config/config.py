@@ -30,9 +30,8 @@ def _env_files() -> tuple[str, ...]:
     here = Path(__file__).resolve().parent
     candidates = [
         Path(".env"),  # 当前工作目录
-        here.parents[1] / ".env",  # 当前项目根目录
-        here.parents[2] / ".env",  # 项目上级目录
-        here.parents[3] / ".env",  # 更上一级目录
+        # 按原顺序枚举项目根目录及其上级，容器内只取实际存在的父目录层级。
+        *(parent / ".env" for parent in here.parents[1:4]),
     ]
     return tuple(str(p) for p in candidates)
 
