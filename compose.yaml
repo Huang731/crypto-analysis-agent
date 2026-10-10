@@ -1,0 +1,39 @@
+services:
+  agent:
+    build: .
+    init: true
+    restart: unless-stopped
+    # 问答接口尚无访问认证，先通过 SSH 隧道访问。
+    ports:
+      - "127.0.0.1:8003:8003"
+    env_file:
+      - .env
+    environment:
+      DOCS_DIR: /app/data/docs
+      FAISS_PATH: /app/data/faiss/text-embedding-v4-1024
+      CHECKPOINT_DB_PATH: /app/data/checkpoints.sqlite
+      SKILLS_DIR: /app/skills
+      BROWSER_HEADLESS: "true"
+    # 使用已有知识库索引，同时持久化会话与分析数据。
+    volumes:
+      - type: bind
+        source: ./data
+        target: /app/data
+        bind:
+          create_host_path: false
+    shm_size: "1gb"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5).close()"
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

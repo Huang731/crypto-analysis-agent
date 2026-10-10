@@ -1,0 +1,31 @@
+# 密钥只在运行时注入，不发送到镜像构建上下文。
+.env
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+
+# 本地环境、缓存与版本管理文件。
+.venv/
+venv/
+.git/
+.idea/
+.agents/
+.codex/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# 数据通过挂载提供，开发资料不打入镜像。
+data/
+docs/
+tests/
+*.md
+!skills/**
+*.ipynb
+*.log
