@@ -47,13 +47,6 @@ class SkillOutput(BaseModel):
     content: str = Field(min_length=1, strict=True)
 
 
-class AnalysisReport(BaseModel):
-    """报告模型只输出整体结论。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    report: str = Field(min_length=1, strict=True)
-
-
 class HistorySummaryOutput(BaseModel):
     """同会话累计结论摘要，校验非空字符串。"""
 

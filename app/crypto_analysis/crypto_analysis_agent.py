@@ -1,5 +1,6 @@
 """加密货币分析：请求规划、技能执行、并行汇总及报告生成。"""
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -10,9 +11,11 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Overwrite, Send
+from langgraph.runtime import Runtime
+from langgraph.types import Overwrite, Send, StreamWriter
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from tenacity import (
     before_sleep_log,
@@ -23,7 +26,6 @@ from tenacity import (
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
-    AnalysisReport,
     DynamicAnalysisState,
     MetricAgentState,
     MetricToolContext,
@@ -96,6 +98,40 @@ async def _invoke_structured_model(
     if not isinstance(response, schema):
         raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
     return response
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    before_sleep=before_sleep_log(_LOG, logging.WARNING),
+    reraise=True,
+)
+@trace_generation_call(name="crypto_analysis_writer", model=settings.smart_model)
+async def _invoke_report_text(
+    llm: Any,
+    prompt: str,
+    config: RunnableConfig,
+    stream_writer: StreamWriter,
+) -> str:
+    """流式生成正文，重试时重新开始展示，完成后校验报告。"""
+    stream_writer({"event": "report_start", "node": "writer"})
+    # 显式传递回调配置，让异步模型调用的正文增量进入父图消息流。
+    response = await asyncio.wait_for(
+        llm.ainvoke(
+            prompt,
+            config={
+                **config,
+                "tags": [*config.get("tags", []), "crypto_report_stream"],
+            },
+        ),
+        timeout=120,
+    )
+    if not isinstance(response.content, str):
+        raise TypeError("报告正文必须是字符串")
+    report = response.content.strip()
+    if not report:
+        raise ValueError("报告正文不能为空")
+    return report
 
 
 # 请求规划模型
@@ -532,7 +568,9 @@ def build_dynamic_analysis_agent(
                 raise
 
     @timed_node
-    async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
+    async def writer(
+        state: DynamicAnalysisState, config: RunnableConfig, runtime: Runtime
+    ) -> dict[str, Any]:
         """依据技能内容与历史摘要撰写结论，报告只包含结论正文。"""
         with trace_span("crypto.writer") as node_span:
             try:
@@ -551,14 +589,12 @@ def build_dynamic_analysis_agent(
                     skill_results=ordered,
                     history_summary=state["history_summary"],
                 )
-                output = await _invoke_structured_output(
+                report = await _invoke_report_text(
                     smart_llm,
-                    AnalysisReport,
                     prompt,
-                    "crypto_analysis_writer",
-                    settings.smart_model,
+                    config,
+                    runtime.stream_writer,
                 )
-                report = output.report
                 return {
                     "report": report,
                 }

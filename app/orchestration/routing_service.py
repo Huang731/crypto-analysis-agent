@@ -168,7 +168,7 @@ def _token_event(payload: Any) -> dict[str, str] | None:
         "summarize_history",
     }:
         return None
-    # 加密结论使用结构化输出，JSON 增量不能作为报告正文展示。
+    # 规划等结构化调用的 JSON 增量不能作为报告正文展示。
     if isinstance(metadata, dict) and "crypto_structured_output" in metadata.get(
         "tags", []
     ):
@@ -197,7 +197,7 @@ class RoutingService:
             # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
             async for part in self._routing_graph.astream(
                 {"scope": scope},
-                stream_mode=["updates", "messages"],
+                stream_mode=["updates", "messages", "custom"],
                 subgraphs=True,
                 version="v2",
                 config=config,
@@ -210,6 +210,14 @@ class RoutingService:
                     event = _token_event(part["data"])
                     if event is not None:
                         yield event
+                elif part["type"] == "custom":
+                    data = part["data"]
+                    if (
+                        isinstance(data, dict)
+                        and data.get("event") == "report_start"
+                        and data.get("node") == "writer"
+                    ):
+                        yield _event("report_start", {"node": "writer"})
         yield result.completion_event()
 
 

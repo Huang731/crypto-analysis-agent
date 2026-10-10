@@ -212,6 +212,13 @@
       } else if (name === "route") {
         state.agents.push(data.agent);
         addProgress("分派", "已交给 " + (agentLabels[data.agent] || data.agent));
+      } else if (name === "report_start") {
+        // 每次报告生成尝试都重新展示，避免重试正文与上一次残留拼接。
+        reportEl.textContent = "";
+        reportEl.classList.remove("placeholder", "error");
+        reportEl.classList.add("blink");
+        state.outputNode = "writer";
+        state.writerComplete = false;
       } else if (name === "token") {
         if (typeof data.content !== "string" || !data.content) return;
         if (data.source_node === "model") return;
