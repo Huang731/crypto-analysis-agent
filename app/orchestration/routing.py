@@ -153,7 +153,7 @@ def build_routing_graph(
         messages: list[SystemMessage | HumanMessage],
     ) -> RouteDecision:
         """沿用路由结构化结果校验，追踪范围只覆盖模型调用和校验。"""
-        decision = await fast.with_structured_output(
+        decision = await smart.with_structured_output(
             RouteDecision, method="function_calling"
         ).ainvoke(messages)
         if not isinstance(decision, RouteDecision):
