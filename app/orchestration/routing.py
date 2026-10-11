@@ -1,56 +1,27 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-import logging
 from typing import Annotated, Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 from typing_extensions import TypedDict
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
-from app.crypto_analysis.crypto_analysis_state import HistorySummaryOutput
 from app.crypto_analysis.skill_memory import merge_skill_memory
-from app.observability import get_logger, timed_node
+from app.observability import timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
-from app.tracing import trace_generation_call, trace_span
+from app.tracing import trace_span
 from eval_agent.routing.route_decision import (
     RouteDecision,
     RouteTarget,
     append_routing_candidate,
     decide_route,
 )
-from prompts.crypto_analysis import history_summary_prompt
-
-_LOG = get_logger("crypto_analysis.routing")
-
-
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
-@trace_generation_call(name="crypto_history_summary", model=settings.smart_model)
-async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
-    """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
-    # 仅历史摘要调用关闭深度思考，不修改共享模型的配置。
-    summary_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
-    response = await summary_llm.ainvoke(
-        prompt, config={"tags": ["crypto_history_summary"]}
-    )
-    output = HistorySummaryOutput(history_summary=response.content)
-    return output.history_summary
 
 
 class RoutingState(TypedDict, total=False):
@@ -60,11 +31,13 @@ class RoutingState(TypedDict, total=False):
     scope: dict[str, str]
     # 本轮原话规范改写后的问题，用于路由和专家分析。
     resolved_question: str
+    # 最近一轮已完成回答的问题，保留补全后的主题供连续追问使用。
+    previous_question: str
     # 同会话各技能的指标表格与思想体系解读，按原共享范围和技能名保存。
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
-    # 父图更新加密分析的累计结论摘要，其余分支保持已有内容。
+    # 承接加密分析子图的累计结论摘要，仅用于分析并跨轮保存。
     history_summary: str
-    # 承接加密分析计划，沿用无适用技能时不更新摘要的条件。
+    # 承接加密分析子图的计划。
     plan: dict[str, Any]
     # 本轮路由目标：加密分析、主题研究或直接回复。
     route: RouteTarget
@@ -80,11 +53,11 @@ def select_agent(state: RoutingState) -> RouteTarget:
 
 
 def finalize_report(state: RoutingState) -> dict[str, Any]:
-    """统一承接已有报告，不重新调用模型或改写专家结论。"""
+    """统一承接已有报告，校验成功后保存本轮问题供下轮改写。"""
     report = state["direct_reply"] if state["route"] == "direct" else state["report"]
     if not isinstance(report, str) or not report.strip():
         raise ValueError("最终报告为空")
-    return {"report": report}
+    return {"report": report, "previous_question": state["resolved_question"]}
 
 
 def build_routing_graph(
@@ -100,11 +73,11 @@ def build_routing_graph(
 
     @timed_node
     async def rewrite(state: RoutingState) -> dict[str, Any]:
-        """结合父图历史摘要补全本轮问题，保留用户原话。"""
+        """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
         with trace_span("question_rewriter", question_chars=len(original)) as span:
             question = await rewrite_question(
-                fast, original, state.get("history_summary", "")
+                fast, original, state.get("previous_question", "")
             )
             span.metadata["rewritten_chars"] = len(question)
         return {
@@ -125,28 +98,12 @@ def build_routing_graph(
             )
         return decision.model_dump()
 
-    @timed_node
-    async def summarize_history(state: RoutingState) -> dict[str, str]:
-        """在父图报告整理完成后，沿用加密分析的历史摘要更新规则。"""
-        if (
-            state["route"] != "crypto_analysis_agent"
-            or not state["plan"]["skill_names"]
-        ):
-            return {}
-        prompt = history_summary_prompt(
-            previous_summary=state.get("history_summary", ""),
-            report=state["report"],
-        )
-        summary = await _invoke_history_summary(smart, prompt)
-        return {"history_summary": summary}
-
     workflow = StateGraph(RoutingState)
     workflow.add_node("rewrite", rewrite)
     workflow.add_node("router", router)
     workflow.add_node("crypto_analysis_agent", crypto_agent)
     workflow.add_node("topic_research_agent", topic_agent)
     workflow.add_node("finalize", finalize_report)
-    workflow.add_node("summarize_history", summarize_history)
     workflow.add_edge(START, "rewrite")
     workflow.add_edge("rewrite", "router")
     workflow.add_conditional_edges(
@@ -160,6 +117,5 @@ def build_routing_graph(
     )
     workflow.add_edge("crypto_analysis_agent", "finalize")
     workflow.add_edge("topic_research_agent", "finalize")
-    workflow.add_edge("finalize", "summarize_history")
-    workflow.add_edge("summarize_history", END)
+    workflow.add_edge("finalize", END)
     return workflow.compile(checkpointer=checkpointer, name="research_routing")

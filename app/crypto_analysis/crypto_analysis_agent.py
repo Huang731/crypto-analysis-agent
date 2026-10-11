@@ -10,6 +10,7 @@ from typing import Any
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
 from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
@@ -27,6 +28,7 @@ from tenacity import (
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
     DynamicAnalysisState,
+    HistorySummaryOutput,
     MetricAgentState,
     MetricToolContext,
     SkillOutput,
@@ -52,6 +54,7 @@ from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
+    history_summary_prompt,
     metric_agent_system_prompt,
     metric_execution_prompt,
     skill_output_prompt,
@@ -59,6 +62,24 @@ from prompts.crypto_analysis import (
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    before_sleep=before_sleep_log(_LOG, logging.WARNING),
+    reraise=True,
+)
+@trace_generation_call(name="crypto_history_summary", model=settings.smart_model)
+async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
+    """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
+    # 仅历史摘要调用关闭深度思考，不修改共享模型的配置。
+    summary_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
+    response = await summary_llm.ainvoke(
+        prompt, config={"tags": ["crypto_history_summary"]}
+    )
+    output = HistorySummaryOutput(history_summary=response.content)
+    return output.history_summary
 
 
 @retry(
@@ -618,12 +639,26 @@ def build_dynamic_analysis_agent(
                 node_span.metadata["status"] = "error"
                 raise
 
+    @timed_node
+    async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
+        """在报告生成后更新累计结论摘要，无适用技能时保留已有摘要。"""
+        if not state["plan"]["skill_names"]:
+            return {}
+        prompt = history_summary_prompt(
+            previous_summary=state.get("history_summary", ""),
+            report=state["report"],
+        )
+        summary = await _invoke_history_summary(smart_llm, prompt)
+        return {"history_summary": summary}
+
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", plan)
     builder.add_node("skill_worker", skill_worker)
     builder.add_node("writer", writer)
+    builder.add_node("summarize_history", summarize_history)
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
-    builder.add_edge("writer", END)
+    builder.add_edge("writer", "summarize_history")
+    builder.add_edge("summarize_history", END)
     return builder.compile(name="crypto_analysis_agent")

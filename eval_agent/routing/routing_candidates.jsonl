@@ -5,3 +5,5 @@
 {"case_id":"26f1155a2ede4b96a991e508d736abae","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的最新趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
 {"case_id":"03f921aa4eed4213801baa178a2d3cf4","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的最新趋势和资金面情况。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"8cedd2c947a346398e808c9abc3eb745","original_question":"那我可以加仓吗","input":{"resolved_question":"根据当前比特币（BTC）的技术面和资金面分析，我可以加仓吗？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"6a2260cb996846749bd82e0589e83c19","original_question":"btc我该加仓还是减仓","input":{"resolved_question":"比特币（BTC）目前是应该加仓还是减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"57803f7e912847a4ba86df165191e2a8","original_question":"etc呢","input":{"resolved_question":"以太坊（ETH）目前是应该加仓还是减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}

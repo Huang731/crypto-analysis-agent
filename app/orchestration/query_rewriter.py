@@ -14,11 +14,11 @@ _LOG = get_logger("crypto_analysis.query_rewriter")
 async def rewrite_question(
     llm: BaseChatModel,
     question: str,
-    history_summary: str,
+    previous_question: str,
 ) -> str:
-    """结合历史摘要改写本轮用户原话，失败时记录日志并向上报告。"""
+    """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = [
-        SystemMessage(content=query_rewriter_prompt(history_summary)),
+        SystemMessage(content=query_rewriter_prompt(previous_question)),
         HumanMessage(content=question),
     ]
     try:
@@ -31,7 +31,13 @@ async def rewrite_question(
         )
         raise
 
-    log_event(_LOG, "query.rewrite.done", original=question, rewritten=rewritten)
+    log_event(
+        _LOG,
+        "query.rewrite.done",
+        original=question,
+        previous_question=previous_question,
+        rewritten=rewritten,
+    )
     return rewritten
 
 
