@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     routing_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "routing" / "routing_candidates.jsonl"
     )
+    # 规划候选采集独立于路由，默认记录正常请求中的实际计划。
+    planning_capture_enabled: bool = True
+    planning_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "planning" / "planning_candidates.jsonl"
+    )
 
     # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
     smart_model: str = "glm-4.5-air"

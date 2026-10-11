@@ -469,6 +469,18 @@ def build_dynamic_analysis_agent(
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
+                if settings.planning_capture_enabled:
+                    # 采集入口与评测合并后按需导入，避免与规划模块循环依赖。
+                    from eval_agent.planning.run_planning_eval import (
+                        append_planning_candidate,
+                    )
+
+                    append_planning_candidate(
+                        original_question=state["scope"]["original_question"],
+                        resolved_question=question,
+                        decision=selection,
+                        path=settings.planning_capture_path,
+                    )
                 scope = {
                     **state["scope"],
                     "target_asset": selection["target_asset"],
