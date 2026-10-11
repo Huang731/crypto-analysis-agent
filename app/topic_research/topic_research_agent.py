@@ -389,8 +389,12 @@ def make_writer(
                     feedback,
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
+                # 仅本节点关闭深度思考，不修改共享模型的配置。
+                writer_llm = smart_llm.bind(
+                    extra_body={"thinking": {"type": "disabled"}}
+                )
                 response = await _invoke_traced_model(
-                    smart_llm, prompt, "topic_writer", settings.smart_model
+                    writer_llm, prompt, "topic_writer", settings.smart_model
                 )
                 if (
                     not isinstance(response.content, str)

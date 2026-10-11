@@ -44,7 +44,11 @@ _LOG = get_logger("crypto_analysis.routing")
 @trace_generation_call(name="crypto_history_summary", model=settings.smart_model)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
-    response = await llm.ainvoke(prompt, config={"tags": ["crypto_history_summary"]})
+    # 仅历史摘要调用关闭深度思考，不修改共享模型的配置。
+    summary_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
+    response = await summary_llm.ainvoke(
+        prompt, config={"tags": ["crypto_history_summary"]}
+    )
     output = HistorySummaryOutput(history_summary=response.content)
     return output.history_summary
 

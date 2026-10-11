@@ -1,0 +1,7 @@
+{"case_id":"265322d0ca9a4c63b67458337f3c5a37","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的当前市场趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"85183c0130314753b0b359e4f26273da","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的当前市场趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"e7a78a57fea74053a54c6b2a8f6648a1","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的当前市场趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"598331b4bb5b48c7a348808171eac431","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的当前市场趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"26f1155a2ede4b96a991e508d736abae","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的最新趋势和资金面情况。"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"03f921aa4eed4213801baa178a2d3cf4","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的最新趋势和资金面情况。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"8cedd2c947a346398e808c9abc3eb745","original_question":"那我可以加仓吗","input":{"resolved_question":"根据当前比特币（BTC）的技术面和资金面分析，我可以加仓吗？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}

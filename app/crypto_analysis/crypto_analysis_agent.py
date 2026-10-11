@@ -601,8 +601,12 @@ def build_dynamic_analysis_agent(
                     skill_results=ordered,
                     history_summary=state["history_summary"],
                 )
+                # 仅本节点关闭深度思考，不修改共享模型的配置。
+                writer_llm = smart_llm.bind(
+                    extra_body={"thinking": {"type": "disabled"}}
+                )
                 report = await _invoke_report_text(
-                    smart_llm,
+                    writer_llm,
                     prompt,
                     config,
                     runtime.stream_writer,
