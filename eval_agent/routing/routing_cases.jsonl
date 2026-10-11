@@ -22,4 +22,3 @@
 {"input":{"resolved_question":"结合恐惧贪婪指数评估加密市场当前的入场风险"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_008","category":"market_risk","label_reason":"明确的加密市场指标与投资风险分析"}}
 {"input":{"resolved_question":"研究 RAG 与微调分别适合哪些业务场景"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_008","category":"technology","label_reason":"通用技术主题研究"}}
 {"input":{"resolved_question":"帮我研究一下"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_008","category":"missing_topic","label_reason":"缺少研究主题，需直接提出澄清问题"}}
-{"case_id":"6179f82bbbcf4b34b26af1edbd2a3b8e","original_question":"好吧","input":{"resolved_question":"你好，有什么可以帮助你的吗？"},"actual_output":{"route":"direct","direct_reply":"你好，有什么可以帮你？"}}
