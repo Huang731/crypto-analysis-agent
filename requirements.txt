@@ -16,6 +16,8 @@ langchain-openai>=1.0,<2
 langchain-text-splitters>=1.0
 langgraph>=1.0,<2
 langgraph-checkpoint-sqlite
+langfuse>=4.15.6,<5
+truststore>=0.10,<1
 langgraph-supervisor>=0.0.31,<0.1
 playwright>=1.63,<2
 mcp>=2.0,<3

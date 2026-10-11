@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
 import openai
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.messages import BaseMessage
@@ -88,7 +89,9 @@ class LoggedChatOpenAI(ChatOpenAI):
         )
 
 
-def _make_model(model_name: str) -> LoggedChatOpenAI:
+def _make_model(
+    model_name: str, *, http_async_client: httpx.AsyncClient | None = None
+) -> LoggedChatOpenAI:
     api_key = settings.zhipuai_api_key.strip()
     if not api_key or api_key.startswith("xxxx"):
         raise ValueError("未配置 ZHIPUAI_API_KEY")
@@ -104,12 +107,15 @@ def _make_model(model_name: str) -> LoggedChatOpenAI:
         timeout=120,
         # 智谱兼容接口不支持此参数。
         disabled_params={"parallel_tool_calls": None},
+        http_async_client=http_async_client,
     )
 
 
-def make_smart_llm() -> LoggedChatOpenAI:
+def make_smart_llm(
+    *, http_async_client: httpx.AsyncClient | None = None
+) -> LoggedChatOpenAI:
     """创建决策和写作模型实例。"""
-    return _make_model(settings.smart_model)
+    return _make_model(settings.smart_model, http_async_client=http_async_client)
 
 
 def make_fast_llm() -> LoggedChatOpenAI:

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
     # 会话状态数据库，可通过 CHECKPOINT_DB_PATH 环境变量覆盖。
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
+    # 路由候选采集单独开关，记录实际输出，不作为评测正确答案。
+    routing_capture_enabled: bool = True
+    routing_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "routing" / "routing_cases.jsonl"
+    )
 
     # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
     smart_model: str = "glm-4.5-air"

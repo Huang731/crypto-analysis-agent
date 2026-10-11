@@ -1,21 +1,19 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
 import logging
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, model_validator
 from tenacity import (
     before_sleep_log,
     retry,
     stop_after_attempt,
     wait_random_exponential,
 )
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
@@ -26,12 +24,15 @@ from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import trace_generation_call, trace_span
+from eval_agent.routing.route_decision import (
+    RouteDecision,
+    RouteTarget,
+    append_routing_candidate,
+    decide_route,
+)
 from prompts.crypto_analysis import history_summary_prompt
-from prompts.routing import routing_prompt
 
 _LOG = get_logger("crypto_analysis.routing")
-
-RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
 
 
 @retry(
@@ -46,25 +47,6 @@ async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     response = await llm.ainvoke(prompt, config={"tags": ["crypto_history_summary"]})
     output = HistorySummaryOutput(history_summary=response.content)
     return output.history_summary
-
-
-class RouteDecision(BaseModel):
-    """路由只选择一个分支，直接回复时必须提供正文。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    route: RouteTarget
-    direct_reply: str = ""
-
-    @model_validator(mode="after")
-    def validate_reply(self) -> Self:
-        """拒绝空直接回复，以及专家分支夹带的回复。"""
-        if self.route == "direct":
-            if not self.direct_reply.strip():
-                raise ValueError("直接回复分支必须提供非空正文")
-        elif self.direct_reply:
-            raise ValueError("专家分支的 direct_reply 必须为空")
-        return self
 
 
 class RoutingState(TypedDict, total=False):
@@ -127,40 +109,17 @@ def build_routing_graph(
         }
 
     @timed_node
-    @retry(
-        stop=stop_after_attempt(2),
-        wait=wait_random_exponential(min=1, max=2),
-        before_sleep=before_sleep_log(_LOG, logging.WARNING),
-        reraise=True,
-    )
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
-        messages = [
-            SystemMessage(content=routing_prompt()),
-            HumanMessage(content=state["resolved_question"]),
-        ]
-        decision = await route_decision(messages)
-        return decision.model_dump()
-
-    @trace_generation_call(
-        name="routing_decision",
-        model=settings.smart_model,
-        input_arg="messages",
-        input_format="messages",
-        output_format="json",
-    )
-    async def route_decision(
-        messages: list[SystemMessage | HumanMessage],
-    ) -> RouteDecision:
-        """沿用路由结构化结果校验，追踪范围只覆盖模型调用和校验。"""
-        decision = await smart.with_structured_output(
-            RouteDecision, method="function_calling"
-        ).ainvoke(messages)
-        if not isinstance(decision, RouteDecision):
-            return RouteDecision(
-                route="direct", direct_reply="暂时无法处理这次提问，请重试。"
+        decision: RouteDecision = await decide_route(smart, state["resolved_question"])
+        if settings.routing_capture_enabled:
+            append_routing_candidate(
+                original_question=state["scope"]["original_question"],
+                resolved_question=state["resolved_question"],
+                decision=decision,
+                path=settings.routing_capture_path,
             )
-        return decision
+        return decision.model_dump()
 
     @timed_node
     async def summarize_history(state: RoutingState) -> dict[str, str]:
