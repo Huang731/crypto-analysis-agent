@@ -1,4 +1,4 @@
-"""采集规划候选，并独立调用规划函数评分和保存 Langfuse 实验。"""
+"""独立调用业务规划函数评分，并保存 Langfuse 实验。"""
 
 import argparse
 import hashlib
@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 import httpx
 import truststore
@@ -27,43 +27,6 @@ from app.crypto_analysis.crypto_analysis_agent import (
 from app.crypto_analysis.skill_loader import get_skill_loader
 from app.llm.model import make_smart_llm
 from prompts.crypto_analysis import analysis_plan_prompt
-
-
-class PlanningCandidateInput(BaseModel):
-    """保留规划模型实际收到的问题。"""
-
-    model_config = ConfigDict(extra="forbid")
-    resolved_question: str
-
-
-class PlanningCandidate(BaseModel):
-    """实际计划已经由生产规划函数校验，仅作为候选输出保留。"""
-
-    model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
-    original_question: str
-    input: PlanningCandidateInput
-    actual_output: dict[str, Any]
-
-
-def append_planning_candidate(
-    *,
-    original_question: str,
-    resolved_question: str,
-    decision: dict[str, Any],
-    path: str | Path,
-) -> None:
-    """一次追加完整 JSONL 记录，保留中文和已有候选。"""
-    candidate = PlanningCandidate(
-        original_question=original_question,
-        input=PlanningCandidateInput(resolved_question=resolved_question),
-        actual_output=decision,
-    )
-    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("a", encoding="utf-8") as output_file:
-        output_file.write(line)
 
 
 class PlanningInput(BaseModel):

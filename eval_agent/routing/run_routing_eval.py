@@ -19,11 +19,15 @@ from langfuse.api import DatasetItem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.config.config import _env_files, settings
+from app.config.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_smart_llm
+from app.orchestration.routing import (
+    RouteCallState,
+    RouteDecision,
+    RouteTarget,
+    decide_route,
+)
 from prompts.routing import routing_prompt
-
-from .route_decision import RouteCallState, RouteDecision, RouteTarget, decide_route
 
 
 class RoutingInput(BaseModel):
@@ -286,7 +290,7 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
         "working_tree_sha256": hashlib.sha256(
-            Path(__file__).with_name("route_decision.py").read_bytes()
+            (PROJECT_ROOT / "app" / "orchestration" / "routing.py").read_bytes()
         ).hexdigest(),
         "model": settings.smart_model,
         "repetitions": str(args.repetitions),

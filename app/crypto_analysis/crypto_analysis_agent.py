@@ -5,7 +5,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from math import fsum
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRetryMiddleware
@@ -207,6 +209,43 @@ async def create_analysis_plan(
         settings.fast_model,
     )
     return plan.model_dump()
+
+
+class PlanningCandidateInput(BaseModel):
+    """保留规划模型实际收到的问题。"""
+
+    model_config = ConfigDict(extra="forbid")
+    resolved_question: str
+
+
+class PlanningCandidate(BaseModel):
+    """实际计划已经由生产规划函数校验，仅作为候选输出保留。"""
+
+    model_config = ConfigDict(extra="forbid")
+    case_id: str = Field(default_factory=lambda: uuid4().hex)
+    original_question: str
+    input: PlanningCandidateInput
+    actual_output: dict[str, Any]
+
+
+def append_planning_candidate(
+    *,
+    original_question: str,
+    resolved_question: str,
+    decision: dict[str, Any],
+    path: str | Path,
+) -> None:
+    """一次追加完整 JSONL 记录，保留中文和已有候选。"""
+    candidate = PlanningCandidate(
+        original_question=original_question,
+        input=PlanningCandidateInput(resolved_question=resolved_question),
+        actual_output=decision,
+    )
+    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as output_file:
+        output_file.write(line)
 
 
 # 指标工具 Agent
@@ -496,11 +535,6 @@ def build_dynamic_analysis_agent(
                     skill_loader.format_skill_descriptions(),
                 )
                 if settings.planning_capture_enabled:
-                    # 采集入口与评测合并后按需导入，避免与规划模块循环依赖。
-                    from eval_agent.planning.run_planning_eval import (
-                        append_planning_candidate,
-                    )
-
                     append_planning_candidate(
                         original_question=state["scope"]["original_question"],
                         resolved_question=question,

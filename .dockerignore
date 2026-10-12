@@ -24,6 +24,8 @@ venv/
 # 数据通过挂载提供，开发资料不打入镜像。
 data/
 logs/
+eval_agent/
+outputs/
 *.tar.gz
 docs/
 tests/
