@@ -358,57 +358,10 @@ async def execute_skill(
                 agent_config = {
                     "recursion_limit": metric_agent_step_limit(len(scoring.metrics))
                 }
-                # 打印图调用参数；运行上下文不会自动成为模型的聊天消息。
-                _LOG.info(
-                    "技能 Agent 调用入参：%s",
-                    {
-                        "input": {
-                            **agent_input,
-                            "messages": [
-                                message.model_dump(mode="json", serialize_as_any=True)
-                                for message in agent_input["messages"]
-                            ],
-                        },
-                        "context": {
-                            "skill": skill.model_dump(mode="json"),
-                            "scope": agent_context["scope"],
-                        },
-                        "config": agent_config,
-                    },
-                    extra={
-                        "event": "analysis.metric_agent.input",
-                        "skill_name": skill.name,
-                    },
-                )
                 state = await metric_agent.ainvoke(
                     agent_input,
                     context=agent_context,
                     config=agent_config,
-                )
-                # 只打印证据概要与指标结果，避免重复输出原始行情和工具消息。
-                _LOG.info(
-                    "技能 Agent 调用出参：%s",
-                    {
-                        "evidence": {
-                            evidence_id: {
-                                key: value
-                                for key, value in evidence.items()
-                                if key != "raw"
-                            }
-                            for evidence_id, evidence in state["evidence"].items()
-                        },
-                        "indicator_results": state["indicator_results"],
-                        "tool_calls": [
-                            call
-                            for message in state["messages"]
-                            if isinstance(message, AIMessage)
-                            for call in message.tool_calls
-                        ],
-                    },
-                    extra={
-                        "event": "analysis.metric_agent.output",
-                        "skill_name": skill.name,
-                    },
                 )
             # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
             records = state["indicator_results"]
@@ -490,7 +443,9 @@ async def _generate_skill_content(
 @trace_generation_call(name="crypto_skill_output", model=settings.smart_model)
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
-    response = await llm.with_retry(stop_after_attempt=2).ainvoke(
+    # 仅当前技能输出调用关闭深度思考，保留共享模型的配置。
+    skill_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
+    response = await skill_llm.with_retry(stop_after_attempt=2).ainvoke(
         prompt, config={"tags": ["crypto_skill_output"]}
     )
     output = SkillOutput(content=response.content)

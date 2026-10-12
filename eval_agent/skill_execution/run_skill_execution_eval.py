@@ -19,6 +19,7 @@ from typing import Any, Literal
 from unittest.mock import patch
 from uuid import NAMESPACE_URL, uuid5
 
+import httpx
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.outputs import LLMResult
@@ -30,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from app.config.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_agent import build_metric_agent, execute_skill
 from app.crypto_analysis.skill_loader import LoadedSkill
-from app.llm.model import make_fast_llm
+from app.llm.model import _make_model
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from prompts.crypto_analysis import metric_agent_system_prompt, metric_execution_prompt
 
@@ -371,8 +372,10 @@ async def evaluate_skill(
     """真实模型选择工具，只替换取数返回，沿用生产计算器、重试与单次超时。"""
     skill = inputs.skill
     replay = ReplayState(responses=inputs.source_responses)
-    llm = make_fast_llm()
+    # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
+    http_client = httpx.AsyncClient(timeout=120)
     try:
+        llm = _make_model(settings.fast_model, http_async_client=http_client)
         with ExitStack() as stack:
             for source, target in SOURCE_TARGETS.items():
                 stack.enter_context(patch(target, new=replay.source_function(source)))
@@ -417,8 +420,7 @@ async def evaluate_skill(
                 )
                 return output
     finally:
-        await llm.root_async_client.close()
-        llm.root_client.close()
+        await http_client.aclose()
 
 
 def values_equal(actual: Any, expected: Any) -> bool:
