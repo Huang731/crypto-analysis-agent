@@ -4,7 +4,6 @@ import operator
 from typing import Annotated, Any
 
 from langchain.agents import AgentState
-from pydantic import BaseModel, ConfigDict, Field
 from typing_extensions import TypedDict
 
 from app.crypto_analysis.skill_loader import LoadedSkill
@@ -38,20 +37,6 @@ class SkillResult(TypedDict):
     name: str
     content: str
     cache_hit: bool
-
-
-class SkillOutput(BaseModel):
-    """技能生成模型只输出完整的 Markdown 内容。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    content: str = Field(min_length=1, strict=True)
-
-
-class HistorySummaryOutput(BaseModel):
-    """同会话累计结论摘要，校验非空字符串。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    history_summary: str = Field(min_length=1, strict=True)
 
 
 class DynamicAnalysisState(TypedDict, total=False):

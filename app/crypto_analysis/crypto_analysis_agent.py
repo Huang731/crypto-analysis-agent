@@ -30,10 +30,8 @@ from tenacity import (
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
     DynamicAnalysisState,
-    HistorySummaryOutput,
     MetricAgentState,
     MetricToolContext,
-    SkillOutput,
     SkillResult,
     SkillWorkerState,
 )
@@ -80,8 +78,12 @@ async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     response = await summary_llm.ainvoke(
         prompt, config={"tags": ["crypto_history_summary"]}
     )
-    output = HistorySummaryOutput(history_summary=response.content)
-    return output.history_summary
+    if not isinstance(response.content, str):
+        raise TypeError("历史摘要必须是字符串")
+    summary = response.content.strip()
+    if not summary:
+        raise ValueError("历史摘要不能为空")
+    return summary
 
 
 @retry(
@@ -206,7 +208,7 @@ async def create_analysis_plan(
         AnalysisPlan,
         prompt,
         "crypto_analysis_plan",
-        settings.fast_model,
+        settings.smart_model,
     )
     return plan.model_dump()
 
@@ -487,8 +489,12 @@ async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     response = await skill_llm.with_retry(stop_after_attempt=2).ainvoke(
         prompt, config={"tags": ["crypto_skill_output"]}
     )
-    output = SkillOutput(content=response.content)
-    return output.content
+    if not isinstance(response.content, str):
+        raise TypeError("技能内容必须是字符串")
+    content = response.content.strip()
+    if not content:
+        raise ValueError("技能内容不能为空")
+    return content
 
 
 def _build_skill_update(

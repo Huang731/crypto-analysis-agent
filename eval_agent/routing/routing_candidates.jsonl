@@ -19,3 +19,6 @@
 {"case_id":"36d8172b59c54c1b86108b38c14068eb","original_question":"那我改减仓吗？","input":{"resolved_question":"在当前的市场环境下，您是否应该减仓比特币（BTC）？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"69bd5c6e7213499bac2fc4a79f4d16e2","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场趋势和价格变动。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"28b3fe4493a6464ea2c57835b3c47920","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的趋势和资金面。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"a514b0fa4a3b41f4aaf5ba37ac1e6735","original_question":"继续","input":{"resolved_question":"继续分析比特币（BTC）的趋势和资金面。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"1882e426dda64227a219c50ee591e794","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的现状和趋势。"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"9850eb840f9143c58bfdc36ff2859d6a","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的趋势和资金面。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
