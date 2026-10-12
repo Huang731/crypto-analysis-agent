@@ -283,10 +283,11 @@ def load_cases(path: Path) -> list[SkillExecutionCase]:
 def tool_trajectory(
     state: dict[str, Any] | None, skill: LoadedSkill
 ) -> tuple[list[dict[str, Any]], int, bool]:
-    """逐消息核对先取数再引用证据，不限制不同指标的合法执行顺序。"""
+    """核对组合工具的结果记录，或分步工具的证据引用，不限制合法执行顺序。"""
     if state is None:
         return [], 0, False
     calls: list[dict[str, Any]] = []
+    calls_by_id: dict[str, dict[str, Any]] = {}
     available: set[str] = set()
     errors = 0
     valid = True
@@ -294,6 +295,7 @@ def tool_trajectory(
         if message.type == "ai":
             for call in message.tool_calls:
                 calls.append(dict(call))
+                calls_by_id[call["id"]] = call
                 if call["name"] not in skill.tools:
                     valid = False
                 if "evidence_id" in call["args"]:
@@ -305,6 +307,24 @@ def tool_trajectory(
                 valid = False
                 continue
             payload = json.loads(message.content)
+            if "indicators" in payload:
+                call = calls_by_id.get(message.tool_call_id)
+                summaries = payload["indicators"]
+                metric_ids = [item["indicator_id"] for item in summaries]
+                valid &= call is not None and call["args"] == {}
+                valid &= len(metric_ids) == len(set(metric_ids))
+                valid &= set(metric_ids) == {
+                    metric.id for metric in skill.scoring.metrics
+                }
+                valid &= any(
+                    evidence_id.startswith(f"{message.tool_call_id}:")
+                    for evidence_id in state["evidence"]
+                )
+                for item in summaries:
+                    result = state["indicator_results"].get(item["indicator_id"])
+                    valid &= result is not None and item["status"] == result["status"]
+                    if result is not None and result["status"] != "ok":
+                        valid &= item.get("reason") == result["reason"]
             evidence_id = payload.get("evidence_id")
             if evidence_id is not None:
                 valid &= evidence_id == message.tool_call_id
