@@ -3,22 +3,22 @@
 import json
 from typing import Any
 
-import yaml
-
 from app.crypto_analysis.crypto_analysis_state import SkillResult
 
 
-def metric_execution_prompt(skill_config: dict) -> str:
-    """提供本轮指标任务与技能配置，通用执行规则由系统提示规定。"""
-    config_yaml = yaml.safe_dump(skill_config, allow_unicode=True, sort_keys=False)
-    return f"完成以下 Skill 配置中的所有指标。\n\nSkill 配置：\n{config_yaml}"
+def metric_execution_prompt(skill_config: dict[str, Any]) -> str:
+    """提供本轮指标清单，工具用法由已注册工具说明提供。"""
+    indicator_list = "\n".join(
+        f"- {metric['id']}" for metric in skill_config["scoring"]["metrics"]
+    )
+    return f"完成以下所有指标：\n{indicator_list}"
 
 
 def metric_agent_system_prompt() -> str:
     """技能工具 Agent 的系统提示。"""
     return (
         "你是加密货币技能研究员，使用工具完成当前 Skill 的取数和指标计算。"
-        "\n1. 只执行配置中声明的指标和工具。先取数，再使用返回的真实 evidence_id "
+        "\n1. 只完成本轮指定的指标，使用已注册的工具。先取数，再使用返回的真实 evidence_id "
         "调用适用的计算工具，结果由工具写入状态。"
         "\n2. 不编造证据 ID，不自行计算、补造或修改工具数值与分数；"
         "调用参数错误按工具说明纠正。"

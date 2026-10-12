@@ -257,9 +257,9 @@ def build_metric_agent(llm: Any, skill: LoadedSkill) -> CompiledStateGraph:
     return create_agent(
         model=llm,
         tools=tools,
-        # 声明 evidence 与 indicator_results，工具才能写入原始数据和指标结果。
+        # 声明 evidence、indicator_results 状态字段及其合并规则。
         state_schema=MetricAgentState,
-        # 声明 skill 与 scope，工具才能读取币种，且模型不能修改。
+        # 声明工具运行上下文中 skill、scope 的字段与类型。
         context_schema=MetricToolContext,
         system_prompt=metric_agent_system_prompt(),
         middleware=[
@@ -345,19 +345,59 @@ async def execute_skill(
     with trace_span("analysis.skill.execute", skill_name=skill.name) as node_span:
         try:
             with trace_span("analysis.metric_agent.graph", skill_name=skill.name):
-                state = await metric_agent.ainvoke(
+                agent_input = {
+                    "messages": [
+                        HumanMessage(
+                            content=metric_execution_prompt(skill.model_dump())
+                        )
+                    ],
+                    "evidence": {},
+                    "indicator_results": {},
+                }
+                agent_context = {"skill": skill, "scope": dict(scope)}
+                agent_config = {
+                    "recursion_limit": metric_agent_step_limit(len(scoring.metrics))
+                }
+                # 打印图调用参数；运行上下文不会自动成为模型的聊天消息。
+                _LOG.info(
+                    "技能 Agent 调用入参：%s",
                     {
-                        "messages": [
-                            HumanMessage(
-                                content=metric_execution_prompt(skill.model_dump())
-                            )
-                        ],
-                        "evidence": {},
-                        "indicator_results": {},
+                        "input": {
+                            **agent_input,
+                            "messages": [
+                                message.model_dump(mode="json", serialize_as_any=True)
+                                for message in agent_input["messages"]
+                            ],
+                        },
+                        "context": {
+                            "skill": skill.model_dump(mode="json"),
+                            "scope": agent_context["scope"],
+                        },
+                        "config": agent_config,
                     },
-                    context={"skill": skill, "scope": dict(scope)},
-                    config={
-                        "recursion_limit": metric_agent_step_limit(len(scoring.metrics))
+                    extra={
+                        "event": "analysis.metric_agent.input",
+                        "skill_name": skill.name,
+                    },
+                )
+                state = await metric_agent.ainvoke(
+                    agent_input,
+                    context=agent_context,
+                    config=agent_config,
+                )
+                # 保留完整消息、工具调用及原始数据，便于对照实际执行结果。
+                _LOG.info(
+                    "技能 Agent 调用出参：%s",
+                    {
+                        **state,
+                        "messages": [
+                            message.model_dump(mode="json", serialize_as_any=True)
+                            for message in state["messages"]
+                        ],
+                    },
+                    extra={
+                        "event": "analysis.metric_agent.output",
+                        "skill_name": skill.name,
                     },
                 )
             # 模型最终生成的文本不作为指标分数，遗漏项明确记为未取得证据。
