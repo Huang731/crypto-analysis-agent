@@ -2,19 +2,9 @@
 name: analyzing-crypto-liquidity
 description: >-
   评估 DXY、USDT+USDC 市值、M2 和 WALCL，适用于美元及加密市场流动性分析；不分析政策利率。
-  取数后使用对应 evidence_id 计算：
-  get_eodhd_dxy → calculate_dxy_indicator；
-  get_cmc_stablecoin_market_cap → calculate_stablecoin_indicator；
-  get_fred_observations(series_id="M2SL") → calculate_m2_indicator；
-  get_fred_observations(series_id="WALCL") → calculate_fed_balance_indicator。
+  一次调用并行取数并计算 DXY_Trend、Stable_MCap、M2_YoY 和 Fed_Balance。
 tools:
-  - get_eodhd_dxy
-  - calculate_dxy_indicator
-  - get_cmc_stablecoin_market_cap
-  - calculate_stablecoin_indicator
-  - get_fred_observations
-  - calculate_m2_indicator
-  - calculate_fed_balance_indicator
+  - analyze_liquidity
 scoring:
   name: 美元流动性与加密内部流动性
   metrics:

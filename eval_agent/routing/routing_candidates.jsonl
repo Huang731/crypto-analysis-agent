@@ -15,3 +15,4 @@
 {"case_id":"664eaf9db0fe48bb8e7a1f90659f8c1c","original_question":"继续","input":{"resolved_question":"继续分析比特币（BTC）的市场趋势和投资前景。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"261b8c0bcc534542969ef78ae0951879","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场表现和价格趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"3597ed73c7b141b09663f579b259145e","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场趋势和投资前景。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"8600757fb9314fbe86df030b8d902965","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场表现和交易数据。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}

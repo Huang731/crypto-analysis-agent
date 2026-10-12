@@ -385,14 +385,24 @@ async def execute_skill(
                     context=agent_context,
                     config=agent_config,
                 )
-                # 保留完整消息、工具调用及原始数据，便于对照实际执行结果。
+                # 只打印证据概要与指标结果，避免重复输出原始行情和工具消息。
                 _LOG.info(
                     "技能 Agent 调用出参：%s",
                     {
-                        **state,
-                        "messages": [
-                            message.model_dump(mode="json", serialize_as_any=True)
+                        "evidence": {
+                            evidence_id: {
+                                key: value
+                                for key, value in evidence.items()
+                                if key != "raw"
+                            }
+                            for evidence_id, evidence in state["evidence"].items()
+                        },
+                        "indicator_results": state["indicator_results"],
+                        "tool_calls": [
+                            call
                             for message in state["messages"]
+                            if isinstance(message, AIMessage)
+                            for call in message.tool_calls
                         ],
                     },
                     extra={

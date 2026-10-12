@@ -1,9 +1,11 @@
 """指标工具的取数、证据处理、计算调用与结果标准化。"""
 
+import asyncio
 import json
 import re
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import date
 from math import isfinite
 from traceback import format_tb
@@ -19,6 +21,17 @@ from app.observability import get_logger
 from app.tracing import trace_span
 
 _LOG = get_logger("crypto_analysis.metrics")
+
+
+@dataclass(frozen=True)
+class MetricJob:
+    """一次取数及其共用原始数据的计算器，由代码定义。"""
+
+    data_kind: str
+    source_action: str
+    source_function: Callable[..., Awaitable[dict[str, Any]]]
+    arguments: dict[str, Any]
+    calculators: dict[str, Callable[[dict[str, Any]], dict[str, Any]]]
 
 
 def _log_reason(reason: str) -> str:
@@ -57,11 +70,11 @@ _METRIC_FIELDS = {
         ("current_midpoint_pct", "baseline_midpoint_pct", "change_bp", "policy_change"),
     ),
     "Fear_Greed": (
-        ("value", "value_classification", "record_timestamp"),
+        ("value", "value_classification"),
         ("signal_reference",),
     ),
     "Trend": (
-        ("symbol", "kline_count", "first_open_time", "last_close_time", "close"),
+        ("symbol", "first_open_time", "last_close_time", "close"),
         (
             "ma50",
             "ma200",
@@ -70,34 +83,19 @@ _METRIC_FIELDS = {
             "adx14",
             "plus_di",
             "minus_di",
-            "admission",
-            "timing",
-            "confirmation",
-            "intermediate_values",
-            "calculation_method",
         ),
     ),
     "Funding": (
-        (
-            "symbol",
-            "funding_times",
-            "funding_rates",
-            "funding_timestamp",
-            "price_source",
-            "funding_source",
-        ),
+        ("symbol",),
         ("funding_average_pct", "funding_price_change_pct"),
     ),
     "OI": (
         (
             "symbol",
-            "oi_timestamp",
             "latest_oi",
             "baseline_oi",
             "latest_price",
             "baseline_price",
-            "price_source",
-            "funding_source",
         ),
         (
             "oi_change_pct",
@@ -108,18 +106,8 @@ _METRIC_FIELDS = {
         ),
     ),
     "ETF_Flows": (
-        (
-            "trading_dates",
-            "daily_flows_usd_100m",
-            "latest_flow_usd_100m",
-            "previous_five_day_flow_usd_100m",
-        ),
-        (
-            "five_day_flow_usd_100m",
-            "twenty_day_flow_usd_100m",
-            "five_day_score",
-            "twenty_day_score",
-        ),
+        ("latest_flow_usd_100m", "previous_five_day_flow_usd_100m"),
+        ("five_day_flow_usd_100m", "twenty_day_flow_usd_100m"),
     ),
     "DXY_Trend": (
         ("dxy", "ma50", "ma200"),
@@ -133,7 +121,6 @@ _METRIC_FIELDS = {
             "ma30_market_cap",
             "seven_day_market_cap",
             "thirty_day_market_cap",
-            "quote_timestamps",
         ),
         (
             "ma30_change_pct",
@@ -245,42 +232,15 @@ def _normalize_result(
 # 工具证据处理
 
 
-def _tool_message(
-    runtime: ToolRuntime[MetricToolContext], content: dict[str, Any]
-) -> ToolMessage:
-    return ToolMessage(
-        content=json.dumps(content, ensure_ascii=False),
-        tool_call_id=runtime.tool_call_id,
-    )
-
-
-def _tool_error(runtime: ToolRuntime[MetricToolContext], reason: str) -> ToolMessage:
-    """把可纠正的调用参数错误交还模型，不产生指标数据或分数。"""
-    _LOG.warning(
-        "metric.tool.rejected",
-        extra={
-            "event": "metric.tool.rejected",
-            "skill_name": runtime.context["skill"].name,
-            "tool_call_id": runtime.tool_call_id,
-            "reason": _log_reason(reason),
-        },
-    )
-    return ToolMessage(
-        content=json.dumps({"status": "error", "reason": reason}, ensure_ascii=False),
-        tool_call_id=runtime.tool_call_id,
-        status="error",
-    )
-
-
 async def _fetch_evidence(
     runtime: ToolRuntime[MetricToolContext],
+    evidence_id: str,
     data_kind: str,
     source_action: str,
     source_function: Callable[..., Awaitable[dict[str, Any]]],
     arguments: dict[str, Any],
-) -> Command:
-    """保存真实原始响应，只把证据标识与概要交给模型。"""
-    evidence_id = runtime.tool_call_id
+) -> dict[str, Any]:
+    """取得原始响应或真实失败记录，供同一次调用直接计算。"""
     started = time.perf_counter()
     record = {"data_kind": data_kind, "source_action": source_action}
     with trace_span(
@@ -296,7 +256,7 @@ async def _fetch_evidence(
                 else type(exc).__name__
             )
             record.update(status="data_missing", reason=reason)
-            summary = {"evidence_id": evidence_id, **record}
+            span.output = {"evidence_id": evidence_id, **record}
             span.metadata["status"] = "error"
             _LOG.warning(
                 "metric.fetch.failed",
@@ -315,44 +275,24 @@ async def _fetch_evidence(
             )
         else:
             record.update(status="ok", raw=raw)
-            summary = {
+            span.output = {
                 "evidence_id": evidence_id,
                 "data_kind": data_kind,
                 "status": "ok",
                 "source": raw["source"],
             }
-            span.output = summary
-    return Command(
-        update={
-            "evidence": {evidence_id: record},
-            "messages": [_tool_message(runtime, summary)],
-        }
-    )
+    return record
 
 
 def _compute_metric(
     runtime: ToolRuntime[MetricToolContext],
     evidence_id: str,
     metric_id: str,
-    data_kind: str,
+    evidence: dict[str, Any],
     calculator: Callable[[dict[str, Any]], dict[str, Any]],
-) -> Command | ToolMessage:
-    """计算器直接读取工具状态中的原始数据，模型不传入或修改数值。"""
+) -> dict[str, Any]:
+    """直接计算本次取得的原始数据，并按 Skill 字段标准化。"""
     skill = runtime.context["skill"]
-    scoring = skill.scoring
-    if metric_id not in {metric.id for metric in scoring.metrics}:
-        return _tool_error(
-            runtime, f"指标 {metric_id} 不属于当前技能，请选择本技能适用的工具"
-        )
-    if evidence_id not in runtime.state["evidence"]:
-        return _tool_error(
-            runtime, "证据 ID 不存在，请先取得真实数据并使用工具返回的 evidence_id"
-        )
-    evidence = runtime.state["evidence"][evidence_id]
-    if evidence["data_kind"] != data_kind:
-        return _tool_error(
-            runtime, f"证据类型不适用于指标 {metric_id}，请核对取数工具返回的 data_kind"
-        )
     started = time.perf_counter()
     stage = "fetch"
     error_type: str | None = None
@@ -407,9 +347,69 @@ def _compute_metric(
                 )
             else:
                 _LOG.warning("metric.result.unavailable", extra=fields)
+    return result
+
+
+async def _execute_metrics(
+    runtime: ToolRuntime[MetricToolContext], jobs: Sequence[MetricJob]
+) -> Command:
+    """一次工具调用完成取数和计算，只向模型返回各指标状态。"""
+    metric_ids = [metric_id for job in jobs for metric_id in job.calculators]
+    configured_ids = {metric.id for metric in runtime.context["skill"].scoring.metrics}
+    if len(metric_ids) != len(set(metric_ids)) or set(metric_ids) != configured_ids:
+        raise ValueError("组合工具的指标与当前技能配置不一致")
+    if len({job.data_kind for job in jobs}) != len(jobs):
+        raise ValueError("组合工具的取数类型不能重复")
+
+    # 同一工具调用可能取多类数据，按类型区分证据 ID，避免状态合并时覆盖。
+    fetched = await asyncio.gather(
+        *(
+            _fetch_evidence(
+                runtime,
+                f"{runtime.tool_call_id}:{job.data_kind}",
+                job.data_kind,
+                job.source_action,
+                job.source_function,
+                job.arguments,
+            )
+            for job in jobs
+        )
+    )
+    evidence: dict[str, dict[str, Any]] = {}
+    results: dict[str, dict[str, Any]] = {}
+    indicator_evidence_ids: dict[str, str] = {}
+    for job, record in zip(jobs, fetched, strict=True):
+        evidence_id = f"{runtime.tool_call_id}:{job.data_kind}"
+        evidence[evidence_id] = record
+        for metric_id, calculator in job.calculators.items():
+            results[metric_id] = _compute_metric(
+                runtime,
+                evidence_id,
+                metric_id,
+                record,
+                calculator,
+            )
+            indicator_evidence_ids[metric_id] = evidence_id
+
+    summaries = [
+        {
+            "indicator_id": metric_id,
+            "status": result["status"],
+            **({"reason": result["reason"]} if result["status"] != "ok" else {}),
+        }
+        for metric_id, result in results.items()
+    ]
     return Command(
         update={
-            "indicator_results": {metric_id: result},
-            "messages": [_tool_message(runtime, result)],
+            "evidence": evidence,
+            "indicator_results": results,
+            "messages": [
+                ToolMessage(
+                    content=json.dumps({"indicators": summaries}, ensure_ascii=False),
+                    tool_call_id=runtime.tool_call_id,
+                    # 证据关联供程序校验和追踪，不进入模型消息内容。
+                    artifact={"indicator_evidence_ids": indicator_evidence_ids},
+                )
+            ],
         }
     )

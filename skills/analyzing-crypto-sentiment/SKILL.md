@@ -2,10 +2,9 @@
 name: analyzing-crypto-sentiment
 description: >-
   按恐惧贪婪指数评估全市场情绪，适用于恐慌、贪婪和极端情绪分析；不代表单个币种的价格或资金。
-  get_cmc_fear_greed → calculate_fear_greed_indicator，使用返回的 evidence_id。
+  一次调用完成情绪指数取数与 Fear_Greed 计算。
 tools:
-  - get_cmc_fear_greed
-  - calculate_fear_greed_indicator
+  - analyze_sentiment
 scoring:
   name: 市场情绪
   metrics:

@@ -2,10 +2,9 @@
 name: analyzing-crypto-fed-policy
 description: >-
   按近三个月政策利率净变化判断偏鹰、偏鸽或中性，适用于加息、降息和利率政策分析；不分析 M2、WALCL 或 DXY。
-  get_fred_target_range → calculate_fed_rate_change_indicator，使用返回的 evidence_id。
+  一次调用完成政策利率取数与 Fed_Rate_Change_3M 计算。
 tools:
-  - get_fred_target_range
-  - calculate_fed_rate_change_indicator
+  - analyze_fed_policy
 scoring:
   name: 美联储政策与利率倾向
   metrics:

@@ -46,6 +46,20 @@ SOURCE_TARGETS = {
     "fred_observations": "app.crypto_analysis.tools.liquidity_tools.get_m2_yoy_change",
 }
 
+# 各指标必须使用对应类型的原始证据，共用数据的 OI 与 Funding 指向同一类型。
+METRIC_DATA_KINDS = {
+    "OI": "derivatives",
+    "Funding": "derivatives",
+    "ETF_Flows": "etf",
+    "Trend": "trend",
+    "Fed_Rate_Change_3M": "fed_target_range",
+    "Fear_Greed": "fear_greed",
+    "DXY_Trend": "dxy",
+    "Stable_MCap": "stablecoin",
+    "M2_YoY": "m2",
+    "Fed_Balance": "walcl",
+}
+
 
 class SourceResponse(BaseModel):
     """按数据源与参数匹配固定返回值，或模拟明确的取数异常。"""
@@ -283,12 +297,12 @@ def load_cases(path: Path) -> list[SkillExecutionCase]:
 def tool_trajectory(
     state: dict[str, Any] | None, skill: LoadedSkill
 ) -> tuple[list[dict[str, Any]], int, bool]:
-    """核对组合工具的结果记录，或分步工具的证据引用，不限制合法执行顺序。"""
+    """核对组合工具调用、各指标状态与完整证据关联。"""
     if state is None:
         return [], 0, False
     calls: list[dict[str, Any]] = []
     calls_by_id: dict[str, dict[str, Any]] = {}
-    available: set[str] = set()
+    responded: set[str] = set()
     errors = 0
     valid = True
     for message in state["messages"]:
@@ -298,8 +312,7 @@ def tool_trajectory(
                 calls_by_id[call["id"]] = call
                 if call["name"] not in skill.tools:
                     valid = False
-                if "evidence_id" in call["args"]:
-                    valid &= call["args"]["evidence_id"] in available
+                valid &= call["args"] == {}
         elif message.type == "tool":
             if message.status == "error":
                 # 框架校验错误是普通文本，保留失败事实，不当作取数证据解析。
@@ -307,30 +320,49 @@ def tool_trajectory(
                 valid = False
                 continue
             payload = json.loads(message.content)
-            if "indicators" in payload:
-                call = calls_by_id.get(message.tool_call_id)
-                summaries = payload["indicators"]
-                metric_ids = [item["indicator_id"] for item in summaries]
-                valid &= call is not None and call["args"] == {}
-                valid &= len(metric_ids) == len(set(metric_ids))
-                valid &= set(metric_ids) == {
-                    metric.id for metric in skill.scoring.metrics
-                }
-                valid &= any(
-                    evidence_id.startswith(f"{message.tool_call_id}:")
-                    for evidence_id in state["evidence"]
+            if "indicators" not in payload or not isinstance(message.artifact, dict):
+                valid = False
+                continue
+            references = message.artifact.get("indicator_evidence_ids")
+            if not isinstance(references, dict):
+                valid = False
+                continue
+            valid &= message.tool_call_id in calls_by_id
+            valid &= message.tool_call_id not in responded
+            responded.add(message.tool_call_id)
+            summaries = payload["indicators"]
+            metric_ids = [item["indicator_id"] for item in summaries]
+            valid &= len(metric_ids) == len(set(metric_ids))
+            valid &= set(metric_ids) == {metric.id for metric in skill.scoring.metrics}
+            valid &= set(references) == set(metric_ids)
+            call_evidence = {
+                evidence_id
+                for evidence_id in state["evidence"]
+                if evidence_id.startswith(f"{message.tool_call_id}:")
+            }
+            valid &= bool(call_evidence) and set(references.values()) == call_evidence
+            for item in summaries:
+                evidence_id = references.get(item["indicator_id"])
+                evidence = state["evidence"].get(evidence_id)
+                valid &= (
+                    evidence is not None
+                    and evidence["data_kind"]
+                    == (METRIC_DATA_KINDS[item["indicator_id"]])
                 )
-                for item in summaries:
-                    result = state["indicator_results"].get(item["indicator_id"])
-                    valid &= result is not None and item["status"] == result["status"]
-                    if result is not None and result["status"] != "ok":
-                        valid &= item.get("reason") == result["reason"]
-            evidence_id = payload.get("evidence_id")
-            if evidence_id is not None:
-                valid &= evidence_id == message.tool_call_id
-                valid &= evidence_id in state["evidence"]
-                available.add(evidence_id)
-    return calls, errors, valid and bool(calls)
+                result = state["indicator_results"].get(item["indicator_id"])
+                valid &= result is not None and item["status"] == result["status"]
+                if result is not None and result["status"] != "ok":
+                    valid &= item.get("reason") == result["reason"]
+    return (
+        calls,
+        errors,
+        (
+            valid
+            and bool(calls)
+            and len(calls_by_id) == len(calls)
+            and responded == calls_by_id.keys()
+        ),
+    )
 
 
 async def evaluate_skill(

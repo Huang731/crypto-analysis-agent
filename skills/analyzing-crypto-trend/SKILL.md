@@ -2,10 +2,9 @@
 name: analyzing-crypto-trend
 description: >-
   用 MA50、MA200、ADX 和 DI 评估目标资产的趋势、强度与确认情况，适用于走势及均线分析。
-  get_binance_trend_data → calculate_trend_indicator，使用返回的 evidence_id。
+  一次调用完成日线取数与 Trend 计算。
 tools:
-  - get_binance_trend_data
-  - calculate_trend_indicator
+  - analyze_trend
 scoring:
   name: 趋势与均线
   metrics:

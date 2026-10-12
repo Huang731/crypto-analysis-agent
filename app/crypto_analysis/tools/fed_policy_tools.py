@@ -1,7 +1,6 @@
 """取得政策目标区间，并计算三个月利率净变化。"""
 
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
@@ -10,40 +9,31 @@ from app.crypto_analysis.calculators.fed_policy_calculator import (
 )
 from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.crypto_analysis.metric_service import (
-    _compute_metric,
-    _fetch_evidence,
+    MetricJob,
+    _execute_metrics,
 )
 from app.crypto_analysis.sources.fred_source import get_fed_target_range
 
 
 @tool
-async def get_fred_target_range(
+async def analyze_fed_policy(
     runtime: ToolRuntime[MetricToolContext],
 ) -> Command:
-    """从 FRED 取得 DFEDTARL/DFEDTARU 原始日度序列。返回 evidence_id，供利率变化计算工具使用。"""
-    return await _fetch_evidence(
+    """取得政策利率序列并计算、记录 Fed_Rate_Change_3M，返回指标状态。"""
+    return await _execute_metrics(
         runtime,
-        "fed_target_range",
-        "fred.get_fed_target_range",
-        get_fed_target_range,
-        {},
-    )
-
-
-@tool
-def calculate_fed_rate_change_indicator(
-    evidence_id: str, runtime: ToolRuntime[MetricToolContext]
-) -> Command | ToolMessage:
-    """用 FRED 证据计算 Fed_Rate_Change_3M：同日上下限、中点、三个月基点净变化与固定评分。"""
-    return _compute_metric(
-        runtime,
-        evidence_id,
-        "Fed_Rate_Change_3M",
-        "fed_target_range",
-        calculate_fed_rate_change,
+        [
+            MetricJob(
+                data_kind="fed_target_range",
+                source_action="fred.get_fed_target_range",
+                source_function=get_fed_target_range,
+                arguments={},
+                calculators={"Fed_Rate_Change_3M": calculate_fed_rate_change},
+            )
+        ],
     )
 
 
 def build_fed_policy_tools() -> list[BaseTool]:
     """政策利率的取数与程序计算工具。"""
-    return [get_fred_target_range, calculate_fed_rate_change_indicator]
+    return [analyze_fed_policy]

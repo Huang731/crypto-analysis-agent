@@ -2,11 +2,9 @@
 name: analyzing-crypto-derivatives
 description: >-
   评估 OI 与资金费率，适用于杠杆、持仓量和多空拥挤分析；不判断价格趋势。
-  get_binance_derivatives_data → calculate_oi_indicator、calculate_funding_indicator，共用返回的 evidence_id。
+  一次取数并计算 OI、Funding，共用同一份原始证据。
 tools:
-  - get_binance_derivatives_data
-  - calculate_oi_indicator
-  - calculate_funding_indicator
+  - analyze_derivatives
 scoring:
   name: 衍生品数据
   metrics:
