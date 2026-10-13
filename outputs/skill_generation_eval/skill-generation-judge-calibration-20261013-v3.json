@@ -1,0 +1,450 @@
+{
+  "run_name": "skill-generation-judge-calibration-20261013-v3",
+  "metadata": {
+    "generator_model": "glm-4.5-air",
+    "judge_model": "glm-4-flash",
+    "scoring_method": "project_llm_judge_v1",
+    "faithfulness_definition": "正确表格字段与有证据支持的解读陈述占全部评测事实的比例",
+    "answer_relevancy_definition": "四个0至2的任务相关性量表之和除以8",
+    "cases_sha256": "3551a50c76ef88f724e6e0faff9d9c269df27b3de2edd8c9af77b200bda7b2b3",
+    "generation_prompt_sha256": "cb9c0dc842043d38f79869330e6693372e79aa0ea46dee48d408ce453ae4cbc4",
+    "judge_prompt_sha256": "1e109f85b5611907bc72bbdd86f934f0f057861a8affcb8647dafd36be0f011c",
+    "model_timeout_seconds": 120,
+    "max_attempts": 2,
+    "data_mode": "fixed_indicators_and_thought_context"
+  },
+  "summary": {
+    "generation_cases": 0,
+    "generation_passes": 0,
+    "judge_calibration_cases": 3,
+    "judge_calibration_passes": 1,
+    "execution_errors": 2,
+    "scored_generation_cases": 0,
+    "mean_faithfulness": null,
+    "mean_answer_relevancy": null,
+    "generation_duration": {
+      "mean_duration_ms": null,
+      "p50_duration_ms": null,
+      "p95_duration_ms": null
+    },
+    "judge_duration": {
+      "mean_duration_ms": 7550.532986002509,
+      "p50_duration_ms": 9194.133666984271,
+      "p95_duration_ms": 9344.61095801089
+    },
+    "generation_model_attempts": 0,
+    "judge_model_attempts": 3
+  },
+  "cases": [
+    {
+      "input": {
+        "mode": "judge_calibration",
+        "result": {
+          "name": "市场情绪",
+          "score": 2.5,
+          "reason": null,
+          "status": "ok",
+          "indicators": [
+            {
+              "url": "https://coinmarketcap.com/",
+              "unit": "index (0-100)",
+              "score": 2.5,
+              "reason": null,
+              "source": "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest",
+              "status": "ok",
+              "raw_values": {
+                "value": 55,
+                "value_classification": "Neutral"
+              },
+              "skill_name": "analyzing-crypto-sentiment",
+              "observed_at": "2026-10-12",
+              "indicator_id": "Fear_Greed",
+              "calculated_values": {
+                "signal_reference": "等待时机"
+              }
+            }
+          ],
+          "skill_name": "analyzing-crypto-sentiment"
+        },
+        "skill_name": "analyzing-crypto-sentiment",
+        "user_input": "请说明提供的恐惧贪婪指数数值、分类、分数和信号参考。",
+        "skill_source": "---\nname: analyzing-crypto-sentiment\ndescription: >-\n  按恐惧贪婪指数评估全市场情绪，适用于恐慌、贪婪和极端情绪分析；不代表单个币种的价格或资金。\n  一次调用完成情绪指数取数与 Fear_Greed 计算。\ntools:\n  - analyze_sentiment\nscoring:\n  name: 市场情绪\n  metrics:\n  - id: Fear_Greed\n    label: Fear_Greed\n    weight: 1.0\n    kind: numeric\n---\n\n# 市场情绪\n\n## 解读重点\n\n按检索到的材料结合恐惧贪婪指数、情绪分类和信号参考给出解读。\n",
+        "fixed_response": "恐惧贪婪指数为55，分类为Neutral，分数为2.5，信号参考为等待时机。",
+        "thought_context": {
+          "query": "加密市场的市场情绪",
+          "status": "ok",
+          "documents": [
+            {
+              "id": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55",
+              "content": "美国之所以会在20世纪80年代全力打击内幕交易，是因为内部人变得越来越贪婪而且肆无忌惮，结果落入纽约一位联邦检查员的手中，此人具有很大的政治野心。广泛的内幕交易显露出来的冰山一角被削平，但大量潜伏的内幕交易仍像冰山一样漂浮在海里。不要问这些冰山会撞到谁家的船，受损的是你的账户。  \n努力减少内幕交易就像努力灭除田野里的老鼠一样困难。灭鼠剂只能控制老鼠的繁衍速度，并不能根除老鼠。一位已经从一家公开上市的企业退休的老总跟我说，聪明人不会根据本公司的内幕消息来交易，而会在乡村俱乐部把这一消息告知他的高尔夫球友。往后，作为回报，这些球友们会把他们公司的消息告诉他，这样双方都能获利，而且还不会被查出问题。只要各成员都遵守同样的行为准则，不要太贪婪，这种内部人关系网就会很安全。  \n在期货市场上内幕交易是合法的。凭借技术分析就可以看出内部人的买卖情况。行情走势图能揭示出所有市场参与者的全部交易，甚至包括内部人的交易。  \n他们像其他人一样也会在行情图上留下痕迹，作为一名技术分析师，你的工作就是跟着他们去银行存钱准备买卖。",
+              "metadata": {
+                "source": "以交易为生-亚历山大·埃尔德.md",
+                "section": "以交易为生-亚历山大·埃尔德 > 第2章群体心理 > 2.2市场是什么",
+                "src_hash": "2d6e8ebd996ef65a2204b8ad9665d504",
+                "chunk_idx": 55
+              }
+            }
+          ]
+        },
+        "analysis_subject": "加密市场"
+      },
+      "expected_output": {
+        "skipped": false,
+        "faithfulness_max": 1,
+        "faithfulness_min": 1,
+        "answer_relevancy_max": 1,
+        "answer_relevancy_min": 0.75
+      },
+      "metadata": {
+        "case_id": "judge_calibration_supported",
+        "category": "judge_calibration",
+        "label_reason": "直接复述真实输入，应被支持且相关。 仅评测裁判，回答为明确标注的固定校准文本，不调用生产正文生成。"
+      },
+      "output": {
+        "execution_status": "success",
+        "response": "恐惧贪婪指数为55，分类为Neutral，分数为2.5，信号参考为等待时机。",
+        "judgment": {
+          "field_mappings": {},
+          "claims": [
+            {
+              "statement": "恐惧贪婪指数为55，分类为Neutral，分数为2.5，信号参考为等待时机。",
+              "supported": true,
+              "evidence_ids": [
+                "E0"
+              ],
+              "reason": "直接从提供的证据中提取了恐惧贪婪指数的数值、分类、分数和信号参考。"
+            }
+          ],
+          "relevance": {
+            "task_match": 2,
+            "coverage": 2,
+            "interpretation_focus": 1,
+            "scope": 2
+          },
+          "relevance_reason": "回答直接完成了题目，覆盖了本轮有证据的要求，解释了指标与实际材料的关系，但范围稍超出了本Skill职责。"
+        },
+        "faithfulness": 1.0,
+        "answer_relevancy": 0.875,
+        "field_checks": [],
+        "indicator_contract_valid": true,
+        "section_citations_valid": true,
+        "skipped": false,
+        "generation_duration_ms": 0.0005830079317092896,
+        "judge_duration_ms": 9194.133666984271,
+        "error_type": null,
+        "evidence_references": {
+          "E0": "成功指标",
+          "E1": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55"
+        },
+        "generation_model_attempts": 0,
+        "judge_model_attempts": 1,
+        "token_usage": {
+          "generation": [],
+          "judge": [
+            {
+              "input_tokens": 1687,
+              "output_tokens": 170,
+              "total_tokens": 1857,
+              "input_token_details": {},
+              "output_token_details": {}
+            }
+          ]
+        }
+      },
+      "scores": [
+        {
+          "name": "case_pass",
+          "value": 1,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        },
+        {
+          "name": "faithfulness",
+          "value": 1.0,
+          "comment": "{\"field_mappings\": {}, \"claims\": [{\"statement\": \"恐惧贪婪指数为55，分类为Neutral，分数为2.5，信号参考为等待时机。\", \"supported\": true, \"evidence_ids\": [\"E0\"], \"reason\": \"直接从提供的证据中提取了恐惧贪婪指数的数值、分类、分数和信号参考。\"}], \"relevance\": {\"task_match\": 2, \"coverage\": 2, \"interpretation_focus\": 1, \"scope\": 2}, \"relevance_reason\": \"回答直接完成了题目，覆盖了本轮有证据的要求，解释了指标与实际材料的关系，但范围稍超出了本Skill职责。\"}",
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        },
+        {
+          "name": "answer_relevancy",
+          "value": 0.875,
+          "comment": "{\"field_mappings\": {}, \"claims\": [{\"statement\": \"恐惧贪婪指数为55，分类为Neutral，分数为2.5，信号参考为等待时机。\", \"supported\": true, \"evidence_ids\": [\"E0\"], \"reason\": \"直接从提供的证据中提取了恐惧贪婪指数的数值、分类、分数和信号参考。\"}], \"relevance\": {\"task_match\": 2, \"coverage\": 2, \"interpretation_focus\": 1, \"scope\": 2}, \"relevance_reason\": \"回答直接完成了题目，覆盖了本轮有证据的要求，解释了指标与实际材料的关系，但范围稍超出了本Skill职责。\"}",
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        },
+        {
+          "name": "duration_ms",
+          "value": 0.0005830079317092896,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        }
+      ],
+      "langfuse_trace_id": "0522adf8b85692b8ce52dfed5aef67b0",
+      "case_pass": true
+    },
+    {
+      "input": {
+        "mode": "judge_calibration",
+        "result": {
+          "name": "市场情绪",
+          "score": 2.5,
+          "reason": null,
+          "status": "ok",
+          "indicators": [
+            {
+              "url": "https://coinmarketcap.com/",
+              "unit": "index (0-100)",
+              "score": 2.5,
+              "reason": null,
+              "source": "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest",
+              "status": "ok",
+              "raw_values": {
+                "value": 55,
+                "value_classification": "Neutral"
+              },
+              "skill_name": "analyzing-crypto-sentiment",
+              "observed_at": "2026-10-12",
+              "indicator_id": "Fear_Greed",
+              "calculated_values": {
+                "signal_reference": "等待时机"
+              }
+            }
+          ],
+          "skill_name": "analyzing-crypto-sentiment"
+        },
+        "skill_name": "analyzing-crypto-sentiment",
+        "user_input": "请说明提供的恐惧贪婪指数数值、分类、分数和信号参考。",
+        "skill_source": "---\nname: analyzing-crypto-sentiment\ndescription: >-\n  按恐惧贪婪指数评估全市场情绪，适用于恐慌、贪婪和极端情绪分析；不代表单个币种的价格或资金。\n  一次调用完成情绪指数取数与 Fear_Greed 计算。\ntools:\n  - analyze_sentiment\nscoring:\n  name: 市场情绪\n  metrics:\n  - id: Fear_Greed\n    label: Fear_Greed\n    weight: 1.0\n    kind: numeric\n---\n\n# 市场情绪\n\n## 解读重点\n\n按检索到的材料结合恐惧贪婪指数、情绪分类和信号参考给出解读。\n",
+        "fixed_response": "恐惧贪婪指数为99，分类为Extreme Fear，分数为10，信号参考为立即全仓买入。",
+        "thought_context": {
+          "query": "加密市场的市场情绪",
+          "status": "ok",
+          "documents": [
+            {
+              "id": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55",
+              "content": "美国之所以会在20世纪80年代全力打击内幕交易，是因为内部人变得越来越贪婪而且肆无忌惮，结果落入纽约一位联邦检查员的手中，此人具有很大的政治野心。广泛的内幕交易显露出来的冰山一角被削平，但大量潜伏的内幕交易仍像冰山一样漂浮在海里。不要问这些冰山会撞到谁家的船，受损的是你的账户。  \n努力减少内幕交易就像努力灭除田野里的老鼠一样困难。灭鼠剂只能控制老鼠的繁衍速度，并不能根除老鼠。一位已经从一家公开上市的企业退休的老总跟我说，聪明人不会根据本公司的内幕消息来交易，而会在乡村俱乐部把这一消息告知他的高尔夫球友。往后，作为回报，这些球友们会把他们公司的消息告诉他，这样双方都能获利，而且还不会被查出问题。只要各成员都遵守同样的行为准则，不要太贪婪，这种内部人关系网就会很安全。  \n在期货市场上内幕交易是合法的。凭借技术分析就可以看出内部人的买卖情况。行情走势图能揭示出所有市场参与者的全部交易，甚至包括内部人的交易。  \n他们像其他人一样也会在行情图上留下痕迹，作为一名技术分析师，你的工作就是跟着他们去银行存钱准备买卖。",
+              "metadata": {
+                "source": "以交易为生-亚历山大·埃尔德.md",
+                "section": "以交易为生-亚历山大·埃尔德 > 第2章群体心理 > 2.2市场是什么",
+                "src_hash": "2d6e8ebd996ef65a2204b8ad9665d504",
+                "chunk_idx": 55
+              }
+            }
+          ]
+        },
+        "analysis_subject": "加密市场"
+      },
+      "expected_output": {
+        "skipped": false,
+        "faithfulness_max": 0.25,
+        "faithfulness_min": 0,
+        "answer_relevancy_max": 1,
+        "answer_relevancy_min": 0.75
+      },
+      "metadata": {
+        "case_id": "judge_calibration_fabricated",
+        "category": "judge_calibration",
+        "label_reason": "四个事实均与固定证据相悖，应识别为不忠实；仍在回答相同问题，相关性不能替代真实性。 仅评测裁判，回答为明确标注的固定校准文本，不调用生产正文生成。"
+      },
+      "output": {
+        "execution_status": "error",
+        "response": "恐惧贪婪指数为99，分类为Extreme Fear，分数为10，信号参考为立即全仓买入。",
+        "judgment": {
+          "field_mappings": {},
+          "claims": [],
+          "relevance": {
+            "task_match": 1,
+            "coverage": 0,
+            "interpretation_focus": 1,
+            "scope": 1
+          },
+          "relevance_reason": "回答未提供恐惧贪婪指数的实际数值和信号参考，且未覆盖所有要求的信息。"
+        },
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "field_checks": [],
+        "indicator_contract_valid": false,
+        "section_citations_valid": false,
+        "skipped": false,
+        "generation_duration_ms": 0.0005830079317092896,
+        "judge_duration_ms": 4112.854333012365,
+        "error_type": "ValueError",
+        "evidence_references": {
+          "E0": "成功指标",
+          "E1": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55"
+        },
+        "error_stage": "validation",
+        "error_message": "非空回答未取得可评测的事实",
+        "generation_model_attempts": 0,
+        "judge_model_attempts": 1,
+        "token_usage": {
+          "generation": [],
+          "judge": [
+            {
+              "input_tokens": 1688,
+              "output_tokens": 85,
+              "total_tokens": 1773,
+              "input_token_details": {},
+              "output_token_details": {}
+            }
+          ]
+        }
+      },
+      "scores": [
+        {
+          "name": "case_pass",
+          "value": 0,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        },
+        {
+          "name": "duration_ms",
+          "value": 0.0005830079317092896,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        }
+      ],
+      "langfuse_trace_id": "a0acc32c94680004a8f3455d8f699d0f",
+      "case_pass": false
+    },
+    {
+      "input": {
+        "mode": "judge_calibration",
+        "result": {
+          "name": "市场情绪",
+          "score": 2.5,
+          "reason": null,
+          "status": "ok",
+          "indicators": [
+            {
+              "url": "https://coinmarketcap.com/",
+              "unit": "index (0-100)",
+              "score": 2.5,
+              "reason": null,
+              "source": "https://pro-api.coinmarketcap.com/v3/fear-and-greed/latest",
+              "status": "ok",
+              "raw_values": {
+                "value": 55,
+                "value_classification": "Neutral"
+              },
+              "skill_name": "analyzing-crypto-sentiment",
+              "observed_at": "2026-10-12",
+              "indicator_id": "Fear_Greed",
+              "calculated_values": {
+                "signal_reference": "等待时机"
+              }
+            }
+          ],
+          "skill_name": "analyzing-crypto-sentiment"
+        },
+        "skill_name": "analyzing-crypto-sentiment",
+        "user_input": "请说明提供的恐惧贪婪指数数值、分类、分数和信号参考。",
+        "skill_source": "---\nname: analyzing-crypto-sentiment\ndescription: >-\n  按恐惧贪婪指数评估全市场情绪，适用于恐慌、贪婪和极端情绪分析；不代表单个币种的价格或资金。\n  一次调用完成情绪指数取数与 Fear_Greed 计算。\ntools:\n  - analyze_sentiment\nscoring:\n  name: 市场情绪\n  metrics:\n  - id: Fear_Greed\n    label: Fear_Greed\n    weight: 1.0\n    kind: numeric\n---\n\n# 市场情绪\n\n## 解读重点\n\n按检索到的材料结合恐惧贪婪指数、情绪分类和信号参考给出解读。\n",
+        "fixed_response": "巴黎今天下雨，气温16摄氏度，适合穿雨衣。",
+        "thought_context": {
+          "query": "加密市场的市场情绪",
+          "status": "ok",
+          "documents": [
+            {
+              "id": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55",
+              "content": "美国之所以会在20世纪80年代全力打击内幕交易，是因为内部人变得越来越贪婪而且肆无忌惮，结果落入纽约一位联邦检查员的手中，此人具有很大的政治野心。广泛的内幕交易显露出来的冰山一角被削平，但大量潜伏的内幕交易仍像冰山一样漂浮在海里。不要问这些冰山会撞到谁家的船，受损的是你的账户。  \n努力减少内幕交易就像努力灭除田野里的老鼠一样困难。灭鼠剂只能控制老鼠的繁衍速度，并不能根除老鼠。一位已经从一家公开上市的企业退休的老总跟我说，聪明人不会根据本公司的内幕消息来交易，而会在乡村俱乐部把这一消息告知他的高尔夫球友。往后，作为回报，这些球友们会把他们公司的消息告诉他，这样双方都能获利，而且还不会被查出问题。只要各成员都遵守同样的行为准则，不要太贪婪，这种内部人关系网就会很安全。  \n在期货市场上内幕交易是合法的。凭借技术分析就可以看出内部人的买卖情况。行情走势图能揭示出所有市场参与者的全部交易，甚至包括内部人的交易。  \n他们像其他人一样也会在行情图上留下痕迹，作为一名技术分析师，你的工作就是跟着他们去银行存钱准备买卖。",
+              "metadata": {
+                "source": "以交易为生-亚历山大·埃尔德.md",
+                "section": "以交易为生-亚历山大·埃尔德 > 第2章群体心理 > 2.2市场是什么",
+                "src_hash": "2d6e8ebd996ef65a2204b8ad9665d504",
+                "chunk_idx": 55
+              }
+            }
+          ]
+        },
+        "analysis_subject": "加密市场"
+      },
+      "expected_output": {
+        "skipped": false,
+        "faithfulness_max": 0.25,
+        "faithfulness_min": 0,
+        "answer_relevancy_max": 0.25,
+        "answer_relevancy_min": 0
+      },
+      "metadata": {
+        "case_id": "judge_calibration_off_topic",
+        "category": "judge_calibration",
+        "label_reason": "固定无关回答且天气事实无证据，两项分数均应很低。 仅评测裁判，回答为明确标注的固定校准文本，不调用生产正文生成。"
+      },
+      "output": {
+        "execution_status": "error",
+        "response": "巴黎今天下雨，气温16摄氏度，适合穿雨衣。",
+        "judgment": {
+          "field_mappings": {},
+          "claims": [],
+          "relevance": {
+            "task_match": 0,
+            "coverage": 0,
+            "interpretation_focus": 0,
+            "scope": 0
+          },
+          "relevance_reason": "The response does not match the task, does not cover the required evidence, and does not focus on the interpretation of the Fear and Greed index."
+        },
+        "faithfulness": null,
+        "answer_relevancy": null,
+        "field_checks": [],
+        "indicator_contract_valid": false,
+        "section_citations_valid": false,
+        "skipped": false,
+        "generation_duration_ms": 0.000500003807246685,
+        "judge_duration_ms": 9344.61095801089,
+        "error_type": "ValueError",
+        "evidence_references": {
+          "E0": "成功指标",
+          "E1": "以交易为生-亚历山大·埃尔德.md:2d6e8ebd:55"
+        },
+        "error_stage": "validation",
+        "error_message": "非空回答未取得可评测的事实",
+        "generation_model_attempts": 0,
+        "judge_model_attempts": 1,
+        "token_usage": {
+          "generation": [],
+          "judge": [
+            {
+              "input_tokens": 1679,
+              "output_tokens": 95,
+              "total_tokens": 1774,
+              "input_token_details": {},
+              "output_token_details": {}
+            }
+          ]
+        }
+      },
+      "scores": [
+        {
+          "name": "case_pass",
+          "value": 0,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        },
+        {
+          "name": "duration_ms",
+          "value": 0.000500003807246685,
+          "comment": null,
+          "metadata": null,
+          "data_type": null,
+          "config_id": null
+        }
+      ],
+      "langfuse_trace_id": "c1d2205056807e88f59654ad85624e47",
+      "case_pass": false
+    }
+  ]
+}
