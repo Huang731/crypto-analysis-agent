@@ -110,7 +110,7 @@ def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
         "thirty_day_market_cap": round(thirty_day / 100_000_000, 2),
         "ma30_change_pct": round(ma30_change, 2),
         "seven_day_change_pct": round(seven_day_change, 2),
-        "score": 0.5 * ma30_score + 0.5 * seven_day_score,
+        "score": round(0.5 * ma30_score + 0.5 * seven_day_score, 2),
         "thirty_day_change_pct": round(100 * (latest / thirty_day - 1), 2),
         "conflict_flag": (ma30_change > 0 > seven_day_change)
         or (seven_day_change > 0 > ma30_change),

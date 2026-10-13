@@ -45,7 +45,7 @@ def calculate_fear_and_greed(raw: dict[str, Any]) -> dict[str, Any]:
         "value_classification": classification,
         "record_timestamp": observed.isoformat(),
         "signal_reference": signal,
-        "score": score,
+        "score": round(score, 2),
         "unit": "index (0-100)",
         "observed_at": observed.date().isoformat(),
         "source": raw["source"],

@@ -54,7 +54,7 @@ def calculate_dxy_metrics(raw: dict[str, Any]) -> dict[str, Any]:
     ma200, previous_ma200 = ma(200), ma(200, 1)
     ma50_deviation_pct = 100 * (latest_close / ma50 - 1)
     # 美元越强，流动性分数越低；沿用相对 MA50 的反向评分。
-    score = 10 - linear_score(ma50_deviation_pct, -0.5, 0.5)
+    score = round(10 - linear_score(ma50_deviation_pct, -0.5, 0.5), 2)
 
     def direction(current: float, previous: float) -> str:
         if current > previous:

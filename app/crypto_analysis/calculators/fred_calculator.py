@@ -95,7 +95,7 @@ def calculate_m2_yoy_change(raw: dict[str, Any]) -> dict[str, Any]:
         "latest_yoy_pct": round(float(latest_yoy), 2),
         "previous_yoy_pct": round(float(previous_yoy), 2),
         "yoy_change_pp": round(float(yoy_change), 2),
-        "score": linear_score(yoy_change, -0.5, 0.5),
+        "score": round(linear_score(yoy_change, -0.5, 0.5), 2),
         "comparison_months": [month.isoformat() for month in required],
     }
 

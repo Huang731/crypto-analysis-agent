@@ -148,7 +148,7 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
 
     return {
         "status": "ok",
-        "score": score,
+        "score": round(score, 2),
         "unit": "price / ADX / DI",
         "observed_at": datetime.fromtimestamp(rows[-1][6] / 1000, timezone.utc)
         .date()

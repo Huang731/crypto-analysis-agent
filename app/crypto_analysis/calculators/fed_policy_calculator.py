@@ -100,5 +100,5 @@ def calculate_fed_rate_change(raw: dict[str, Any]) -> dict[str, Any]:
         "unit": "basis_points",
         "observed_at": current_day.isoformat(),
         "source": raw["source"],
-        "score": score,
+        "score": round(score, 2),
     }
