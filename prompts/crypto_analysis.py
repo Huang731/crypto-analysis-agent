@@ -64,13 +64,42 @@ def skill_output_prompt(
     skill_name: str,
     indicators: list[dict[str, Any]],
     thought_context: dict[str, Any],
-    output_template: str,
+    skill_instructions: str,
 ) -> str:
-    """生成可跨轮复用的技能表格与思想体系解读。"""
+    """按通用展示规则生成完整 Markdown，Skill 仅提供职责与解读重点。"""
     return (
-        "根据指标按当前技能模板生成中文指标表格和思想体系解读。"
+        "根据成功指标和思想材料，生成中文 Markdown 指标表格和思想体系解读。"
+        "\n1. 每个成功指标单独输出三级标题和一张连续的“字段／内容”两列表格，"
+        "每张表的表头只出现一次，不拆成原始值表和计算值表。"
+        "标题使用易懂的指标中文名称，表格格式如下："
+        "\n### {指标中文名称}\n\n| 字段 | 内容 |\n| --- | --- |"
+        "\n| 指标标识 | {indicator_id} |"
+        "\n| {raw_values 各字段的中文名称} | {对应原始值} |"
+        "\n| {calculated_values 各字段的中文名称} | {对应计算值} |"
+        "\n| 指标状态 | {status} |\n| 指标分数 | {score} |"
+        "\n| 单位 | {unit} |\n| 观测日期 | {observed_at} |\n| 来源链接 | {url} |"
+        "\n2. 模板中的固定行全部保留，即使指标分数为 0 也必须单独展示。"
+        "raw_values 和 calculated_values 的占位行各自在原位置展开为全部字段的表格行，"
+        "指标状态、指标分数、单位、观测日期和来源链接排在全部原始值及计算值之后。"
+        "“字段”列必须使用中文语义名称，禁止直接输出原始英文键名、"
+        "带下划线的变量名或字段路径；必要的指标符号可保留，如 OI、MA50。"
+        "保留统计窗口和对应单位，不遗漏字段，不重复展示。"
+        "数值、单位、日期和分数严格采用输入，不重新计算或修改精度。"
+        "0 和 false 正常展示，null 展示为 N/A；未提供的字段不自行补充。"
+        "列表和对象完整展示，多条内容用 <br> 分隔；正文中的竖线须转义，避免破坏表格。"
+        "来源链接使用 url，不展示 reason 或原始 API 地址 source。"
+        "\n3. 最后输出以下思想体系解读表："
+        "\n### 思想体系解读\n\n| 字段 | 内容 |\n| --- | --- |"
+        "\n| 来源章节 | 实际引用材料的 metadata.section |"
+        "\n| 当前解读 | 思想原则、指标与原则的关系、信号分歧和判断限制 |"
+        "\n按当前 Skill 的解读重点结合指标分析，只引用实际使用的材料，"
+        "来源章节去重，不将文档 ID 当作章节。"
+        "没有思想材料时，来源章节为 N/A，仅解释成功指标及限制，说明缺少思想依据；"
+        "没有成功指标时，仅解释材料原则及适用限制，不判断当前行情。"
+        "\n4. 只使用提供的指标和材料，不补造数据、趋势、来源或因果关系。"
+        "只输出完整 Markdown，不输出 JSON、字段路径或工具执行过程。"
         f"\n分析对象：{analysis_subject}；技能：{skill_name}。"
-        f"\n输出模板：\n{output_template}"
+        f"\nSkill 说明：\n{skill_instructions}"
         f"\n成功指标：\n{json.dumps(indicators, ensure_ascii=False)}"
         f"\n思想材料：\n{json.dumps(thought_context, ensure_ascii=False)}"
     )

@@ -464,7 +464,7 @@ async def _generate_skill_content(
     result: dict[str, Any],
     analysis_subject: str,
 ) -> str:
-    """按技能模板生成表格与思想解读，只使用成功指标和实际检索材料。"""
+    """按通用格式生成表格与思想解读，只使用成功指标和实际检索材料。"""
     indicators = [item for item in result["indicators"] if item["status"] == "ok"]
     thought_context = result["thought_context"]
     # 全部缺失时返回空展示，不调用模型；只有思想材料时仍可解读已有原则。
@@ -475,7 +475,7 @@ async def _generate_skill_content(
         skill_name=skill.name,
         indicators=indicators,
         thought_context=thought_context,
-        output_template=skill_loader.load_analysis_output(skill.name),
+        skill_instructions=skill_loader.load_skill(skill.name),
     )
     # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
     return await _invoke_skill_output(llm, prompt)
