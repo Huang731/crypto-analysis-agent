@@ -3,18 +3,19 @@
 三条路线（成本-精度主线在此）：
     off      —— 不做 OCR（现状），扫描页抽空（config.ocr_engine 默认值）
     rapidocr —— 本地 RapidOCR：免费、快、离线，复杂版面/低质扫描弱
-    vlm      —— glm-4v-plus 直读：版面理解强、按图计费（需 API key）
+    vlm      —— 百炼视觉模型直读：版面理解强、按图计费（需 API key）
     hybrid   —— 置信度路由：先本地 OCR，低置信度页升级 VLM（本课推荐）
 
 核心设计：OCR 结果带 bbox（每个识别块有自己的坐标），L06 区域引用靠它。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import fitz  # PyMuPDF：渲染页面为图片
+import pymupdf as fitz  # PyMuPDF：渲染页面为图片
 
 OCREngine = Literal["off", "rapidocr", "vlm", "hybrid"]
 
@@ -116,24 +117,26 @@ def ocr_with_rapidocr(image_bytes: bytes, page: int = 0) -> OcrResult:
             bbox = (min(xs), min(ys), max(xs), max(ys))
             boxes.append(OcrBox(text=text, bbox=bbox, score=float(score)))
     total_elapse = sum(elapse) if elapse else 0.0
-    return OcrResult(page=page, boxes=tuple(boxes), engine="rapidocr", elapsed_sec=total_elapse)
+    return OcrResult(
+        page=page, boxes=tuple(boxes), engine="rapidocr", elapsed_sec=total_elapse
+    )
 
 
 # ══════════════════════════════════════════════════════════════════
-# 3. VLM 直读：glm-4v-plus（需 API key，L04 实现 vision.py 后复用）
+# 3. VLM 直读：百炼视觉模型（需 API key，L04 实现 vision.py 后复用）
 # ══════════════════════════════════════════════════════════════════
 def ocr_with_vlm(image_bytes: bytes, page: int = 0) -> OcrResult:
-    """用 glm-4v-plus 直读扫描页。
+    """用百炼视觉模型直读扫描页。
 
     L04 会实现完整的 vision.py（describe_image / answer_with_image），
     这里先给占位：如果没 API key 就 raise，让调用方走 mock 路径。
     真实场景下 VLM 对复杂版面（印章遮挡、表格线干扰）比本地 OCR 强。
     """
-    from .config import settings
+    from app.config.config import settings
 
-    if not settings.zhipuai_api_key:
+    if not settings.dashscope_api_key:
         raise RuntimeError(
-            "ocr_with_vlm 需要 ZHIPUAI_API_KEY（glm-4v-plus 按图计费）。"
+            "ocr_with_vlm 需要 DASHSCOPE_API_KEY（百炼视觉模型按图计费）。"
             "教学演示用 mock，真实落地配 key。"
         )
     # 真实实现接 L04 的 vision.py（此处 L03 先占位，避免循环依赖）
@@ -156,26 +159,13 @@ def ocr_page(
     off → 返回 None（扫描页抽空，行为同现状）。
     hybrid → 先 RapidOCR，低置信度页标记 needs_vlm=True（是否真升级由调用方决定）。
     """
-    from .config import settings
-
-    engine = engine or settings.ocr_engine
-    if engine == "off":
-        return None  # 不做 OCR，扫描页 content 为空（现状）
 
     image_bytes = render_page_image(pdf_path, page_idx)
     page_num = page_idx + 1
-
-    if engine == "rapidocr":
-        return ocr_with_rapidocr(image_bytes, page=page_num)
-    elif engine == "vlm":
-        return ocr_with_vlm(image_bytes, page=page_num)
-    elif engine == "hybrid":
-        # 置信度路由：先本地 OCR，低置信度标记升级
-        local = ocr_with_rapidocr(image_bytes, page=page_num)
-        if local.needs_vlm:
-            # 低置信度：标记建议升级 VLM（但不自动调，成本控制由调用方决定）
-            # 这里返回本地结果 + needs_vlm=True，调用方（service.py）按预算决定升不升
-            return local  # needs_vlm 属性已自动 True
-        return local
-    else:
-        raise ValueError(f"未知 ocr_engine: {engine}（应为 off/rapidocr/vlm/hybrid）")
+    # 置信度路由：先本地 OCR，低置信度标记升级
+    local = ocr_with_rapidocr(image_bytes, page=page_num)
+    if local.needs_vlm:
+        # 低置信度：标记建议升级 VLM（但不自动调，成本控制由调用方决定）
+        # 这里返回本地结果 + needs_vlm=True，调用方（service.py）按预算决定升不升
+        return local  # needs_vlm 属性已自动 True
+    return local

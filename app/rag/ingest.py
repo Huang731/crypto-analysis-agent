@@ -233,8 +233,11 @@ def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
                 if is_update:
                     # 文件改过：先清旧块，避免新旧版本混存
                     _delete_source(vs, fname, source_ids, source_hashes)
-
-                chunks = load_and_split(path, src_hash=fhash)
+                # PDF 走版面感知解析；md/txt 走老路
+                if path.suffix.lower() == ".pdf":
+                    chunks = _load_pdf_as_documents(path)
+                else:
+                    chunks = load_and_split(path, src_hash=fhash)
                 ids = [f"{fname}:{fhash[:8]}:{c.metadata['chunk_idx']}" for c in chunks]
                 _add_in_batches(vs, chunks, ids)
                 # 入库成功后更新映射，空文件不记录切片 ID。
@@ -270,3 +273,42 @@ def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
         except Exception:
             node_span.metadata["status"] = "error"
             raise
+
+def _load_pdf_as_documents(path: Path) -> list[Document]:
+    """版面感知加载 PDF（doc-intelligence L01）。
+
+    把 doc_parser.parse_pdf 产出的 Element 流转成 LangChain Document：
+        text 元素  → 每个 block 一个 Document（content=文本）
+        table 元素 → 整表一个 Document（content 暂存串行文本，L02 升级结构化）
+        image 元素 → content 为空时跳过（L03 OCR / L04 描述才入）
+    所有 Document 带 page/element_type/bbox metadata（L06 引用溯源用），
+    以及和 md/txt 一致的 source/src_hash/chunk_idx（增量缓存/id 用）。
+    """
+    # 延迟导入：enable_multimodal_ingest=off 时不需要 PyMuPDF，保持现状依赖干净
+    from .doc_parser import parse_pdf
+
+    elements = parse_pdf(path)
+    fhash = file_md5(path)
+    docs: list[Document] = []
+    chunk_idx = 0
+    for el in elements:
+        # 图片元素内容为空时（OCR/描述未启用）不入库，避免空 chunk 污染向量库
+        if el.type == "image" and not el.content:
+            continue
+        docs.append(
+            Document(
+                page_content=el.content,
+                metadata={
+                    "source": path.name,
+                    "section": f"P{el.page}·{el.type}",  # 引用溯源展示「P3·table」
+                    "src_hash": fhash,
+                    "chunk_idx": chunk_idx,
+                    # 多模态字段（L06 引用溯源用；旧检索/生成不读这些，向后兼容）
+                    "page": el.page,
+                    "element_type": el.type,
+                    "bbox": ",".join(f"{v:.1f}" for v in el.bbox),
+                },
+            )
+        )
+        chunk_idx += 1
+    return docs

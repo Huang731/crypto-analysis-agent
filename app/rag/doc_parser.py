@@ -11,15 +11,16 @@
 
 Element 是后面所有课的数据底座，type ∈ {text, table, image}。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 
-from .config import settings
+from app.config.config import settings
 
 # 元素类型：文本 / 表格 / 图片。后面每课按这个 type 分类路由。
 ElementType = Literal["text", "table", "image"]
@@ -77,7 +78,11 @@ class ParseReport:
     image_count: int = 0
 
     def by_type(self) -> dict[str, int]:
-        return {"text": self.text_count, "table": self.table_count, "image": self.image_count}
+        return {
+            "text": self.text_count,
+            "table": self.table_count,
+            "image": self.image_count,
+        }
 
 
 def _is_table_page(page: fitz.Page) -> bool:
@@ -120,7 +125,9 @@ def extract_tables(pdf_path: str | Path) -> list[list[list[str]]]:
                 rows = page.within_bbox(table.bbox).extract_table() or []
                 # 规整：每行补齐到等长，None → ''
                 width = max((len(r) for r in rows), default=0)
-                normalized = [[(c or "") for c in r] + [""] * (width - len(r)) for r in rows]
+                normalized = [
+                    [(c or "") for c in r] + [""] * (width - len(r)) for r in rows
+                ]
                 if normalized:
                     all_tables.append(normalized)
     return all_tables
@@ -244,21 +251,19 @@ def parse_pdf(pdf_path: str | Path) -> list[Element]:
             # 扫描页：文字渲染成图片，文本层为空 → image 元素
             # L03：ocr_engine 开启时，用 OCR 把识别文本填进 content
             ocr_content = ""
-            if settings.ocr_engine != "off":
-                # 延迟导入 ocr 模块（off 时不加载 RapidOCR，保持依赖干净）
-                from .ocr import ocr_page
+            # 延迟导入 ocr 模块（off 时不加载 RapidOCR，保持依赖干净）
+            from .ocr import ocr_page
 
-                result = ocr_page(path, page_idx)
-                if result:
-                    ocr_content = result.text
+            result = ocr_page(path, page_idx)
+            if result:
+                ocr_content = result.text
             # L04：enable_image_caption 开启时，附加 VLM 结构化描述
             # （扫描页通常 OCR 够用，描述是补充；图表页描述是主力）
-            if settings.enable_image_caption:
-                img_bytes = _render_page_region(page, _full_page_bbox(page))
-                from .vision import describe_image
+            img_bytes = _render_page_region(page, _full_page_bbox(page))
+            from .vision import describe_image
 
-                desc = describe_image(img_bytes)
-                ocr_content = (ocr_content + "\n" + desc).strip() if ocr_content else desc
+            desc = describe_image(img_bytes)
+            ocr_content = (ocr_content + "\n" + desc).strip() if ocr_content else desc
             img_bbox = _full_page_bbox(page)
             elements.append(
                 Element(
@@ -287,7 +292,8 @@ def parse_pdf(pdf_path: str | Path) -> list[Element]:
             # 用 get_text("blocks") 拿到带坐标的文本块，比整页一坨更利于溯源
             blocks = page.get_text("blocks")
             meaningful = [
-                b for b in blocks
+                b
+                for b in blocks
                 if len(b) >= 5 and b[4].strip()  # b[4] 是文本，过滤空块
             ]
             if meaningful:
@@ -321,11 +327,10 @@ def parse_pdf(pdf_path: str | Path) -> list[Element]:
                     if bbox:
                         bbox_tuple = tuple(bbox)
                         img_content = ""
-                        if settings.enable_image_caption:
-                            from .vision import describe_image
+                        from .vision import describe_image
 
-                            img_bytes = _render_page_region(page, bbox_tuple)
-                            img_content = describe_image(img_bytes)
+                        img_bytes = _render_page_region(page, bbox_tuple)
+                        img_content = describe_image(img_bytes)
                         elements.append(
                             Element(
                                 type="image",
@@ -346,7 +351,9 @@ def _full_page_bbox(page: fitz.Page) -> tuple[float, float, float, float]:
     return (r.x0, r.y0, r.x1, r.y1)
 
 
-def _render_page_region(page: fitz.Page, bbox: tuple[float, float, float, float], dpi: int = 150) -> bytes:
+def _render_page_region(
+    page: fitz.Page, bbox: tuple[float, float, float, float], dpi: int = 150
+) -> bytes:
     """把页面的指定区域渲染成 PNG bytes（L04 VLM 描述的输入）。
 
     用 clip=bbox 只截区域，而非整页——图表/示意图只截它自己的范围。

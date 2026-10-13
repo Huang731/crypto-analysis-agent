@@ -18,7 +18,7 @@ from langchain_text_splitters import (
 from app.config.config import settings
 from app.tracing import trace_span
 
-SUPPORTED_SUFFIXES = (".md", ".txt")
+SUPPORTED_SUFFIXES = (".md", ".txt", ".pdf")
 
 _HEADERS_TO_SPLIT_ON = [("#", "h1"), ("##", "h2"), ("###", "h3")]
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -73,7 +74,7 @@ class Settings(BaseSettings):
     # 百炼向量模型通过 DashScope SDK 调用，使用独立的 API Key。
     dashscope_api_key: str = Field(
         default="",
-        description="百炼向量模型 API Key",
+        description="百炼向量、重排与视觉模型 API Key",
     )
     embedding_model: str = "text-embedding-v4"
     # 仅配置 FAISS 索引维度，不传给 SDK；必须与模型默认输出维度一致。
@@ -83,6 +84,13 @@ class Settings(BaseSettings):
     chunk_size: int = Field(default=1000, gt=0)
     chunk_overlap: int = Field(default=150, ge=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
+
+    # PDF 表格表示与图片理解，可通过环境变量覆盖。
+    table_format: Literal["markdown", "html"] = "markdown"
+    vision_model: str = "qwen3.5-ocr"
+    vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    vision_timeout: float = Field(default=120.0, gt=0)
+    vision_max_retries: int = Field(default=2, ge=1)
 
     # 分析规范、指标和权重定义在各自 SKILL.md 中。
     skills_dir: str = str(PROJECT_ROOT / "skills")
