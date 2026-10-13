@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.config.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_agent import build_metric_agent, execute_skill
+from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
 from app.llm.model import _make_model
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -92,16 +93,30 @@ class SkillExecutionScope(BaseModel):
     trace_id: str = Field(min_length=1)
 
 
-class SkillExecutionInput(BaseModel):
-    """固定 execute_skill 的 scope、解析后技能配置与取数响应。"""
+class MetricAgentConfig(BaseModel):
+    """Agent 对象不能序列化，记录重建生产 Agent 所需的模型配置。"""
 
     model_config = ConfigDict(extra="forbid")
-    scope: SkillExecutionScope
+    model: str = Field(min_length=1)
+
+
+class SkillExecutionInput(BaseModel):
+    """逐项对应 execute_skill 的 metric_agent、skill、scope 三个入参。"""
+
+    model_config = ConfigDict(extra="forbid")
+    metric_agent: MetricAgentConfig
     skill: LoadedSkill
+    scope: SkillExecutionScope
+
+
+class SourceReplayConfig(BaseModel):
+    """固定取数响应属于评测环境配置，不混入生产函数入参。"""
+
+    model_config = ConfigDict(extra="forbid")
     source_responses: list[SourceResponse] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def unique_responses(self) -> "SkillExecutionInput":
+    def unique_responses(self) -> "SourceReplayConfig":
         identifiers = [
             (item.source, json.dumps(item.arguments, sort_keys=True))
             for item in self.source_responses
@@ -125,7 +140,7 @@ class IndicatorResult(BaseModel):
     observed_at: str | None
     source: str | None
     url: str | None
-    score: float | None = Field(ge=0, le=10, allow_inf_nan=False)
+    score: float | None = Field(ge=0, le=10, allow_inf_nan=False, strict=True)
 
 
 class SkillExecutionResult(BaseModel):
@@ -138,32 +153,15 @@ class SkillExecutionResult(BaseModel):
         "ok", "partial", "data_missing", "not_applicable", "calculation_error"
     ]
     reason: str | None
-    score: float | None = Field(ge=0, le=10, allow_inf_nan=False)
+    score: float | None = Field(ge=0, le=10, allow_inf_nan=False, strict=True)
     indicators: list[IndicatorResult] = Field(min_length=1)
-
-
-class SkillExecutionExpected(SkillExecutionResult):
-    """固定预期结果；仅对指定缺失指标接受人工确认的原因文本。"""
-
-    missing_reason_options: dict[str, list[str]] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def valid_reason_options(self) -> "SkillExecutionExpected":
-        indicators = {item.indicator_id: item for item in self.indicators}
-        for indicator_id, reasons in self.missing_reason_options.items():
-            if indicator_id not in indicators:
-                raise ValueError("缺失原因选项引用了未标注的指标")
-            if indicators[indicator_id].status != "data_missing":
-                raise ValueError("原因选项只能用于 data_missing 指标")
-            if not reasons or any(not reason.strip() for reason in reasons):
-                raise ValueError("允许的缺失原因必须是非空文本")
-        return self
 
 
 class SkillExecutionCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     input: SkillExecutionInput
-    expected_output: SkillExecutionExpected
+    expected_output: SkillExecutionResult
+    replay: SourceReplayConfig
     metadata: CaseMetadata
 
 
@@ -178,14 +176,19 @@ class SkillExecutionOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     result: SkillExecutionResult | None = None
+    raw_result: Any = None
     execution_status: Literal["success", "error"]
     duration_ms: float = Field(ge=0)
     error_type: str | None = None
+    error_stage: str | None = None
+    error_message: str | None = None
+    replay_valid: bool | None
     source_calls: list[SourceCall]
     tool_calls: list[dict[str, Any]]
     tool_error_count: int = Field(ge=0)
     model_attempt_count: int = Field(ge=0)
     evidence_chain_valid: bool
+    token_usage: list[dict[str, Any]]
 
 
 @dataclass
@@ -198,6 +201,7 @@ class ReplayState(AsyncCallbackHandler):
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_error_count: int = 0
     model_attempt_count: int = 0
+    token_usage: list[dict[str, Any]] = field(default_factory=list)
 
     async def on_chat_model_start(
         self, serialized: Any, messages: Any, **kwargs: Any
@@ -210,6 +214,8 @@ class ReplayState(AsyncCallbackHandler):
                 self.tool_calls.extend(
                     dict(call) for call in generation.message.tool_calls
                 )
+                if generation.message.usage_metadata:
+                    self.token_usage.append(dict(generation.message.usage_metadata))
 
     async def on_tool_end(self, output: Any, **kwargs: Any) -> None:
         messages = (
@@ -259,6 +265,14 @@ class RecordedMetricAgent:
         state = await self.agent.ainvoke(inputs, **kwargs)
         self.replay.agent_state = state
         return state
+
+
+@dataclass
+class EvaluationRunState:
+    """当前评测持有运行记录和诊断，不把它们混入生产出参。"""
+
+    rows: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: dict[str, SkillExecutionOutput] = field(default_factory=dict)
 
 
 def load_cases(path: Path) -> list[SkillExecutionCase]:
@@ -367,15 +381,18 @@ def tool_trajectory(
 
 
 async def evaluate_skill(
-    client: Langfuse, inputs: SkillExecutionInput, timeout_seconds: float
+    client: Langfuse,
+    inputs: SkillExecutionInput,
+    replay_config: SourceReplayConfig,
+    timeout_seconds: float,
 ) -> SkillExecutionOutput:
     """真实模型选择工具，只替换取数返回，沿用生产计算器、重试与单次超时。"""
     skill = inputs.skill
-    replay = ReplayState(responses=inputs.source_responses)
+    replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
     http_client = httpx.AsyncClient(timeout=120)
     try:
-        llm = _make_model(settings.fast_model, http_async_client=http_client)
+        llm = _make_model(inputs.metric_agent.model, http_async_client=http_client)
         with ExitStack() as stack:
             for source, target in SOURCE_TARGETS.items():
                 stack.enter_context(patch(target, new=replay.source_function(source)))
@@ -384,26 +401,58 @@ async def evaluate_skill(
                 as_type="span",
                 name="skill_execution.invoke",
                 input=inputs.model_dump(mode="json"),
-                metadata={"model": settings.fast_model, "data_mode": "fixed_replay"},
+                metadata={
+                    "model": inputs.metric_agent.model,
+                    "data_mode": "fixed_replay",
+                },
             ) as observation:
                 started = time.perf_counter()
+                stage = "agent"
+                raw_result: Any = None
                 try:
-                    result = await asyncio.wait_for(
+                    raw_result = await asyncio.wait_for(
                         execute_skill(agent, skill, inputs.scope.model_dump()),
                         timeout=timeout_seconds,
                     )
                     duration_ms = (time.perf_counter() - started) * 1000
-                    actual = SkillExecutionResult.model_validate(result)
-                    status, error_type = "success", None
+                    stage = "result_validation"
+                    actual = SkillExecutionResult.model_validate(raw_result)
+                    status, error_type, error_stage, error_message = (
+                        "success",
+                        None,
+                        None,
+                        None,
+                    )
                 except Exception as exc:  # noqa: BLE001 - 保留单项失败，继续其他案例。
                     duration_ms = (time.perf_counter() - started) * 1000
                     actual, status, error_type = None, "error", type(exc).__name__
+                    error_stage = stage
+                    error_message = _log_reason(
+                        str(exc).replace(settings.zhipuai_api_key, "[已隐藏]")
+                    )[:1000]
                 _, errors, chain_valid = tool_trajectory(replay.agent_state, skill)
+                configured = Counter(
+                    (item.source, json.dumps(item.arguments, sort_keys=True))
+                    for item in replay.responses
+                )
+                requested = Counter(
+                    (call.source, json.dumps(call.arguments, sort_keys=True))
+                    for call in replay.source_calls
+                )
                 output = SkillExecutionOutput(
                     result=actual,
+                    raw_result=raw_result,
                     execution_status=status,
                     duration_ms=duration_ms,
                     error_type=error_type,
+                    error_stage=error_stage,
+                    error_message=error_message,
+                    replay_valid=(
+                        configured == requested
+                        and all(call.matched for call in replay.source_calls)
+                        if status == "success" or replay.source_calls
+                        else None
+                    ),
                     source_calls=replay.source_calls,
                     tool_calls=replay.tool_calls,
                     tool_error_count=(
@@ -413,9 +462,13 @@ async def evaluate_skill(
                     ),
                     model_attempt_count=replay.model_attempt_count,
                     evidence_chain_valid=chain_valid,
+                    token_usage=replay.token_usage,
                 )
                 observation.update(
-                    output=output.model_dump(mode="json"),
+                    output=raw_result,
+                    metadata=output.model_dump(
+                        mode="json", exclude={"result", "raw_result"}
+                    ),
                     level="DEFAULT" if status == "success" else "ERROR",
                 )
                 return output
@@ -451,81 +504,165 @@ def values_equal(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
-def compare_skill(
-    actual: SkillExecutionOutput, expected: SkillExecutionExpected
-) -> dict[str, bool]:
-    success = actual.execution_status == "success" and actual.result is not None
-    comparison_result = (
-        actual.result.model_copy(deep=True) if actual.result is not None else None
-    )
-    if comparison_result is not None:
-        expected_indicators = {item.indicator_id: item for item in expected.indicators}
-        original_reason = "；".join(
-            item.reason
-            for item in comparison_result.indicators
-            if item.status != "ok" and item.reason
-        )
-        for item in comparison_result.indicators:
-            reasons = expected.missing_reason_options.get(item.indicator_id, [])
-            if item.status == "data_missing" and item.reason in reasons:
-                # 只在比较副本中统一已确认的缺失原因，保留实际输出原文。
-                item.reason = expected_indicators[item.indicator_id].reason
-        if (
-            comparison_result.status == "data_missing"
-            and comparison_result.reason == original_reason
-        ):
-            comparison_result.reason = "；".join(
-                item.reason
-                for item in comparison_result.indicators
-                if item.status != "ok" and item.reason
+def result_differences(
+    actual: Any, expected: Any, path: str = "$"
+) -> list[dict[str, Any]]:
+    """记录具体字段差异，沿用完整结构比较及浮点容差。"""
+    if values_equal(actual, expected):
+        return []
+    if isinstance(actual, dict) and isinstance(expected, dict):
+        differences: list[dict[str, Any]] = []
+        for key in sorted(actual.keys() | expected.keys()):
+            field_path = f"{path}.{key}"
+            if key not in actual or key not in expected:
+                differences.append(
+                    {
+                        "path": field_path,
+                        "expected": expected.get(key),
+                        "actual": actual.get(key),
+                        "expected_present": key in expected,
+                        "actual_present": key in actual,
+                    }
+                )
+            else:
+                differences.extend(
+                    result_differences(actual[key], expected[key], field_path)
+                )
+        return differences
+    if isinstance(actual, list) and isinstance(expected, list):
+        differences = []
+        if len(actual) != len(expected):
+            differences.append(
+                {
+                    "path": f"{path}.length",
+                    "expected": len(expected),
+                    "actual": len(actual),
+                }
             )
-    scores = {
+        for index, (left, right) in enumerate(zip(actual, expected)):
+            differences.extend(result_differences(left, right, f"{path}[{index}]"))
+        return differences
+    return [{"path": path, "expected": expected, "actual": actual}]
+
+
+def compare_skill(
+    actual: SkillExecutionOutput, expected: SkillExecutionResult, skill: LoadedSkill
+) -> dict[str, bool | None]:
+    """分开检查调度、计算、状态和聚合；无结果时计算正确性保持未知。"""
+    success = actual.execution_status == "success" and actual.result is not None
+    scores: dict[str, bool | None] = {
         "execution_success": success,
-        "replay_valid": success
-        and bool(actual.source_calls)
-        and all(call.matched for call in actual.source_calls),
-        "tool_contract_valid": success
-        and actual.evidence_chain_valid
-        and actual.tool_error_count == 0,
-        "indicators_correct": success
-        and values_equal(
-            [item.model_dump() for item in comparison_result.indicators],
-            [item.model_dump() for item in expected.indicators],
-        ),
-        "aggregate_correct": success
-        and values_equal(
-            comparison_result.model_dump(exclude={"indicators"}),
-            expected.model_dump(exclude={"indicators", "missing_reason_options"}),
-        ),
+        "replay_valid": actual.replay_valid,
+        "tool_selection_correct": None,
+        "indicator_calculation_correct": None,
+        "status_handling_correct": None,
+        "aggregate_score_correct": None,
     }
-    scores["skill_execution_correct"] = all(scores.values())
+    if success or actual.error_stage == "result_validation":
+        scores["tool_selection_correct"] = (
+            Counter(call["name"] for call in actual.tool_calls) == Counter(skill.tools)
+            and all(call["args"] == {} for call in actual.tool_calls)
+            and actual.evidence_chain_valid
+            and actual.tool_error_count == 0
+        )
+        result = actual.raw_result
+        if isinstance(result, dict):
+            indicators = result.get("indicators")
+            valid_indicators = isinstance(indicators, list) and all(
+                isinstance(item, dict) for item in indicators
+            )
+            scores["indicator_calculation_correct"] = valid_indicators and values_equal(
+                [
+                    {
+                        key: value
+                        for key, value in item.items()
+                        if key not in {"status", "reason"}
+                    }
+                    for item in indicators
+                ],
+                [
+                    item.model_dump(exclude={"status", "reason"})
+                    for item in expected.indicators
+                ],
+            )
+            scores["status_handling_correct"] = valid_indicators and values_equal(
+                {
+                    **{
+                        key: value
+                        for key, value in result.items()
+                        if key in {"status", "reason"}
+                    },
+                    "indicators": [
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key in {"indicator_id", "status", "reason"}
+                        }
+                        for item in indicators
+                    ],
+                },
+                {
+                    "status": expected.status,
+                    "reason": expected.reason,
+                    "indicators": [
+                        item.model_dump(include={"indicator_id", "status", "reason"})
+                        for item in expected.indicators
+                    ],
+                },
+            )
+            scores["aggregate_score_correct"] = values_equal(
+                {
+                    key: value
+                    for key, value in result.items()
+                    if key in {"skill_name", "name", "score"}
+                },
+                expected.model_dump(include={"skill_name", "name", "score"}),
+            )
+        else:
+            scores.update(
+                indicator_calculation_correct=False,
+                status_handling_correct=False,
+                aggregate_score_correct=False,
+            )
+    scores["skill_execution_correct"] = all(value is True for value in scores.values())
     return scores
 
 
 def score_skill(
-    *, output: Any, expected_output: Any, **kwargs: Any
+    *,
+    output: Any,
+    expected_output: Any,
+    input: Any,
+    diagnostics: SkillExecutionOutput,
 ) -> list[Evaluation]:
-    """正确性用代码比较，执行效率记录实际毫秒数，不调用裁判模型。"""
-    actual = SkillExecutionOutput.model_validate(output)
-    expected = SkillExecutionExpected.model_validate(expected_output)
+    """案例出参就是生产结果；执行诊断单独保存，评分不调用裁判模型。"""
+    expected = SkillExecutionResult.model_validate(expected_output)
+    skill = LoadedSkill.model_validate(input["skill"])
+    recorded = diagnostics.raw_result
+    if output is not recorded and not values_equal(output, recorded):
+        raise ValueError("案例出参与记录的 execute_skill 返回结果不一致")
     details = {
-        "execution_status": actual.execution_status,
-        "error_type": actual.error_type,
-        "expected": expected.model_dump(),
-        "actual": actual.result.model_dump() if actual.result is not None else None,
-        "tool_call_count": len(actual.tool_calls),
-        "tool_error_count": actual.tool_error_count,
-        "model_attempt_count": actual.model_attempt_count,
+        "execution_status": diagnostics.execution_status,
+        "error_type": diagnostics.error_type,
+        "error_stage": diagnostics.error_stage,
+        "error_message": diagnostics.error_message,
+        "differences": result_differences(output, expected.model_dump())
+        if output is not None
+        else [],
+        "tool_call_count": len(diagnostics.tool_calls),
+        "tool_error_count": diagnostics.tool_error_count,
+        "model_attempt_count": diagnostics.model_attempt_count,
     }
     comment = json.dumps(details, ensure_ascii=False)
     return [
         *[
             Evaluation(name=name, value=int(correct), comment=comment)
-            for name, correct in compare_skill(actual, expected).items()
+            for name, correct in compare_skill(diagnostics, expected, skill).items()
+            if correct is not None
         ],
         Evaluation(
             name="duration_ms",
-            value=actual.duration_ms,
+            value=diagnostics.duration_ms,
             comment="execute_skill 全程耗时，包含模型、重试、工具和聚合，单位毫秒",
         ),
     ]
@@ -549,22 +686,37 @@ def duration_summary(durations: list[float]) -> dict[str, float | None]:
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     scores: Counter[str] = Counter()
+    evaluated: Counter[str] = Counter()
     statuses: Counter[str] = Counter()
     categories: dict[str, Counter[str]] = {}
     durations: dict[str, list[float]] = {"success": [], "error": []}
     tool_calls = 0
     tool_errors = 0
     model_attempts = 0
+    token_usage: list[dict[str, Any]] = []
     for row in rows:
-        actual = SkillExecutionOutput.model_validate(row["output"])
-        expected = SkillExecutionExpected.model_validate(row["expected_output"])
-        comparison = compare_skill(actual, expected)
-        scores.update({name: int(correct) for name, correct in comparison.items()})
+        actual = SkillExecutionOutput.model_validate(
+            {
+                "result": row["output"]
+                if row["diagnostics"]["execution_status"] == "success"
+                else None,
+                "raw_result": row["output"],
+                **row["diagnostics"],
+            }
+        )
+        expected = SkillExecutionResult.model_validate(row["expected_output"])
+        skill = LoadedSkill.model_validate(row["input"]["skill"])
+        comparison = compare_skill(actual, expected, skill)
+        for name, correct in comparison.items():
+            if correct is not None:
+                scores[name] += int(correct)
+                evaluated[name] += 1
         statuses[actual.execution_status] += 1
         durations[actual.execution_status].append(actual.duration_ms)
         tool_calls += len(actual.tool_calls)
         tool_errors += actual.tool_error_count
         model_attempts += actual.model_attempt_count
+        token_usage.extend(actual.token_usage)
         category = categories.setdefault(row["metadata"]["category"], Counter())
         category["runs"] += 1
         category["correct"] += int(comparison["skill_execution_correct"])
@@ -573,7 +725,14 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "planned_runs": total,
         "correct_runs": scores["skill_execution_correct"],
         "overall_success_rate": scores["skill_execution_correct"] / total,
-        "accuracy_by_metric": {name: count / total for name, count in scores.items()},
+        "accuracy_by_metric": {
+            name: scores[name] / evaluated[name] if evaluated[name] else None
+            for name in comparison
+        },
+        "evaluated_count_by_metric": {name: evaluated[name] for name in comparison},
+        "unknown_count_by_metric": {
+            name: total - evaluated[name] for name in comparison
+        },
         "execution_status_counts": dict(statuses),
         "accuracy_by_category": {
             name: counts["correct"] / counts["runs"]
@@ -587,7 +746,13 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_tool_call_count": tool_calls / total,
         "tool_error_count": tool_errors,
         "model_attempts": model_attempts,
-        "token_usage": None,
+        "token_usage": {
+            name: sum(usage[name] for usage in token_usage)
+            if token_usage and all(name in usage for usage in token_usage)
+            else None
+            for name in ("input_tokens", "output_tokens", "total_tokens")
+        },
+        "model_calls_with_token_usage": len(token_usage),
         "cost": None,
     }
 
@@ -599,7 +764,7 @@ def main() -> None:
         type=Path,
         default=Path(__file__).with_name("skill_execution_cases.jsonl"),
     )
-    parser.add_argument("--dataset", default="crypto-agent-skill-execution")
+    parser.add_argument("--dataset", default="crypto-agent-skill-execution-result")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--repetitions", type=int, default=1)
@@ -678,7 +843,10 @@ def main() -> None:
         "code_revision": subprocess.run(
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
-        "model": settings.fast_model,
+        "models": sorted({case.input.metric_agent.model for case in cases}),
+        "scoring_version": "execute_skill_result_v2",
+        "input_contract": "metric_agent配置、skill、scope对应生产函数三个参数",
+        "output_contract": "案例expected_output与output均为execute_skill完整result",
         "data_mode": "fixed_replay",
         "repetitions": str(args.repetitions),
         "case_count": str(len(cases)),
@@ -693,24 +861,51 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     client = get_client(public_key=config.langfuse_public_key)
-    rows: list[dict[str, Any]] = []
+    run_state = EvaluationRunState()
 
-    async def task(*, item: DatasetItem) -> dict[str, Any]:
+    async def task(*, item: DatasetItem) -> dict[str, Any] | None:
         inputs = SkillExecutionInput.model_validate(item.input)
-        output = await evaluate_skill(client, inputs, args.timeout_seconds)
-        rows.append(
+        replay_config = SourceReplayConfig.model_validate(item.metadata["replay"])
+        output = await evaluate_skill(
+            client, inputs, replay_config, args.timeout_seconds
+        )
+        result = output.raw_result
+        run_state.diagnostics[item.metadata["case_id"]] = output
+        run_state.rows.append(
             {
                 "input": item.input,
                 "expected_output": item.expected_output,
-                "metadata": item.metadata,
-                "output": output.model_dump(mode="json"),
+                "replay": replay_config.model_dump(mode="json"),
+                "metadata": {k: v for k, v in item.metadata.items() if k != "replay"},
+                "output": result,
+                "diagnostics": output.model_dump(
+                    mode="json", exclude={"result", "raw_result"}
+                ),
+                "differences": result_differences(result, item.expected_output)
+                if result is not None
+                else [],
             }
         )
         print(
             f"{item.metadata['case_id']}：{output.execution_status}，{output.duration_ms:.0f} ms",
             flush=True,
         )
-        return output.model_dump(mode="json")
+        return result
+
+    def evaluate_item(
+        *,
+        output: Any,
+        expected_output: Any,
+        input: Any,
+        metadata: dict[str, Any],
+        **kwargs: Any,
+    ) -> list[Evaluation]:
+        return score_skill(
+            output=output,
+            expected_output=expected_output,
+            input=input,
+            diagnostics=run_state.diagnostics[metadata["case_id"]],
+        )
 
     try:
         if not client.auth_check():
@@ -719,7 +914,7 @@ def main() -> None:
             name=args.dataset,
             description="固定数据源响应与人工预期结果的独立 execute_skill 评测",
             input_schema=SkillExecutionInput.model_json_schema(),
-            expected_output_schema=SkillExecutionExpected.model_json_schema(),
+            expected_output_schema=SkillExecutionResult.model_json_schema(),
         )
         items = [
             client.create_dataset_item(
@@ -727,38 +922,45 @@ def main() -> None:
                 id=str(uuid5(NAMESPACE_URL, f"{args.dataset}:{case.metadata.case_id}")),
                 input=case.input.model_dump(mode="json"),
                 expected_output=case.expected_output.model_dump(mode="json"),
-                metadata=case.metadata.model_dump(),
+                metadata={
+                    **case.metadata.model_dump(),
+                    "replay": case.replay.model_dump(mode="json"),
+                },
             )
             for case in cases
         ]
         print(f"开始 {len(items) * args.repetitions} 次技能执行评测", flush=True)
         for repetition in range(1, args.repetitions + 1):
-            row_start = len(rows)
+            row_start = len(run_state.rows)
             result = client.run_experiment(
-                name="crypto-agent-skill-execution",
+                name=args.dataset,
                 run_name=f"{run_name}-r{repetition}",
                 data=items,
                 task=task,
-                evaluators=[score_skill],
+                evaluators=[evaluate_item],
                 max_concurrency=1,
                 metadata=metadata,
             )
             for row, item_result in zip(
-                rows[row_start:], result.item_results, strict=True
+                run_state.rows[row_start:], result.item_results, strict=True
             ):
-                if len(item_result.evaluations) != 7:
+                names = {score.name for score in item_result.evaluations}
+                if (
+                    not {"execution_success", "skill_execution_correct", "duration_ms"}
+                    <= names
+                ):
                     raise RuntimeError("评分记录不完整，不能输出完整实验结果")
                 row["repetition"] = repetition
                 row["scores"] = [score.__dict__ for score in item_result.evaluations]
                 row["langfuse_trace_id"] = item_result.trace_id
             print(result.format())
-        if len(rows) != len(items) * args.repetitions:
+        if len(run_state.rows) != len(items) * args.repetitions:
             raise RuntimeError("执行记录不完整，不能输出完整成功率")
         report = {
             "run_name": run_name,
             "metadata": metadata,
-            "summary": summarize(rows),
-            "cases": rows,
+            "summary": summarize(run_state.rows),
+            "cases": run_state.rows,
         }
         args.output_dir.mkdir(parents=True, exist_ok=True)
         output_path.write_text(

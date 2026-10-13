@@ -11,6 +11,33 @@ from app.crypto_analysis.tools.source_time_utils import shift_month
 
 _FRED_SOURCE = "https://api.stlouisfed.org/fred/series/observations"
 
+M2_FIELD_LABELS = (
+    {
+        "latest_value": "最新月M2（亿美元）",
+        "previous_value": "上月M2（亿美元）",
+        "latest_year_ago_value": "最新月去年同月M2（亿美元）",
+        "previous_year_ago_value": "上月去年同月M2（亿美元）",
+        "comparison_months": "同比比较月份",
+    },
+    {
+        "latest_yoy_pct": "最新月M2同比增速（%）",
+        "previous_yoy_pct": "上月M2同比增速（%）",
+        "yoy_change_pp": "M2同比增速较上月变化（百分点）",
+    },
+    {},
+)
+
+WALCL_FIELD_LABELS = (
+    {
+        "latest_value": "最新周美联储总资产（亿美元）",
+        "ma4_value": "最近4周平均总资产（亿美元）",
+        "comparison_dates": "最近4周观测日期",
+        "weekly_values": "最近4周总资产（亿美元）",
+    },
+    {"ma4_change_pct": "相对4周均值偏离（%）"},
+    {},
+)
+
 
 def _parse_observations(
     raw: dict[str, Any], series_id: Literal["M2SL", "WALCL"]

@@ -35,7 +35,7 @@ from app.crypto_analysis.crypto_analysis_state import (
     SkillResult,
     SkillWorkerState,
 )
-from app.crypto_analysis.metric_service import missing_metric
+from app.crypto_analysis.metric_service import metric_field_labels, missing_metric
 from app.crypto_analysis.skill_loader import (
     LoadedSkill,
     SkillLoader,
@@ -465,7 +465,11 @@ async def _generate_skill_content(
     analysis_subject: str,
 ) -> str:
     """按通用格式生成表格与思想解读，只使用成功指标和实际检索材料。"""
-    indicators = [item for item in result["indicators"] if item["status"] == "ok"]
+    indicators = [
+        {**item, "field_labels": metric_field_labels(item["indicator_id"])}
+        for item in result["indicators"]
+        if item["status"] == "ok"
+    ]
     thought_context = result["thought_context"]
     # 全部缺失时返回空展示，不调用模型；只有思想材料时仍可解读已有原则。
     if not indicators and not thought_context["documents"]:

@@ -10,6 +10,17 @@ from app.crypto_analysis.calculators.score_calculator import linear_score
 
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"
 
+# 原始值、计算值的中文名称与计算窗口一起维护，供指标服务校验和正文展示。
+DXY_FIELD_LABELS = (
+    {"dxy": "美元指数", "ma50": "50日均线", "ma200": "200日均线"},
+    {
+        "ma50_deviation_pct": "相对50日均线偏离（%）",
+        "ma50_trend": "50日均线方向",
+        "ma200_trend": "200日均线方向",
+    },
+    {},
+)
+
 
 def _parse_closes(raw: dict[str, Any]) -> pd.Series:
     """校验日线后按原始顺序保存收盘价，拒绝乱序和重复日期。"""

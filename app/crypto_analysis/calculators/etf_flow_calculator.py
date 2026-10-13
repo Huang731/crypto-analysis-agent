@@ -6,6 +6,18 @@ from typing import Any
 
 import pandas as pd
 
+ETF_FLOW_FIELD_LABELS = (
+    {
+        "latest_flow_usd_100m": "最新记录ETF净流量（亿美元）",
+        "previous_five_day_flow_usd_100m": "此前5条记录ETF净流量（亿美元）",
+    },
+    {
+        "five_day_flow_usd_100m": "最近5条记录ETF净流量（亿美元）",
+        "twenty_day_flow_usd_100m": "最近20条记录ETF净流量（亿美元）",
+    },
+    {},
+)
+
 
 def _flow_score(value: Decimal, neutral: int, extreme: int) -> float:
     """中性区间包含两端，极端流量包含极值边界。"""

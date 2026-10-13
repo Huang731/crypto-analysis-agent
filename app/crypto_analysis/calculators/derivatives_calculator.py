@@ -10,6 +10,37 @@ import pandas as pd
 _HOUR = 3_600_000
 _WEEK = 168 * _HOUR
 
+FUNDING_FIELD_LABELS = (
+    {"symbol": "交易对"},
+    {
+        "funding_average_pct": "7日窗口平均8小时资金费率（%）",
+        "funding_price_change_pct": "资金费率7日窗口价格变化（%）",
+    },
+    {},
+)
+
+OI_FIELD_LABELS = (
+    {
+        "symbol": "交易对",
+        "latest_oi": "最新持仓量",
+        "baseline_oi": "7日前基准持仓量",
+        "latest_price": "最新现货价格（USDT）",
+        "baseline_price": "7日前基准现货价格（USDT）",
+    },
+    {
+        "oi_change_pct": "7日持仓量变化（%）",
+        "price_change_pct": "7日现货价格变化（%）",
+        "funding_average_pct": "7日窗口平均8小时资金费率（%）",
+        "funding_score": "资金费率分数",
+        "market_state": "市场状态",
+    },
+    # 24小时比较基准缺失时保留 null，不改变原有7日评分条件。
+    {
+        "oi_24h_change_pct": "24小时持仓量变化（%）",
+        "price_24h_change_pct": "24小时现货价格变化（%）",
+    },
+)
+
 
 def _number(value: Any) -> float:
     """拒绝非有限数值。"""

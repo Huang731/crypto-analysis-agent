@@ -109,7 +109,9 @@ class GenerationCaseMetadata(CaseMetadata):
     source_execution_report: str | None = None
     source_execution_case_id: str | None = None
     source_execution_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    thought_context_origin: Literal["fixed_local_knowledge_chunk", "no_documents"] | None = None
+    thought_context_origin: (
+        Literal["fixed_local_knowledge_chunk", "no_documents"] | None
+    ) = None
 
     @model_validator(mode="after")
     def complete_source(self) -> "GenerationCaseMetadata":

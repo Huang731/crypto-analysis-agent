@@ -9,6 +9,25 @@ import pandas as pd
 
 _DAY = 86_400_000
 
+TREND_FIELD_LABELS = (
+    {
+        "symbol": "交易对",
+        "first_open_time": "首根日线开盘时间",
+        "last_close_time": "末根日线收盘时间",
+        "close": "最新收盘价（USDT）",
+    },
+    {
+        "ma50": "50日均线（USDT）",
+        "ma200": "200日均线（USDT）",
+        "ma50_20_days_ago": "20日前50日均线（USDT）",
+        "ma200_20_days_ago": "20日前200日均线（USDT）",
+        "adx14": "14日平均趋向指数ADX",
+        "plus_di": "正向方向指标DI",
+        "minus_di": "负向方向指标DI",
+    },
+    {},
+)
+
 
 def validate_trend_klines(
     raw: dict[str, Any], scope: dict[str, str]

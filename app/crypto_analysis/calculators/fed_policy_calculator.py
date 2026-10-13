@@ -7,6 +7,25 @@ from typing import Any
 
 import pandas as pd
 
+FED_RATE_FIELD_LABELS = (
+    {
+        "current_date": "当前利率观测日期",
+        "baseline_date": "基准利率观测日期",
+        "comparison_date": "三个月前比较日期",
+        "current_lower_pct": "当前目标利率下限（%）",
+        "current_upper_pct": "当前目标利率上限（%）",
+        "baseline_lower_pct": "基准目标利率下限（%）",
+        "baseline_upper_pct": "基准目标利率上限（%）",
+    },
+    {
+        "current_midpoint_pct": "当前目标利率中点（%）",
+        "baseline_midpoint_pct": "基准目标利率中点（%）",
+        "change_bp": "三个月利率净变化（基点）",
+        "policy_change": "三个月政策利率变化方向",
+    },
+    {},
+)
+
 
 def comparison_date(day: date) -> date:
     """按日历向前移动三个月，月末取目标月实际最后一天。"""

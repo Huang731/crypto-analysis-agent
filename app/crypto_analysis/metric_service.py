@@ -16,6 +16,24 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from app.crypto_analysis.calculators.derivatives_calculator import (
+    FUNDING_FIELD_LABELS,
+    OI_FIELD_LABELS,
+)
+from app.crypto_analysis.calculators.dxy_calculator import DXY_FIELD_LABELS
+from app.crypto_analysis.calculators.etf_flow_calculator import ETF_FLOW_FIELD_LABELS
+from app.crypto_analysis.calculators.fear_greed_calculator import (
+    FEAR_GREED_FIELD_LABELS,
+)
+from app.crypto_analysis.calculators.fed_policy_calculator import FED_RATE_FIELD_LABELS
+from app.crypto_analysis.calculators.fred_calculator import (
+    M2_FIELD_LABELS,
+    WALCL_FIELD_LABELS,
+)
+from app.crypto_analysis.calculators.stablecoin_calculator import (
+    STABLECOIN_FIELD_LABELS,
+)
+from app.crypto_analysis.calculators.trend_calculator import TREND_FIELD_LABELS
 from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.observability import get_logger
 from app.tracing import trace_span
@@ -56,94 +74,48 @@ _SOURCE_WEBSITES = {
 }
 
 
+# 各计算器依次声明原始字段、必填计算字段、允许为空的计算字段。
 _METRIC_FIELDS = {
-    "Fed_Rate_Change_3M": (
-        (
-            "current_date",
-            "baseline_date",
-            "comparison_date",
-            "current_lower_pct",
-            "current_upper_pct",
-            "baseline_lower_pct",
-            "baseline_upper_pct",
-        ),
-        ("current_midpoint_pct", "baseline_midpoint_pct", "change_bp", "policy_change"),
-    ),
-    "Fear_Greed": (
-        ("value", "value_classification"),
-        ("signal_reference",),
-    ),
-    "Trend": (
-        ("symbol", "first_open_time", "last_close_time", "close"),
-        (
-            "ma50",
-            "ma200",
-            "ma50_20_days_ago",
-            "ma200_20_days_ago",
-            "adx14",
-            "plus_di",
-            "minus_di",
-        ),
-    ),
-    "Funding": (
-        ("symbol",),
-        ("funding_average_pct", "funding_price_change_pct"),
-    ),
-    "OI": (
-        (
-            "symbol",
-            "latest_oi",
-            "baseline_oi",
-            "latest_price",
-            "baseline_price",
-        ),
-        (
-            "oi_change_pct",
-            "price_change_pct",
-            "funding_average_pct",
-            "funding_score",
-            "market_state",
-        ),
-    ),
-    "ETF_Flows": (
-        ("latest_flow_usd_100m", "previous_five_day_flow_usd_100m"),
-        ("five_day_flow_usd_100m", "twenty_day_flow_usd_100m"),
-    ),
-    "DXY_Trend": (
-        ("dxy", "ma50", "ma200"),
-        ("ma50_deviation_pct", "ma50_trend", "ma200_trend"),
-    ),
-    "Stable_MCap": (
-        (
-            "usdt_market_cap",
-            "usdc_market_cap",
-            "total_market_cap",
-            "ma30_market_cap",
-            "seven_day_market_cap",
-            "thirty_day_market_cap",
-        ),
-        (
-            "ma30_change_pct",
-            "seven_day_change_pct",
-            "thirty_day_change_pct",
-            "conflict_flag",
-        ),
-    ),
-    "M2_YoY": (
-        (
-            "latest_value",
-            "previous_value",
-            "latest_year_ago_value",
-            "previous_year_ago_value",
-            "comparison_months",
-        ),
-        ("latest_yoy_pct", "previous_yoy_pct", "yoy_change_pp"),
-    ),
-    "Fed_Balance": (
-        ("latest_value", "ma4_value", "comparison_dates", "weekly_values"),
-        ("ma4_change_pct",),
-    ),
+    "Fed_Rate_Change_3M": FED_RATE_FIELD_LABELS,
+    "Fear_Greed": FEAR_GREED_FIELD_LABELS,
+    "Trend": TREND_FIELD_LABELS,
+    "Funding": FUNDING_FIELD_LABELS,
+    "OI": OI_FIELD_LABELS,
+    "ETF_Flows": ETF_FLOW_FIELD_LABELS,
+    "DXY_Trend": DXY_FIELD_LABELS,
+    "Stable_MCap": STABLECOIN_FIELD_LABELS,
+    "M2_YoY": M2_FIELD_LABELS,
+    "Fed_Balance": WALCL_FIELD_LABELS,
 }
+
+
+def metric_field_labels(metric_id: str) -> dict[str, str]:
+    """校验计算器声明的字段中文名称，原始值和计算值共用一张指标表。"""
+    groups = _METRIC_FIELDS[metric_id]
+    labels = {field: label for group in groups for field, label in group.items()}
+    if len(labels) != sum(len(group) for group in groups):
+        raise ValueError(f"{metric_id} 字段定义重复")
+    if any(
+        not isinstance(label, str)
+        or not label.strip()
+        or label != label.strip()
+        or not any("\u4e00" <= char <= "\u9fff" for char in label)
+        for label in labels.values()
+    ):
+        raise ValueError(f"{metric_id} 字段缺少有效中文名称")
+    names = list(labels.values())
+    fixed_names = {
+        "字段",
+        "指标标识",
+        "指标状态",
+        "指标分数",
+        "单位",
+        "观测日期",
+        "来源链接",
+    }
+    if len(names) != len(set(names)) or fixed_names & set(names):
+        raise ValueError(f"{metric_id} 中文字段名称重复")
+    return labels
 
 
 def missing_metric(
@@ -175,7 +147,8 @@ def _normalize_result(
         if not isinstance(reason, str) or not reason:
             raise ValueError(f"{skill_name}.{metric_id} 缺少原因")
         return missing_metric(skill_name, metric_id, status, reason)
-    raw_fields, calculated_fields = _METRIC_FIELDS[metric_id]
+    raw_fields, calculated_fields, nullable_fields = _METRIC_FIELDS[metric_id]
+    metric_field_labels(metric_id)
     required = [
         *raw_fields,
         *calculated_fields,
@@ -205,11 +178,7 @@ def _normalize_result(
     except ValueError as exc:
         raise ValueError(f"{skill_name}.{metric_id} 的观测日期格式无效") from exc
     calculated_values = {field: result[field] for field in calculated_fields}
-    if metric_id == "OI":
-        calculated_values.update(
-            oi_24h_change_pct=result["oi_24h_change_pct"],
-            price_24h_change_pct=result["price_24h_change_pct"],
-        )
+    calculated_values.update({field: result[field] for field in nullable_fields})
     # 报告展示数据提供方官网，取数状态中的真实 API 地址保持原样。
     source_host = urlsplit(result["source"]).hostname
     if source_host not in _SOURCE_WEBSITES:

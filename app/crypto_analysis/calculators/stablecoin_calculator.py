@@ -11,6 +11,24 @@ from app.crypto_analysis.tools.source_time_utils import utc_time
 
 _BASE_URL = "https://pro-api.coinmarketcap.com"
 
+STABLECOIN_FIELD_LABELS = (
+    {
+        "usdt_market_cap": "USDT市值（亿美元）",
+        "usdc_market_cap": "USDC市值（亿美元）",
+        "total_market_cap": "USDT与USDC合计市值（亿美元）",
+        "ma30_market_cap": "30日平均市值（亿美元）",
+        "seven_day_market_cap": "7日前市值（亿美元）",
+        "thirty_day_market_cap": "30日前市值（亿美元）",
+    },
+    {
+        "ma30_change_pct": "相对30日均线偏离（%）",
+        "seven_day_change_pct": "7日市值变化（%）",
+        "thirty_day_change_pct": "30日市值变化（%）",
+        "conflict_flag": "均线偏离与7日变化是否方向冲突",
+    },
+    {},
+)
+
 
 def _parse_quotes(
     quotes: list[Any], symbol: str
