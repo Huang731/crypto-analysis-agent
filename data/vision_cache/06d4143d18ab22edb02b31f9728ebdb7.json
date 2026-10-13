@@ -1,0 +1,4 @@
+{
+  "hash": "06d4143d18ab22edb02b31f9728ebdb7",
+  "description": "```json\n{\"tables\": [{\"columns\": [{\"name\": \"投资\", \"values\": [{\"formula\": \"Q_{p}^{1}\\n投资\", \"description\": \"投资\"}]}]}, {\"columns\": [{\"name\": \"当前消费\", \"values\": [{\"formula\": \"Q\", \"description\": \"当前消费\"}]}, {\"name\": \"跨时生产可能性边界\", \"values\": [{\"formula\": \"Q\", \"description\": \"跨时生产可能性边界\"}]}]}]\n}\n```"
+}
