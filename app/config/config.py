@@ -65,6 +65,21 @@ class Settings(BaseSettings):
     planning_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "planning" / "planning_candidates.jsonl"
     )
+    # 两类 Skill 候选独立采集，实际结果需人工确认后才能作为评测预期。
+    skill_execution_capture_enabled: bool = True
+    skill_execution_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "skill_execution"
+        / "skill_execution_candidates.jsonl"
+    )
+    skill_generation_capture_enabled: bool = True
+    skill_generation_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "skill_generation"
+        / "skill_generation_candidates.jsonl"
+    )
 
     # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
     smart_model: str = "glm-4.5-air"

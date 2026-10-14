@@ -17,7 +17,7 @@ from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.config.config import PROJECT_ROOT, settings
-from app.crypto_analysis.crypto_analysis_agent import _generate_skill_content
+from app.crypto_analysis.crypto_analysis_agent import generate_skill
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import _make_model
@@ -383,6 +383,7 @@ async def evaluate(
             skill = loader.load_definition(inputs.skill_name)
             result = inputs.result.model_dump()
             result["thought_context"] = inputs.thought_context.model_dump()
+            result["scope"] = {"resolved_question": inputs.user_input}
             with client.start_as_current_observation(
                 as_type="span",
                 name="skill_generation.invoke",
@@ -392,7 +393,7 @@ async def evaluate(
                 active_stage = "generation"
                 if inputs.mode == "generation":
                     response = await asyncio.wait_for(
-                        _generate_skill_content(
+                        generate_skill(
                             generator.with_config(callbacks=[generation_counter]),
                             loader,
                             skill,

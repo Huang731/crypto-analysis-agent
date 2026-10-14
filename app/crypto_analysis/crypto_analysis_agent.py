@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from math import fsum
@@ -250,6 +251,105 @@ def append_planning_candidate(
         output_file.write(line)
 
 
+class SkillExecutionCandidate(BaseModel):
+    """保存执行输入、原始响应和实际结果，预期结果由人工标注。"""
+
+    model_config = ConfigDict(extra="forbid")
+    case_id: str = Field(default_factory=lambda: uuid4().hex)
+    input: dict[str, Any]
+    replay: dict[str, Any]
+    actual_output: dict[str, Any]
+    duration_ms: float = Field(ge=0)
+
+
+class SkillGenerationCandidate(BaseModel):
+    """保存可回放的正文生成输入，保留请求范围及实际模型。"""
+
+    model_config = ConfigDict(extra="forbid")
+    case_id: str = Field(default_factory=lambda: uuid4().hex)
+    input: dict[str, Any]
+    scope: dict[str, str]
+    generator_model: str
+    actual_output: str
+
+
+def _append_skill_candidate(candidate: BaseModel, path: str | Path) -> None:
+    """整条序列化后一次追加，保留中文和已有候选。"""
+    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("a", encoding="utf-8") as output_file:
+        output_file.write(line)
+
+
+def append_skill_execution_candidate(
+    *,
+    model_name: str,
+    skill: LoadedSkill,
+    scope: dict[str, str],
+    evidence: dict[str, dict[str, Any]],
+    result: dict[str, Any],
+    duration_ms: float,
+    path: str | Path,
+) -> None:
+    """保存取数响应与原始参数，沿用执行评测的数据源名称。"""
+    source_responses = []
+    for record in evidence.values():
+        data_kind = record["data_kind"]
+        source = "fred_observations" if data_kind in {"m2", "walcl"} else data_kind
+        response = {"source": source, "arguments": record["arguments"]}
+        if record["status"] == "ok":
+            response["raw"] = record["raw"]
+        else:
+            response["error"] = record["reason"]
+        source_responses.append(response)
+    candidate = SkillExecutionCandidate(
+        input={
+            "metric_agent": {"model": model_name},
+            "skill": skill.model_dump(mode="json"),
+            "scope": dict(scope),
+        },
+        replay={"source_responses": source_responses},
+        actual_output=result,
+        duration_ms=duration_ms,
+    )
+    _append_skill_candidate(candidate, path)
+
+
+def append_skill_generation_candidate(
+    *,
+    model_name: str,
+    skill_source: str,
+    skill: LoadedSkill,
+    scope: dict[str, str],
+    analysis_subject: str,
+    result: dict[str, Any],
+    content: str,
+    duration_ms: float,
+    path: str | Path,
+) -> None:
+    """保存固定指标、材料和实际正文，直接对应正文回放评测输入。"""
+    candidate = SkillGenerationCandidate(
+        input={
+            "mode": "response_replay",
+            "skill_source": skill_source,
+            "skill_name": skill.name,
+            "analysis_subject": analysis_subject,
+            "user_input": scope["resolved_question"],
+            "result": {
+                k: v for k, v in result.items() if k not in {"thought_context", "scope"}
+            },
+            "thought_context": result["thought_context"],
+            "fixed_response": content,
+            "source_generation_duration_ms": duration_ms,
+        },
+        scope=dict(scope),
+        generator_model=model_name,
+        actual_output=content,
+    )
+    _append_skill_candidate(candidate, path)
+
+
 # 指标工具 Agent
 
 
@@ -382,6 +482,7 @@ async def execute_skill(
     scope: dict[str, str],
 ) -> dict[str, Any]:
     """让技能 Agent 自主调用工具，只接收工具写入的可核验指标结果。"""
+    started = time.perf_counter()
     scoring = skill.scoring
     with trace_span("analysis.skill.execute", skill_name=skill.name) as node_span:
         try:
@@ -418,6 +519,16 @@ async def execute_skill(
                 for metric in scoring.metrics
             ]
             result = aggregate_skill_results(skill, indicators)
+            if settings.skill_execution_capture_enabled:
+                append_skill_execution_candidate(
+                    model_name=settings.fast_model,
+                    skill=skill,
+                    scope=scope,
+                    evidence=state["evidence"],
+                    result=result,
+                    duration_ms=(time.perf_counter() - started) * 1000,
+                    path=settings.skill_execution_capture_path,
+                )
             return result
         except Exception:
             node_span.metadata["status"] = "error"
@@ -457,7 +568,7 @@ async def _retrieve_thought_context(
         }
 
 
-async def _generate_skill_content(
+async def generate_skill(
     llm: Any,
     skill_loader: SkillLoader,
     skill: LoadedSkill,
@@ -465,6 +576,7 @@ async def _generate_skill_content(
     analysis_subject: str,
 ) -> str:
     """按通用格式生成表格与思想解读，只使用成功指标和实际检索材料。"""
+    started = time.perf_counter()
     indicators = [
         {**item, "field_labels": metric_field_labels(item["indicator_id"])}
         for item in result["indicators"]
@@ -473,16 +585,30 @@ async def _generate_skill_content(
     thought_context = result["thought_context"]
     # 全部缺失时返回空展示，不调用模型；只有思想材料时仍可解读已有原则。
     if not indicators and not thought_context["documents"]:
-        return ""
-    prompt = skill_output_prompt(
-        analysis_subject=analysis_subject,
-        skill_name=skill.name,
-        indicators=indicators,
-        thought_context=thought_context,
-        skill_instructions=skill_loader.load_skill(skill.name),
-    )
-    # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
-    return await _invoke_skill_output(llm, prompt)
+        content = ""
+    else:
+        prompt = skill_output_prompt(
+            analysis_subject=analysis_subject,
+            skill_name=skill.name,
+            indicators=indicators,
+            thought_context=thought_context,
+            skill_instructions=skill_loader.load_skill(skill.name),
+        )
+        # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
+        content = await _invoke_skill_output(llm, prompt)
+    if settings.skill_generation_capture_enabled:
+        append_skill_generation_candidate(
+            model_name=llm.model_name,
+            skill_source=skill_loader.load_skill(skill.name),
+            skill=skill,
+            scope=result["scope"],
+            analysis_subject=analysis_subject,
+            result=result,
+            content=content,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            path=settings.skill_generation_capture_path,
+        )
+    return content
 
 
 @trace_generation_call(name="crypto_skill_output", model=settings.smart_model)
@@ -639,7 +765,9 @@ def build_dynamic_analysis_agent(
                 result["thought_context"] = await _retrieve_thought_context(
                     retriever, skill, analysis_subject
                 )
-                content = await _generate_skill_content(
+                # 请求范围仅用于正文候选采集，不改变指标执行结果的返回契约。
+                result["scope"] = dict(state["scope"])
+                content = await generate_skill(
                     smart_llm, skill_loader, skill, result, analysis_subject
                 )
                 # 只回传当前技能的结果与缓存增量，由主图 reducer 合并并行更新。

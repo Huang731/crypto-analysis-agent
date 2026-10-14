@@ -211,7 +211,11 @@ async def _fetch_evidence(
 ) -> dict[str, Any]:
     """取得原始响应或真实失败记录，供同一次调用直接计算。"""
     started = time.perf_counter()
-    record = {"data_kind": data_kind, "source_action": source_action}
+    record = {
+        "data_kind": data_kind,
+        "source_action": source_action,
+        "arguments": dict(arguments),
+    }
     with trace_span(
         "analysis.metric.fetch", data_kind=data_kind, source_action=source_action
     ) as span:
