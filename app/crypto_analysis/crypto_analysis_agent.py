@@ -193,9 +193,14 @@ class AnalysisPlan(BaseModel):
 
 
 class ReportReview(BaseModel):
-    """审核只返回是否通过和可执行的修改意见，不修改技能证据。"""
+    """审核返回证据核对记录、是否通过和修改意见，不修改技能证据。"""
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    review_process: str = Field(
+        strict=True,
+        min_length=1,
+        description="逐项对照报告原文与证据原文或表格数据的具体核对记录",
+    )
     passed: bool = Field(strict=True, description="报告是否符合本轮证据和用户问题")
     feedback: str = Field(strict=True, description="不通过时的具体问题、依据及修改要求")
 
@@ -909,7 +914,7 @@ def build_dynamic_analysis_agent(
 
     @timed_node
     async def reviewer(state: DynamicAnalysisState) -> dict[str, Any]:
-        """审核本轮报告，最多允许一次带意见的重写，不通过则停止。"""
+        """审核本轮报告，最多审核五轮，未通过时带意见重写。"""
         with trace_span("crypto.reviewer") as node_span:
             try:
                 # 无适用技能时沿用原有说明回复，无需审核投研内容。
@@ -928,6 +933,7 @@ def build_dynamic_analysis_agent(
                 # 复用结构化调用的流标记，审核内容不进入报告正文。
                 review = await _invoke_report_review(smart_llm, prompt)
                 node_span.output = {
+                    "review_process": review.review_process,
                     "passed": review.passed,
                     "review_count": count,
                     "feedback": review.feedback,

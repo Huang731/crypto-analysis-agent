@@ -45,7 +45,10 @@
             <p class="eyebrow">分析与洞察</p>
             <h2 id="report-title">研究报告</h2>
           </div>
-          <span id="report-status" class="report-status" role="status">等待提问</span>
+          <div class="report-meta">
+            <span id="report-status" class="report-status" role="status">等待提问</span>
+            <span id="elapsed-time" class="elapsed-time" hidden></span>
+          </div>
         </header>
         <p id="report-question" class="report-question" hidden></p>
 
@@ -73,7 +76,7 @@
         </div>
 
         <details id="findings" class="findings" hidden>
-          <summary id="findings-title">数据来源</summary>
+          <summary id="findings-title">数据来源列表</summary>
           <div id="findings-list"></div>
         </details>
       </section>
@@ -95,6 +98,7 @@
     const findingsTitleEl = document.getElementById("findings-title"); // 根据完成类型设置发现列表标题。
     const findingsList = document.getElementById("findings-list");
     const reportStatusEl = document.getElementById("report-status");
+    const elapsedTimeEl = document.getElementById("elapsed-time");
     const reportQuestionEl = document.getElementById("report-question");
     const progressSummaryEl = document.getElementById("progress-summary");
     const savedThreadId = sessionStorage.getItem("crypto_analysis_thread_id");
@@ -127,6 +131,19 @@
     function setReportStatus(text, kind = "") {
       reportStatusEl.textContent = text;
       reportStatusEl.className = "report-status" + (kind ? " " + kind : "");
+    }
+
+    function updateElapsedTime(state) {
+      const elapsed = (state.endedAt ?? performance.now()) - state.startedAt;
+      elapsedTimeEl.textContent = "耗时 " + (elapsed / 1000).toFixed(1) + " 秒";
+    }
+
+    function stopElapsedTime(state) {
+      // 结束时间只记录一次，避免流关闭或页面渲染继续增加耗时。
+      if (state.endedAt === null) state.endedAt = performance.now();
+      if (state.timerId !== null) clearInterval(state.timerId);
+      state.timerId = null;
+      updateElapsedTime(state);
     }
 
     function renderMarkdown(element, content) {
@@ -250,8 +267,9 @@
         reportEl.classList.remove("placeholder");
         appendReport(data.content, state);
       } else if (name === "done") {
+        stopElapsedTime(state);
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究明细" : "数据来源";
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究明细" : "数据来源列表";
         reportEl.classList.remove("blink");
         setReportStatus(data.kind === "direct" ? "已回复" : "分析完成", "complete");
         if (typeof data.report === "string" && data.report) {
@@ -281,6 +299,7 @@
         if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。
         addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");
       } else if (name === "error") {
+        stopElapsedTime(state);
         state.finished = true;
         clearReport(state);
         setReportStatus("分析失败", "failed");
@@ -345,8 +364,12 @@
       addProgress("提交", "请求已发送");
       const state = {
         agents: [], finished: false, outputNode: null, writerComplete: false,
-        report: "", renderFrame: null
+        report: "", renderFrame: null,
+        startedAt: performance.now(), endedAt: null, timerId: null
       };
+      elapsedTimeEl.hidden = false;
+      updateElapsedTime(state);
+      state.timerId = setInterval(() => updateElapsedTime(state), 100);
 
       try {
         const response = await fetch("/api/ask", {
@@ -371,6 +394,7 @@
         await readEvents(response.body, state);
         if (!state.finished) throw new Error("事件流提前结束");
       } catch (error) {
+        stopElapsedTime(state);
         if (error.name === "AbortError") {
           flushReport(state);
           setReportStatus("已中断");
@@ -384,6 +408,7 @@
           addProgress("失败", "请求未完成", "failed");
         }
       } finally {
+        stopElapsedTime(state);
         if (state.renderFrame !== null) flushReport(state);
         reportEl.setAttribute("aria-busy", "false");
         reportEl.classList.remove("blink");

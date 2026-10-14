@@ -109,6 +109,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .report-header .eyebrow { margin-bottom: 8px; color: var(--muted); letter-spacing: 1px; }
 .report-header h2 { margin: 0; font-size: 20px; font-weight: 650; }
+.report-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+.elapsed-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .report-status { padding: 6px 10px; border-radius: 6px; background: #f3f5f0; color: var(--muted); font-size: 11px; }
 .report-status.running { color: var(--accent); background: var(--accent-soft); }
 .report-status.complete { color: var(--green); background: var(--accent-soft); }

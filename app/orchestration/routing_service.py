@@ -44,6 +44,7 @@ class _RoutingStreamState:
     )
     routed_agent: str | None = None
     direct_reply: str = ""
+    report_released: bool = False
 
     def route(self, agent: str, conflict_reason: str) -> dict[str, str] | None:
         """首次路由通知前端，实际执行必须与路由目标一致。"""
@@ -108,6 +109,22 @@ class _RoutingStreamState:
             self.final_state["report"] = delta["report"]
         elif node == "research_team" and "findings" in delta:
             self.final_state["findings"] = delta["findings"]
+        elif node == "reviewer" and delta.get("review_decision") == "pass":
+            yield from self.approved_report_events()
+
+    def approved_report_events(self) -> Iterator[dict[str, str]]:
+        """只在审核通过后分段发送本轮报告，重写期间不推送正文。"""
+        if self.report_released:
+            return
+        report = self.final_state["report"]
+        if not isinstance(report, str) or not report.strip():
+            raise ValueError("审核通过的报告正文为空")
+        self.report_released = True
+        yield _event("report_start", {"node": "writer"})
+        for offset in range(0, len(report), 64):
+            yield _event(
+                "token", {"node": "writer", "content": report[offset : offset + 64]}
+            )
 
     def completion_event(self) -> dict[str, str]:
         """保持三类完成事件的字段，以及无路由、无回复时的明确失败。"""
@@ -153,29 +170,6 @@ class _RoutingStreamState:
         raise ValueError("路由 未分派研究 Agent 且未给出回复")
 
 
-def _token_event(payload: Any) -> dict[str, str] | None:
-    """研究与汇总 token 保持内部使用，其余非空内容沿用现有输出规则。"""
-    message, metadata = payload
-    content = message.content if hasattr(message, "content") else str(message)
-    node = metadata.get("langgraph_node", "?") if isinstance(metadata, dict) else "?"
-    if not content or node in {
-        "rewrite",
-        "router",
-        "plan",
-        "summarize",
-        "model",
-        "skill_worker",
-        "summarize_history",
-    }:
-        return None
-    # 规划等结构化调用的 JSON 增量不能作为报告正文展示。
-    if isinstance(metadata, dict) and "crypto_structured_output" in metadata.get(
-        "tags", []
-    ):
-        return None
-    return _event("token", {"node": node, "content": content})
-
-
 class RoutingService:
     """将用户问题交给 路由，并报告实际分派的 Agent。"""
 
@@ -194,10 +188,10 @@ class RoutingService:
             "configurable": {"thread_id": thread_id},
         }
         with trace_span("routing_graph"):
-            # v2 统一返回 type/ns/data；仅调整图事件读取方式，SSE 格式保持不变。
+            # 只订阅节点更新，避免模型草稿和审核内容在通过前进入页面。
             async for part in self._routing_graph.astream(
                 {"scope": scope},
-                stream_mode=["updates", "messages", "custom"],
+                stream_mode=["updates"],
                 subgraphs=True,
                 version="v2",
                 config=config,
@@ -206,18 +200,6 @@ class RoutingService:
                     for node, delta in part["data"].items():
                         for event in result.apply_update(part["ns"], node, delta):
                             yield event
-                elif part["type"] == "messages":
-                    event = _token_event(part["data"])
-                    if event is not None:
-                        yield event
-                elif part["type"] == "custom":
-                    data = part["data"]
-                    if (
-                        isinstance(data, dict)
-                        and data.get("event") == "report_start"
-                        and data.get("node") == "writer"
-                    ):
-                        yield _event("report_start", {"node": "writer"})
         yield result.completion_event()
 
 

@@ -45,3 +45,4 @@
 {"case_id":"2f0abd43b6294832a072d02f578f5db9","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的现状和市场趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"bcf85c649d7242a7838ef6e0cfcff677","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的相关情况。"},"actual_output":{"route":"direct","direct_reply":"您好！我可以帮您分析比特币的相关情况。为了给您提供更准确的分析，请告诉我您具体想了解哪方面的内容？比如：\n\n1. 价格趋势和投资分析\n2. 技术原理和市场状况\n3. 政策影响和监管动态\n4. 技术发展路线图\n5. 其他特定方面\n\n请告诉我您的具体需求，这样我能为您提供更有针对性的分析。"}}
 {"case_id":"fe60ff57b8d84420a5c0b366dd70578b","original_question":"分析btc价格趋势和投资分析","input":{"resolved_question":"分析比特币（BTC）的价格趋势和投资分析"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"f42a2e31e26547f9b25384f4a7ffc8f0","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场表现和交易数据。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
