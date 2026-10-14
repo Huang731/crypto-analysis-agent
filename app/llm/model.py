@@ -138,6 +138,8 @@ def make_smart_llm(
     return _make_model(settings.smart_model, http_async_client=http_async_client)
 
 
-def make_fast_llm() -> LoggedChatOpenAI:
+def make_fast_llm(
+    *, http_async_client: httpx.AsyncClient | None = None
+) -> LoggedChatOpenAI:
     """创建并行执行模型实例。"""
-    return _make_model(settings.fast_model)
+    return _make_model(settings.fast_model, http_async_client=http_async_client)

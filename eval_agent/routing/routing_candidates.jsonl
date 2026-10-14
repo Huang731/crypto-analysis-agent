@@ -58,3 +58,7 @@
 {"case_id":"a1e39a1a47824c0087e96758d94696d0","original_question":"eth呢","input":{"resolved_question":"分析以太坊（ETH）的趋势和资金面后，我的结论是：是否减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"83ef3293352c4adb8483fa4459c26d35","original_question":"eth呢","input":{"resolved_question":"分析以太坊（ETH）的趋势和资金面后，我的结论是：是否减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"0b0fdc5618534a2caf721d57dd9d677c","original_question":"eth呢","input":{"resolved_question":"分析以太坊（ETH）的趋势和资金面后，是否减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"fa1ec30f443b49fea5bb313b8805c158","original_question":"狗狗币呢","input":{"resolved_question":"狗狗币（DOGE）的趋势和资金面分析后，是否减仓？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"3ad902a852b54e3e91aa2647a7370162","original_question":"长沙放假","input":{"resolved_question":"长沙放假"},"actual_output":{"route":"direct","direct_reply":"你想了解长沙的什么放假信息？是节假日安排、学校放假时间，还是其他具体事项？请补充更多细节，我可以帮你查找相关信息。"}}
+{"case_id":"3e4baa4b9f684b7c91c0b27b041e6443","original_question":"长沙房价","input":{"resolved_question":"长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"a8b7ac8c6be54d23a6d93003e18aab9f","original_question":"长沙房价","input":{"resolved_question":"长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}

@@ -66,7 +66,7 @@ class RouteCallState(BaseModel):
     reraise=True,
 )
 async def decide_route(
-    smart: BaseChatModel,
+    fast: BaseChatModel,
     resolved_question: str,
     *,
     call_state: RouteCallState | None = None,
@@ -79,23 +79,23 @@ async def decide_route(
         SystemMessage(content=routing_prompt()),
         HumanMessage(content=resolved_question),
     ]
-    return await _invoke_route_decision(smart, messages, call_state)
+    return await _invoke_route_decision(fast, messages, call_state)
 
 
 @trace_generation_call(
     name="routing_decision",
-    model=settings.smart_model,
+    model=settings.fast_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
 )
 async def _invoke_route_decision(
-    smart: BaseChatModel,
+    fast: BaseChatModel,
     messages: list[SystemMessage | HumanMessage],
     call_state: RouteCallState | None,
 ) -> RouteDecision:
     """保留原特殊返回分支及无效模型输出的诊断标记。"""
-    decision = await smart.with_structured_output(
+    decision = await fast.with_structured_output(
         RouteDecision, method="function_calling"
     ).ainvoke(messages)
     if not isinstance(decision, RouteDecision):
@@ -208,7 +208,7 @@ def build_routing_graph(
     @timed_node
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
-        decision: RouteDecision = await decide_route(smart, state["resolved_question"])
+        decision: RouteDecision = await decide_route(fast, state["resolved_question"])
         if settings.routing_capture_enabled:
             append_routing_candidate(
                 original_question=state["scope"]["original_question"],
