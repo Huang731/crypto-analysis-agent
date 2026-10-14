@@ -391,7 +391,7 @@ def make_writer(
                 )  # 首轮反馈为空，重写时提供具体意见。
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
                 writer_llm = smart_llm.bind(
-                    extra_body={"thinking": {"type": "disabled"}}
+                    extra_body={"enable_thinking": False}
                 )
                 response = await _invoke_traced_model(
                     writer_llm, prompt, "topic_writer", settings.smart_model

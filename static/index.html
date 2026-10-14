@@ -44,6 +44,7 @@
           <div>
             <p class="eyebrow">分析与洞察</p>
             <h2 id="report-title">研究报告</h2>
+            <p id="report-context" class="report-context" hidden></p>
           </div>
           <div class="report-meta">
             <span id="report-status" class="report-status" role="status">等待提问</span>
@@ -100,6 +101,7 @@
     const reportStatusEl = document.getElementById("report-status");
     const elapsedTimeEl = document.getElementById("elapsed-time");
     const reportQuestionEl = document.getElementById("report-question");
+    const reportContextEl = document.getElementById("report-context");
     const progressSummaryEl = document.getElementById("progress-summary");
     const savedThreadId = sessionStorage.getItem("crypto_analysis_thread_id");
     // 公网 HTTP 下使用可用的随机数接口，保持原有会话 ID 格式。
@@ -210,7 +212,7 @@
       detail.textContent = status;
       item.append(node, detail);
       progressList.appendChild(item);
-      progressSummaryEl.textContent = progressList.childElementCount + " 条执行记录";
+      progressSummaryEl.textContent = progressList.childElementCount + " 项进度";
     }
 
     function renderFindings(findings) {
@@ -233,15 +235,51 @@
 
     function handleEvent(name, data, state) {
       if (name === "progress") {
-        const label = data.label || data.node || "进度";
-        const status = data.status || data.detail || "处理中";
-        const kind = status.includes("不合格") || status.includes("rework")
-          ? "rework" : status.includes("合格") || status.includes("pass") ? "pass" : "";
-        addProgress(label, status, kind);
-        if (data.node === "writer") state.writerComplete = true;
+        // 节点事件只更新当前阶段，维度和子问题结果保留在折叠详情里。
+        if (!data.node && data.detail) {
+          setReportStatus("正在理解问题", "running");
+        }
+        switch (data.node) {
+          case "plan":
+          case "split":
+          case "research_team":
+            setReportStatus("正在分析数据", "running");
+            break;
+          case "skill_worker": {
+            const status = data.status.replace("维度 ", "")
+              .replace("：已生成", "：已完成")
+              .replace("：读取记忆", "：已复用历史分析");
+            const kind = status.includes("暂无可展示内容") ? "" : "pass";
+            addProgress("维度", status, kind);
+            setReportStatus("正在分析数据", "running");
+            break;
+          }
+          case "researcher":
+            addProgress("子问题", data.status, "pass");
+            setReportStatus("正在分析数据", "running");
+            break;
+          case "writer":
+            state.writerComplete = true;
+            setReportStatus("正在检查报告", "running");
+            break;
+          case "reviewer":
+            if (data.status === "审稿：rework") {
+              setReportStatus("正在完善报告", "running");
+            } else if (data.status === "审稿：pass") {
+              setReportStatus("正在整理报告", "running");
+            }
+            break;
+          case "summarize":
+          case "summarize_history":
+          case "crypto_analysis_agent":
+          case "topic_research_agent":
+          case "finalize":
+            setReportStatus("正在整理报告", "running");
+            break;
+        }
       } else if (name === "route") {
         state.agents.push(data.agent);
-        addProgress("分派", "已交给 " + (agentLabels[data.agent] || data.agent));
+        setReportStatus("正在分析数据", "running");
       } else if (name === "report_start") {
         // 每次报告生成尝试都重新展示，避免重试正文与上一次残留拼接。
         clearReport(state);
@@ -249,6 +287,7 @@
         reportEl.classList.add("blink");
         state.outputNode = "writer";
         state.writerComplete = false;
+        setReportStatus("正在整理报告", "running");
       } else if (name === "token") {
         if (typeof data.content !== "string" || !data.content) return;
         if (data.source_node === "model") return;
@@ -284,7 +323,9 @@
               `## ${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
           : [];
         renderFindings(data.kind === "topic_research" ? data.findings : records);
-        if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
+        // 报告信息放在头部，不再重复追加到执行记录。
+        const context = [];
+        if (data.target_asset) context.push(data.target_asset);
         if (data.as_of) {
           // 内部保留 UTC，页面统一按北京时间展示到秒。
           const displayTime = new Intl.DateTimeFormat("sv-SE", {
@@ -293,11 +334,13 @@
             hour: "2-digit", minute: "2-digit", second: "2-digit",
             hourCycle: "h23"
           }).format(new Date(data.as_of));
-          addProgress("分析时间", displayTime + "（北京时间）");
+          context.push("分析时间：" + displayTime + "（北京时间）");
         }
-        if (data.kind === "topic_research") addProgress("资料范围", data.verification); // 标明主题研究未联网核验。
-        if (data.kind === "direct") addProgress("直接回复", "问题研究已完成"); // 闲聊或超出研究范围。
-        addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");
+        if (data.kind === "topic_research" && data.verification) {
+          context.push("资料范围：" + data.verification);
+        }
+        reportContextEl.textContent = context.join(" · ");
+        reportContextEl.hidden = context.length === 0;
       } else if (name === "error") {
         stopElapsedTime(state);
         state.finished = true;
@@ -306,7 +349,6 @@
         reportEl.classList.remove("blink", "placeholder");
         reportEl.classList.add("error");
         reportEl.textContent = data.message || "请求失败";
-        addProgress("失败", "请使用追踪 ID 查看后端日志", "failed");
       }
     }
 
@@ -350,6 +392,7 @@
       cancelButton.hidden = false;
       progressEl.hidden = false;
       progressList.textContent = "";
+      progressSummaryEl.textContent = "查看详情";
       requestIdsEl.textContent = "会话 ID：" + threadId;
       reportEl.className = "report blink";
       reportEl.textContent = "";
@@ -359,9 +402,10 @@
       progressEl.open = false;
       reportQuestionEl.textContent = question;
       reportQuestionEl.hidden = false;
+      reportContextEl.textContent = "";
+      reportContextEl.hidden = true;
       reportEl.setAttribute("aria-busy", "true");
-      setReportStatus("正在分析", "running");
-      addProgress("提交", "请求已发送");
+      setReportStatus("正在理解问题", "running");
       const state = {
         agents: [], finished: false, outputNode: null, writerComplete: false,
         report: "", renderFrame: null,
@@ -398,14 +442,12 @@
         if (error.name === "AbortError") {
           flushReport(state);
           setReportStatus("已中断");
-          addProgress("中断", "已停止接收本次回答");
         } else {
           clearReport(state);
           setReportStatus("分析失败", "failed");
           reportEl.classList.remove("placeholder");
           reportEl.classList.add("error");
           reportEl.textContent = error.message;
-          addProgress("失败", "请求未完成", "failed");
         }
       } finally {
         stopElapsedTime(state);

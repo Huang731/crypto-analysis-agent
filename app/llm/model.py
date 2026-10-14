@@ -1,8 +1,8 @@
-"""通过智谱的兼容接口创建并记录聊天模型错误。"""
+"""通过百炼和智谱的 OpenAI 兼容接口创建并记录聊天模型错误。"""
 
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import openai
@@ -18,7 +18,9 @@ _LOG = get_logger("crypto_analysis.llm")
 
 
 class LoggedChatOpenAI(ChatOpenAI):
-    """去除流式固定元数据的重复值，并记录智谱 HTTP 错误。"""
+    """去除流式固定元数据的重复值，并记录对应供应商的 HTTP 错误。"""
+
+    provider_name: Literal["dashscope", "zhipuai"] = "dashscope"
 
     async def _astream(
         self,
@@ -51,12 +53,12 @@ class LoggedChatOpenAI(ChatOpenAI):
                 yield chunk
         except openai.APIStatusError as exc:
             code, reason = self._response_error(exc.response.content)
-            reason = reason.replace(settings.zhipuai_api_key, "[已隐藏]")
+            reason = reason.replace(self.openai_api_key.get_secret_value(), "[已隐藏]")
             _LOG.error(
                 "llm.provider.error",
                 extra={
                     "event": "llm.provider.error",
-                    "provider": "zhipuai",
+                    "provider": self.provider_name,
                     "model": self.model_name,
                     "http_status": exc.status_code,
                     "provider_code": code,
@@ -64,8 +66,9 @@ class LoggedChatOpenAI(ChatOpenAI):
                     "content_type": exc.response.headers.get("content-type", "<缺失>"),
                 },
             )
+            provider_label = "智谱" if self.provider_name == "zhipuai" else "百炼"
             raise RuntimeError(
-                f"智谱 API HTTP {exc.status_code}，错误码 {code}：{reason}"
+                f"{provider_label} API HTTP {exc.status_code}，错误码 {code}：{reason}"
             ) from exc
         finally:
             # 消费者提前关闭或任务取消时，也关闭父类流，释放 HTTP 响应资源。
@@ -92,20 +95,37 @@ class LoggedChatOpenAI(ChatOpenAI):
 def _make_model(
     model_name: str, *, http_async_client: httpx.AsyncClient | None = None
 ) -> LoggedChatOpenAI:
-    api_key = settings.zhipuai_api_key.strip()
+    # 执行模型按明确配置选择供应商，其余模型使用百炼接口。
+    is_fast_model = model_name == settings.fast_model
+    provider_name = settings.fast_model_provider if is_fast_model else "dashscope"
+    is_zhipu_model = provider_name == "zhipuai"
+    api_key = (
+        settings.zhipuai_api_key if is_zhipu_model else settings.dashscope_api_key
+    ).strip()
+    key_name = "ZHIPUAI_API_KEY" if is_zhipu_model else "DASHSCOPE_API_KEY"
     if not api_key or api_key.startswith("xxxx"):
-        raise ValueError("未配置 ZHIPUAI_API_KEY")
-    base_url = settings.model_base_url.strip()
+        raise ValueError(f"未配置 {key_name}")
+    base_url = (
+        settings.fast_model_base_url if is_fast_model else settings.model_base_url
+    ).strip()
     if not base_url:
-        raise ValueError("未配置智谱 API 地址")
+        provider_label = "智谱" if is_zhipu_model else "百炼"
+        raise ValueError(f"未配置{provider_label} API 地址")
     return LoggedChatOpenAI(
         model=model_name,
+        provider_name=provider_name,
         api_key=api_key,
         base_url=base_url,
+        # 执行模型沿用非思考模式，不改变决策模型的思考配置。
+        extra_body=(
+            {"enable_thinking": False}
+            if is_fast_model and provider_name == "dashscope"
+            else None
+        ),
         # 重试由调用层统一控制，避免 SDK 重试与调用层叠加。
         max_retries=0,
         timeout=120,
-        # 智谱兼容接口不支持此参数。
+        # 沿用现有兼容参数设置，不向上游传递 parallel_tool_calls。
         disabled_params={"parallel_tool_calls": None},
         http_async_client=http_async_client,
     )

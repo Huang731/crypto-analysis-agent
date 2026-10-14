@@ -408,7 +408,7 @@ async def evaluate(
             )
             judge_http = await stack.enter_async_context(httpx.AsyncClient(timeout=120))
             generator = _make_model(
-                settings.smart_model, http_async_client=generation_http
+                settings.fast_model, http_async_client=generation_http
             )
             judge = _make_model(judge_model, http_async_client=judge_http)
             loader = SkillLoader.from_snapshot({inputs.skill_name: inputs.skill_source})
@@ -867,7 +867,7 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     metadata = {
-        "generator_model": settings.smart_model,
+        "generator_model": settings.fast_model,
         "judge_model": args.judge_model,
         "scoring_method": "project_llm_judge_v2",
         "faithfulness_definition": "正确表格字段与有证据支持的正文句子占全部待评字段及句子的比例；句内全部事实须有依据",

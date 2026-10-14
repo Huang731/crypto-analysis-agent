@@ -34,7 +34,7 @@ def build_hybrid_retriever() -> BaseRetriever:
     """构建混合检索器：BM25 + 向量，加权 RRF 融合。
 
     可选 MultiQueryRetriever 包装（settings.enable_multi_query）：
-    用 glm-4-flash 把问题改写成多个视角再检索，提升口语化提问的召回，
+    用配置的执行模型把问题改写成多个视角再检索，提升口语化提问的召回，
     代价是每次多一轮 LLM 调用，延迟敏感场景默认关。
     """
     with trace_span("rag.retriever.build") as node_span:

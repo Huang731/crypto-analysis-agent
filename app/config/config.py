@@ -48,10 +48,12 @@ class Settings(BaseSettings):
 
     # ── LLM 模型（多模型路由：L06/L09 的成本优化）──────────────
     # 默认空串：允许 import 时（.env 还没加载）不崩；运行前由 cli/app 校验非空。
-    zhipuai_api_key: str = Field(default="", description="智谱 API Key，必填")
+    zhipuai_api_key: str = Field(default="", description="智谱模型 API Key")
     model_base_url: str = (
-        "https://open.bigmodel.cn/api/paas/v4/"  # ChatOpenAI 调用智谱的兼容接口。
+        "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 百炼 OpenAI 兼容接口。
     )
+    fast_model_provider: Literal["dashscope", "zhipuai"] = "dashscope"
+    fast_model_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
     # 会话状态数据库，可通过 CHECKPOINT_DB_PATH 环境变量覆盖。
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
@@ -81,15 +83,15 @@ class Settings(BaseSettings):
         / "skill_generation_candidates.jsonl"
     )
 
-    # 决策/写作模型：贵但聪明，用在质量关键节点（summarize/writer/reviewer）
-    smart_model: str = "glm-4.5-air"
-    # 执行模型：免费快，用在并行量大、对质量要求不极致的节点（split/researcher）
-    fast_model: str = "glm-4-flash"
+    # 决策与写作模型，用于规划、汇总、报告和审核。
+    smart_model: str = "glm-5"
+    # 执行模型使用百炼 Qwen3.5-Flash。
+    fast_model: str = "qwen3.5-flash"
 
-    # 百炼向量模型通过 DashScope SDK 调用，使用独立的 API Key。
+    # 百炼聊天、向量、重排与视觉模型共用环境变量中的 API Key。
     dashscope_api_key: str = Field(
         default="",
-        description="百炼向量、重排与视觉模型 API Key",
+        description="百炼聊天、向量、重排与视觉模型 API Key",
     )
     embedding_model: str = "text-embedding-v4"
     # 仅配置 FAISS 索引维度，不传给 SDK；必须与模型默认输出维度一致。
@@ -115,6 +117,8 @@ class Settings(BaseSettings):
         "glm-4-flash": {"input": 0.0, "output": 0.0},  # flash 当前免费档
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
         "qwen3.7-text-rerank": {"input": 0.5, "output": 0.0},
+        "glm-5": {"input": 50.0, "output": 50.0},
+        "qwen3.5-flash": {"input": 0.0, "output": 0.0},
     }
 
     # ── 检索层（阶段 2）───────────────────────────────────────

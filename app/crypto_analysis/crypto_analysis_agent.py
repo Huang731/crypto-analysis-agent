@@ -80,13 +80,13 @@ _LOG = get_logger("crypto_analysis.dynamic_analysis")
     before_sleep=before_sleep_log(_LOG, logging.WARNING),
     reraise=True,
 )
-@trace_generation_call(name="crypto_history_summary", model=settings.smart_model)
+@trace_generation_call(name="crypto_history_summary", model=settings.fast_model)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
-    # 仅历史摘要调用关闭深度思考，不修改共享模型的配置。
-    summary_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
-    response = await summary_llm.ainvoke(
-        prompt, config={"tags": ["crypto_history_summary"]}
+    # 历史摘要使用执行模型，沿用模型工厂的思考配置。
+    response = await asyncio.wait_for(
+        llm.ainvoke(prompt, config={"tags": ["crypto_history_summary"]}),
+        timeout=120,
     )
     if not isinstance(response.content, str):
         raise TypeError("历史摘要必须是字符串")
@@ -655,12 +655,11 @@ async def generate_skill(
     return content
 
 
-@trace_generation_call(name="crypto_skill_output", model=settings.smart_model)
+@trace_generation_call(name="crypto_skill_output", model=settings.fast_model)
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
-    # 仅当前技能输出调用关闭深度思考，保留共享模型的配置。
-    skill_llm = llm.bind(extra_body={"thinking": {"type": "disabled"}})
-    response = await skill_llm.with_retry(stop_after_attempt=2).ainvoke(
+    # 表格生成使用执行模型，沿用模型工厂的思考配置。
+    response = await llm.with_retry(stop_after_attempt=2).ainvoke(
         prompt, config={"tags": ["crypto_skill_output"]}
     )
     if not isinstance(response.content, str):
@@ -717,7 +716,7 @@ def build_dynamic_analysis_agent(
                 if not isinstance(question, str) or not question.strip():
                     raise ValueError("技能分析缺少有效用户问题")
                 selection = await create_analysis_plan(
-                    smart_llm,
+                    fast_llm,
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
@@ -851,7 +850,7 @@ def build_dynamic_analysis_agent(
                 # 请求范围仅用于正文候选采集，不改变指标执行结果的返回契约。
                 result["scope"] = dict(scope)
                 content = await generate_skill(
-                    smart_llm, skill_loader, skill, result, analysis_subject
+                    fast_llm, skill_loader, skill, result, analysis_subject
                 )
                 # 只回传当前技能的结果与缓存增量，由主图 reducer 合并并行更新。
                 return _build_skill_update(skill, key, result, content)
@@ -897,7 +896,7 @@ def build_dynamic_analysis_agent(
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
                 writer_llm = smart_llm.bind(
-                    extra_body={"thinking": {"type": "disabled"}}
+                    extra_body={"enable_thinking": False}
                 )
                 report = await _invoke_report_text(
                     writer_llm,
@@ -966,7 +965,7 @@ def build_dynamic_analysis_agent(
             previous_summary=state.get("history_summary", ""),
             report=state["report"],
         )
-        summary = await _invoke_history_summary(smart_llm, prompt)
+        summary = await _invoke_history_summary(fast_llm, prompt)
         return {"history_summary": summary}
 
     builder = StateGraph(DynamicAnalysisState)
