@@ -26,7 +26,7 @@ def routing_prompt() -> str:
         - 选择 direct 时：`direct_reply` 填写实际回复或澄清问题
         
         ### Few-Shot 示例（严格遵循此格式）
-        用户：BTC 现在该加仓吗？
+        用户：分析BTC
         {"route": "crypto_analysis_agent", "direct_reply": ""}
         
         用户：分析比特币矿企最新财报

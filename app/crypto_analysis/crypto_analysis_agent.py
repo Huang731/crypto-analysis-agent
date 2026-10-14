@@ -919,7 +919,7 @@ def build_dynamic_analysis_agent(
                 # 无适用技能时沿用原有说明回复，无需审核投研内容。
                 if not state["plan"]["skill_names"]:
                     return {"review_decision": "pass"}
-                count = state["review_count"] + 1
+                review_count = state["review_count"] + 1
                 prompt = analysis_review_prompt(
                     target_asset=state["scope"]["target_asset"],
                     original_question=state["scope"]["resolved_question"],
@@ -934,16 +934,18 @@ def build_dynamic_analysis_agent(
                 node_span.output = {
                     "review_process": review.review_process,
                     "passed": review.passed,
-                    "review_count": count,
+                    "review_count": review_count,
                     "feedback": review.feedback,
                 }
-                if not review.passed and count >= 5:
-                    raise ValueError(
-                        f"加密分析报告经五轮审核仍不合格：{review.feedback}"
-                    )
+                if not review.passed and review_count >= 2:
+                    return {
+                        "review_decision": "pass",
+                        "review_count": review_count,
+                        "review_feedback": f"已达重写2次上限，强制通过。",
+                    }
                 return {
                     "review_decision": "pass" if review.passed else "rework",
-                    "review_count": count,
+                    "review_count": review_count,
                     "review_feedback": "" if review.passed else review.feedback,
                 }
             except Exception:
