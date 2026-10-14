@@ -17,6 +17,7 @@ if __package__ in (None, ""):
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sse_starlette.sse import EventSourceResponse
@@ -63,6 +64,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="研究分析 Agent", version="0.1.0", lifespan=lifespan)
+# 页面样式与 Markdown 组件由本服务提供，不依赖外部 CDN。
+app.mount("/static", StaticFiles(directory=_INDEX.parent), name="static")
 
 
 # ---------- 工具函数 ----------

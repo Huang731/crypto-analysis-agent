@@ -1,7 +1,7 @@
 """加密货币分析的图状态、运行上下文及状态合并函数。"""
 
 import operator
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from langchain.agents import AgentState
 from typing_extensions import TypedDict
@@ -48,6 +48,9 @@ class DynamicAnalysisState(TypedDict, total=False):
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
     history_summary: str
     report: str
+    review_decision: Literal["pending", "pass", "rework"]
+    review_count: int
+    review_feedback: str
 
 
 class SkillWorkerState(TypedDict):

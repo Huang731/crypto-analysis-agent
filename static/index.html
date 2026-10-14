@@ -3,140 +3,83 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>研究分析AI</title>
-  <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0f1117;
-      --panel: #1a1d27;
-      --border: #2a2e3a;
-      --text: #e4e6eb;
-      --muted: #8b909c;
-      --accent: #5b8def;
-      --green: #4ade80;
-      --amber: #fbbf24;
-      --red: #f87171;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      min-height: 100vh;
-      padding: 24px 20px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-      overflow-anchor: none;
-    }
-    .container { max-width: 800px; margin: 0 auto; }
-    h1 { margin: 0 0 4px; font-size: 1.4rem; }
-    .subtitle { margin: 0 0 20px; color: var(--muted); font-size: .85rem; line-height: 1.6; }
-    .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
-    #question {
-      flex: 1;
-      min-width: 0;
-      padding: 12px 14px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      outline: none;
-      background: var(--panel);
-      color: var(--text);
-      font: inherit;
-    }
-    #question:focus { border-color: var(--accent); }
-    #question::placeholder { color: var(--muted); }
-    button {
-      flex: none;
-      padding: 12px 20px;
-      border: 0;
-      border-radius: 8px;
-      background: var(--accent);
-      color: white;
-      font: inherit;
-      cursor: pointer;
-    }
-    button:hover { opacity: .9; }
-    button:disabled { opacity: .5; cursor: not-allowed; }
-    #cancel { background: var(--red); }
-    [hidden] { display: none !important; }
-    .connection { margin-bottom: 12px; color: var(--muted); font-size: .8rem; }
-    .progress, .report {
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--panel);
-    }
-    .progress { padding: 12px 14px; margin-bottom: 16px; font-size: .85rem; }
-    .section-title { margin: 0 0 8px; color: var(--muted); font-size: .85rem; font-weight: 600; }
-    .progress-item { display: flex; gap: 8px; padding: 3px 0; line-height: 1.5; }
-    .progress-item .node { flex: none; color: var(--accent); font-weight: 600; }
-    .progress-item .status { min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
-    .progress-item.pass .status { color: var(--green); }
-    .progress-item.rework .status { color: var(--amber); }
-    .progress-item.failed .status { color: var(--red); }
-    #request-ids { margin-top: 10px; color: var(--muted); font-size: .76rem; overflow-wrap: anywhere; }
-    .report {
-      min-height: 100px;
-      max-height: 70vh;
-      padding: 20px;
-      line-height: 1.7;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-    }
-    .report.placeholder { color: var(--muted); font-style: italic; }
-    .report.error { color: var(--red); }
-    .report.blink::after { content: "▍"; color: var(--accent); animation: blink 1s steps(1) infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-    .findings { margin-top: 16px; }
-    .findings summary { padding: 8px 0; color: var(--accent); font-size: .9rem; cursor: pointer; }
-    #findings-list {
-      max-height: min(52vh, 560px);
-      overflow-y: auto;
-      padding-right: 8px;
-      overscroll-behavior: contain;
-    }
-    .finding {
-      margin: 8px 0;
-      padding: 10px 14px;
-      border-left: 3px solid var(--accent);
-      border-radius: 4px;
-      background: var(--panel);
-      font-size: .85rem;
-      line-height: 1.6;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-    }
-    @media (max-width: 600px) {
-      .input-row { flex-wrap: wrap; }
-      #question { flex-basis: 100%; }
-      .input-row button { flex: 1; }
-      .report { padding: 16px; }
-    }
-  </style>
+  <meta name="theme-color" content="#f5f6f3">
+  <title>研究分析 AI · 研究工作台</title>
+  <link rel="stylesheet" href="/static/workspace.css">
+  <script src="/static/vendor/marked-18.1.1.umd.js"></script>
+  <script src="/static/vendor/purify-3.4.17.min.js"></script>
 </head>
 <body>
-  <main class="container">
-    <h1>研究分析 AI</h1>
-    <p class="subtitle">加密货币问题进入维度分析，其他主题进入模型知识研究。</p>
+  <div class="workspace">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="研究分析 AI 首页">
+        <span class="brand-mark" aria-hidden="true">研</span>
+        <span>研究分析 <span class="brand-ai">AI</span></span>
+      </a>
+      <div id="connection" class="connection" role="status">正在检查服务状态…</div>
+    </header>
 
-    <form id="ask-form" class="input-row">
-      <input id="question" type="text" maxlength="2000" required aria-label="分析问题" placeholder="例如：分析 BTC，或分析人工智能对教育的影响">
-      <button id="submit" type="submit">开始分析</button>
-      <button id="cancel" type="button" hidden>中断</button>
-    </form>
+    <main class="container">
+      <section class="intro" aria-labelledby="workspace-title">
+        <p class="eyebrow">研究工作台</p>
+        <h1 id="workspace-title">把问题，变成清晰的判断。</h1>
+        <p class="subtitle">从加密资产到你关心的主题，在这里梳理信息、展开分析。</p>
+      </section>
 
-    <div id="connection" class="connection" role="status">正在检查服务状态…</div>
-    <section id="progress" class="progress" aria-label="执行过程" hidden>
-      <h2 class="section-title">执行过程</h2>
-      <div id="progress-list" aria-live="polite"></div>
-      <div id="request-ids"></div>
-    </section>
-    <div id="report" class="report placeholder" aria-live="polite">报告将在此处显示…</div>
-    <details id="findings" class="findings" hidden>
-      <summary id="findings-title">研究发现（点击展开）</summary>
-      <div id="findings-list"></div>
-    </details>
-  </main>
+      <section class="question-panel" aria-labelledby="question-label">
+        <form id="ask-form">
+          <label id="question-label" for="question">你想研究什么？</label>
+          <div class="input-row">
+            <input id="question" type="text" maxlength="2000" required
+              placeholder="例如：分析 BTC 当前趋势，或人工智能对教育的影响">
+            <button id="submit" type="submit">开始分析 <span aria-hidden="true">→</span></button>
+            <button id="cancel" type="button" hidden>中断</button>
+          </div>
+          <p class="input-hint">描述具体问题，也可以继续追问本次会话。</p>
+        </form>
+      </section>
+
+      <section class="report-panel" aria-labelledby="report-title">
+        <header class="report-header">
+          <div>
+            <p class="eyebrow">分析与洞察</p>
+            <h2 id="report-title">研究报告</h2>
+          </div>
+          <span id="report-status" class="report-status" role="status">等待提问</span>
+        </header>
+        <p id="report-question" class="report-question" hidden></p>
+
+        <details id="progress" class="progress" hidden>
+          <summary>
+            <span>执行过程</span>
+            <span id="progress-summary" class="progress-summary">查看详情</span>
+          </summary>
+          <div class="progress-body">
+            <div id="progress-list" aria-live="polite"></div>
+            <details class="request-details">
+              <summary>会话与追踪信息</summary>
+              <div id="request-ids"></div>
+            </details>
+          </div>
+        </details>
+
+        <div id="report" class="report placeholder" aria-live="polite" aria-busy="false">
+          <div class="empty-state">
+            <span class="empty-mark" aria-hidden="true">研</span>
+            <h3>下一份洞察，从你的问题开始</h3>
+            <p>在上方输入研究问题，分析结果将在这里逐步呈现。</p>
+            <div class="empty-topics"><span>加密资产</span><span>行业趋势</span><span>专题研究</span></div>
+          </div>
+        </div>
+
+        <details id="findings" class="findings" hidden>
+          <summary id="findings-title">数据来源</summary>
+          <div id="findings-list"></div>
+        </details>
+      </section>
+      <footer class="workspace-footer">研究分析 AI <span>从问题出发，逐步形成判断</span></footer>
+    </main>
+  </div>
 
   <script>
     const form = document.getElementById("ask-form");
@@ -151,6 +94,9 @@
     const findingsEl = document.getElementById("findings");
     const findingsTitleEl = document.getElementById("findings-title"); // 根据完成类型设置发现列表标题。
     const findingsList = document.getElementById("findings-list");
+    const reportStatusEl = document.getElementById("report-status");
+    const reportQuestionEl = document.getElementById("report-question");
+    const progressSummaryEl = document.getElementById("progress-summary");
     const savedThreadId = sessionStorage.getItem("crypto_analysis_thread_id");
     // 公网 HTTP 下使用可用的随机数接口，保持原有会话 ID 格式。
     const threadId = savedThreadId || "web-" + Array.from(
@@ -171,9 +117,69 @@
         const response = await fetch("/health", { cache: "no-store" });
         if (!response.ok) throw new Error("服务状态不可用");
         connectionEl.textContent = "服务已连接";
+        connectionEl.classList.add("connected");
       } catch (error) {
         connectionEl.textContent = "无法连接后端服务";
+        connectionEl.classList.add("disconnected");
       }
+    }
+
+    function setReportStatus(text, kind = "") {
+      reportStatusEl.textContent = text;
+      reportStatusEl.className = "report-status" + (kind ? " " + kind : "");
+    }
+
+    function renderMarkdown(element, content) {
+      // Markdown 正文转为 HTML 后先清理，只开放报告排版需要的标签。
+      const fragment = DOMPurify.sanitize(marked.parse(content, { gfm: true }), {
+        ALLOWED_TAGS: [
+          "p", "br", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em",
+          "del", "ul", "ol", "li", "blockquote", "hr", "pre", "code", "a",
+          "table", "thead", "tbody", "tr", "th", "td"
+        ],
+        ALLOWED_ATTR: ["href", "title", "start", "colspan", "rowspan", "align"],
+        ALLOW_DATA_ATTR: false,
+        ALLOW_ARIA_ATTR: false,
+        RETURN_DOM_FRAGMENT: true
+      });
+      for (const link of fragment.querySelectorAll("a")) {
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+      }
+      for (const table of fragment.querySelectorAll("table")) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "table-scroll";
+        wrapper.tabIndex = 0;
+        wrapper.setAttribute("role", "region");
+        wrapper.setAttribute("aria-label", "可横向滚动的数据表格");
+        table.replaceWith(wrapper);
+        wrapper.appendChild(table);
+      }
+      element.replaceChildren(fragment);
+    }
+
+    function clearReport(state) {
+      // 清理待渲染帧，避免重试或失败后旧正文重新出现在页面。
+      if (state.renderFrame !== null) cancelAnimationFrame(state.renderFrame);
+      state.renderFrame = null;
+      state.report = "";
+      reportEl.textContent = "";
+    }
+
+    function flushReport(state) {
+      if (state.renderFrame !== null) cancelAnimationFrame(state.renderFrame);
+      state.renderFrame = null;
+      renderMarkdown(reportEl, state.report);
+    }
+
+    function appendReport(content, state) {
+      // 原始 Markdown 放在本次请求状态中，同一帧的流式片段合并渲染。
+      state.report += content;
+      if (state.renderFrame !== null) return;
+      state.renderFrame = requestAnimationFrame(() => {
+        state.renderFrame = null;
+        renderMarkdown(reportEl, state.report);
+      });
     }
 
     function addProgress(label, status, kind = "") {
@@ -187,6 +193,7 @@
       detail.textContent = status;
       item.append(node, detail);
       progressList.appendChild(item);
+      progressSummaryEl.textContent = progressList.childElementCount + " 条执行记录";
     }
 
     function renderFindings(findings) {
@@ -196,7 +203,13 @@
       for (const finding of findings) {
         const item = document.createElement("div");
         item.className = "finding";
-        item.textContent = typeof finding === "string" ? finding : JSON.stringify(finding, null, 2);
+        if (typeof finding === "string") {
+          renderMarkdown(item, finding);
+        } else {
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify(finding, null, 2);
+          item.appendChild(pre);
+        }
         findingsList.appendChild(item);
       }
     }
@@ -214,7 +227,7 @@
         addProgress("分派", "已交给 " + (agentLabels[data.agent] || data.agent));
       } else if (name === "report_start") {
         // 每次报告生成尝试都重新展示，避免重试正文与上一次残留拼接。
-        reportEl.textContent = "";
+        clearReport(state);
         reportEl.classList.remove("placeholder", "error");
         reportEl.classList.add("blink");
         state.outputNode = "writer";
@@ -224,7 +237,7 @@
         if (data.source_node === "model") return;
         if (data.node === "writer") {
           if (state.outputNode !== "writer" || state.writerComplete) {
-            reportEl.textContent = "";
+            clearReport(state);
             state.outputNode = "writer";
             state.writerComplete = false;
           }
@@ -235,19 +248,22 @@
           return;
         }
         reportEl.classList.remove("placeholder");
-        reportEl.textContent += data.content;
+        appendReport(data.content, state);
       } else if (name === "done") {
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究发现（点击展开）" : "维度分析内容（点击展开）";
+        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究明细" : "数据来源";
         reportEl.classList.remove("blink");
+        setReportStatus(data.kind === "direct" ? "已回复" : "分析完成", "complete");
         if (typeof data.report === "string" && data.report) {
           reportEl.classList.remove("placeholder");
-          reportEl.textContent = data.report;
+          state.report = data.report;
         }
+        // 完成事件里的最终正文仍然是权威结果，覆盖流式期间的内容。
+        flushReport(state);
         // 技能内容只展示指标表格，不反解析数值。
         const records = Array.isArray(data.skill_results)
           ? data.skill_results.filter(skill => skill.content).map(skill =>
-              `${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
+              `## ${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
           : [];
         renderFindings(data.kind === "topic_research" ? data.findings : records);
         if (data.target_asset) addProgress("标的", data.target_asset + " · 维度分析"); // 展示统一目标币种。
@@ -266,6 +282,8 @@
         addProgress("完成", data.kind === "direct" ? "已回复" : "分析已结束", "pass");
       } else if (name === "error") {
         state.finished = true;
+        clearReport(state);
+        setReportStatus("分析失败", "failed");
         reportEl.classList.remove("blink", "placeholder");
         reportEl.classList.add("error");
         reportEl.textContent = data.message || "请求失败";
@@ -318,8 +336,17 @@
       reportEl.textContent = "";
       findingsEl.hidden = true;
       findingsList.textContent = "";
+      findingsEl.open = false;
+      progressEl.open = false;
+      reportQuestionEl.textContent = question;
+      reportQuestionEl.hidden = false;
+      reportEl.setAttribute("aria-busy", "true");
+      setReportStatus("正在分析", "running");
       addProgress("提交", "请求已发送");
-      const state = { agents: [], finished: false, outputNode: null, writerComplete: false };
+      const state = {
+        agents: [], finished: false, outputNode: null, writerComplete: false,
+        report: "", renderFrame: null
+      };
 
       try {
         const response = await fetch("/api/ask", {
@@ -345,14 +372,20 @@
         if (!state.finished) throw new Error("事件流提前结束");
       } catch (error) {
         if (error.name === "AbortError") {
+          flushReport(state);
+          setReportStatus("已中断");
           addProgress("中断", "已停止接收本次回答");
         } else {
+          clearReport(state);
+          setReportStatus("分析失败", "failed");
           reportEl.classList.remove("placeholder");
           reportEl.classList.add("error");
           reportEl.textContent = error.message;
           addProgress("失败", "请求未完成", "failed");
         }
       } finally {
+        if (state.renderFrame !== null) flushReport(state);
+        reportEl.setAttribute("aria-busy", "false");
         reportEl.classList.remove("blink");
         submitButton.disabled = false;
         cancelButton.hidden = true;

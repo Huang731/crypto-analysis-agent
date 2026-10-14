@@ -339,7 +339,7 @@ def required_fields(inputs: GenerationInput) -> dict[str, dict[str, Any]]:
         values = item.model_dump()
         fields = {
             key: values[key]
-            for key in ("indicator_id", "status", "score", "unit", "observed_at", "url")
+            for key in ("indicator_id", "score", "observed_at", "url")
         }
         for group in ("raw_values", "calculated_values"):
             fields.update(
@@ -355,9 +355,7 @@ def indicator_table_checks(
     """只核对固定中文字段和原始数值，不生成思想解读质量分数。"""
     fixed_labels = {
         "indicator_id": "指标标识",
-        "status": "指标状态",
         "score": "指标分数",
-        "unit": "单位",
         "observed_at": "观测日期",
         "url": "来源链接",
     }

@@ -20,7 +20,14 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite, Send, StreamWriter
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from tenacity import (
     before_sleep_log,
     retry,
@@ -56,6 +63,7 @@ from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import (
     analysis_plan_prompt,
     analysis_report_prompt,
+    analysis_review_prompt,
     history_summary_prompt,
     metric_agent_system_prompt,
     metric_execution_prompt,
@@ -182,6 +190,39 @@ class AnalysisPlan(BaseModel):
         if len(names) != len(set(names)):
             raise ValueError("分析计划中的技能名称不能重复")
         return names
+
+
+class ReportReview(BaseModel):
+    """审核只返回是否通过和可执行的修改意见，不修改技能证据。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    passed: bool = Field(strict=True, description="报告是否符合本轮证据和用户问题")
+    feedback: str = Field(strict=True, description="不通过时的具体问题、依据及修改要求")
+
+    @model_validator(mode="after")
+    def require_rework_feedback(self) -> "ReportReview":
+        """拒绝没有修改目标的不通过结果，使解析错误进入调用重试。"""
+        if not self.passed and not self.feedback:
+            raise ValueError("报告审核不通过时必须提供修改意见")
+        return self
+
+
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    before_sleep=before_sleep_log(_LOG, logging.WARNING),
+    reraise=True,
+)
+async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
+    """单次审核限定超时，调用、解析或超时异常整体最多尝试两次。"""
+    model = llm.with_structured_output(ReportReview, method="function_calling")
+    result = await asyncio.wait_for(
+        _invoke_structured_model(
+            model, ReportReview, prompt, "crypto_report_review", settings.smart_model
+        ),
+        timeout=120,
+    )
+    return ReportReview.model_validate(result)
 
 
 # 请求规划
@@ -692,6 +733,10 @@ def build_dynamic_analysis_agent(
                 return {
                     "history_summary": history_summary,
                     "report": "",
+                    # 每轮请求独立计数，上一轮审核意见不能影响新报告。
+                    "review_decision": "pending",
+                    "review_count": 0,
+                    "review_feedback": "",
                     "skill_sources": skill_loader.snapshot(),
                     "plan": selection,
                     "scope": scope,
@@ -842,6 +887,8 @@ def build_dynamic_analysis_agent(
                         item["skill_name"]: item["thought_context"] for item in ordered
                     },
                     history_summary=state["history_summary"],
+                    review_feedback=state["review_feedback"],
+                    previous_report=state["report"],
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
                 writer_llm = smart_llm.bind(
@@ -861,6 +908,50 @@ def build_dynamic_analysis_agent(
                 raise
 
     @timed_node
+    async def reviewer(state: DynamicAnalysisState) -> dict[str, Any]:
+        """审核本轮报告，最多允许一次带意见的重写，不通过则停止。"""
+        with trace_span("crypto.reviewer") as node_span:
+            try:
+                # 无适用技能时沿用原有说明回复，无需审核投研内容。
+                if not state["plan"]["skill_names"]:
+                    return {"review_decision": "pass"}
+                count = state["review_count"] + 1
+                prompt = analysis_review_prompt(
+                    target_asset=state["scope"]["target_asset"],
+                    original_question=state["scope"]["resolved_question"],
+                    report=state["report"],
+                    skill_results=sorted(
+                        state["skill_results"], key=lambda item: item["skill_name"]
+                    ),
+                    history_summary=state["history_summary"],
+                )
+                # 复用结构化调用的流标记，审核内容不进入报告正文。
+                review = await _invoke_report_review(smart_llm, prompt)
+                node_span.output = {
+                    "passed": review.passed,
+                    "review_count": count,
+                    "feedback": review.feedback,
+                }
+                if not review.passed and count >= 5:
+                    raise ValueError(
+                        f"加密分析报告经五轮审核仍不合格：{review.feedback}"
+                    )
+                return {
+                    "review_decision": "pass" if review.passed else "rework",
+                    "review_count": count,
+                    "review_feedback": "" if review.passed else review.feedback,
+                }
+            except Exception:
+                node_span.metadata["status"] = "error"
+                raise
+
+    def route_after_review(state: DynamicAnalysisState) -> str:
+        """只有审核通过的报告进入历史摘要，失败时保留证据并重写。"""
+        if state["review_decision"] == "pass":
+            return "summarize_history"
+        return "writer"
+
+    @timed_node
     async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
         """在报告生成后更新累计结论摘要，无适用技能时保留已有摘要。"""
         if not state["plan"]["skill_names"]:
@@ -876,10 +967,16 @@ def build_dynamic_analysis_agent(
     builder.add_node("plan", plan)
     builder.add_node("skill_worker", skill_worker)
     builder.add_node("writer", writer)
+    builder.add_node("reviewer", reviewer)
     builder.add_node("summarize_history", summarize_history)
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
-    builder.add_edge("writer", "summarize_history")
+    builder.add_edge("writer", "reviewer")
+    builder.add_conditional_edges(
+        "reviewer",
+        route_after_review,
+        {"summarize_history": "summarize_history", "writer": "writer"},
+    )
     builder.add_edge("summarize_history", END)
     return builder.compile(name="crypto_analysis_agent")
