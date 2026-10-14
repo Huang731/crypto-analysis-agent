@@ -153,7 +153,7 @@ class RoutingState(TypedDict, total=False):
     resolved_question: str
     # 最近一轮已完成回答的问题，保留补全后的主题供连续追问使用。
     previous_question: str
-    # 同会话各技能的指标表格与思想体系解读，按原共享范围和技能名保存。
+    # 同会话各技能的表格与思想原文，以 JSON 字符串按原共享范围和技能名保存。
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
     # 承接加密分析子图的累计结论摘要，仅用于分析并跨轮保存。
     history_summary: str

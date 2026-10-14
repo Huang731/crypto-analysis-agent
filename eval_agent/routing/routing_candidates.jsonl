@@ -28,3 +28,15 @@
 {"case_id":"5119c13b4a0d4c9a862c209fdf6de640","original_question":"分析比特币","input":{"resolved_question":"分析比特币目前的市场表现和未来趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"99769526b75a4782b797c70ba50fb183","original_question":"分析一下btc","input":{"resolved_question":"分析比特币（BTC）的现状和未来趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
 {"case_id":"fb85e758ef5e47ef864fa62218bb8b59","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场趋势和投资前景。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"542fa0c1d8ff4d3f86ab341a92145df9","original_question":"那我该加仓吗","input":{"resolved_question":"分析比特币（BTC）当前的市场趋势，以确定是否适合加仓。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"8b792fc930e84dbcb43082ee67fd8d5b","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场趋势和价格变动。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"c00dc422cab9483388a9997dc23e1bd6","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的情况。"},"actual_output":{"route":"direct","direct_reply":"你好，有什么可以帮你？"}}
+{"case_id":"b352fba0eeab419199872fb02101e450","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的情况。"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"b8ad45ba990e48df8225b5b575b58aae","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的情况。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"0ff11c72d72e4a9f93507cbf3e1ed3cb","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场表现和价格趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"ccc05ae55d214c5e8c419fe682c3f7bc","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的市场趋势和投资前景。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"6da4e5b6721f4a23b7668ed562f51c9a","original_question":"那我可以减仓吗","input":{"resolved_question":"分析比特币（BTC）目前是否适合减仓。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"c6c8cd0bfc3244e391977e476f6ac498","original_question":"我想加仓","input":{"resolved_question":"分析比特币（BTC）目前是否适合加仓。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"b55e3d4c051f496b83095d2bd9a2ce05","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的现状和趋势。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"044afa605b2f4ba99a6282384684243d","original_question":"那我仓位不动？","input":{"resolved_question":"在当前比特币（BTC）的现状和趋势分析下，您是否维持现有仓位？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"495bc37591764e8681eb3d659ab81132","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）的技术和市场表现。"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}

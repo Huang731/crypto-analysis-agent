@@ -1,6 +1,6 @@
-"""校验并合并同会话内可复用的技能表格与思想体系解读。"""
+"""校验并合并同会话内可复用的技能表格与思想原文。"""
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -29,6 +29,14 @@ class SkillMemoryKey(BaseModel):
         return f"{self.asset_scope}:{self.skill_name}"
 
 
+class SkillMemoryContent(BaseModel):
+    """在原字符串缓存中保存指标表格和思想原文。"""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    content: str = Field(min_length=1)
+    thought_context: dict[str, Any]
+
+
 def resolve_memory_key(target_asset: str, skill_name: str) -> SkillMemoryKey:
     """按固定 Skill 映射选择全局或币种缓存，未知技能明确报错。"""
     if skill_name not in _SKILL_SCOPES:
@@ -38,7 +46,7 @@ def resolve_memory_key(target_asset: str, skill_name: str) -> SkillMemoryKey:
 
 
 def validate_skill_memory(value: str, key: SkillMemoryKey) -> str:
-    """仅接收非空展示字符串，旧对象缓存或损坏内容明确报错。"""
+    """校验缓存字符串非空，表格与思想载荷由 SkillMemoryContent 校验。"""
     if not isinstance(value, str):
         raise TypeError(f"Skill 缓存条目不是字符串：{key.cache_key}")
     if not value.strip():

@@ -244,7 +244,7 @@
           reportEl.classList.remove("placeholder");
           reportEl.textContent = data.report;
         }
-        // 技能内容已经包含指标表格和思想解读，直接展示原文，不反解析数值。
+        // 技能内容只展示指标表格，不反解析数值。
         const records = Array.isArray(data.skill_results)
           ? data.skill_results.filter(skill => skill.content).map(skill =>
               `${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)

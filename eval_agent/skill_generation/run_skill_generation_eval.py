@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 
 from app.config.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_agent import generate_skill
-from app.crypto_analysis.metric_service import _log_reason
+from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import _make_model
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -349,6 +349,40 @@ def required_fields(inputs: GenerationInput) -> dict[str, dict[str, Any]]:
     return result
 
 
+def indicator_table_checks(
+    inputs: GenerationInput, tables: dict[str, dict[str, str]]
+) -> list[dict[str, Any]]:
+    """只核对固定中文字段和原始数值，不生成思想解读质量分数。"""
+    fixed_labels = {
+        "indicator_id": "指标标识",
+        "status": "指标状态",
+        "score": "指标分数",
+        "unit": "单位",
+        "observed_at": "观测日期",
+        "url": "来源链接",
+    }
+    checks = []
+    for metric_id, fields in required_fields(inputs).items():
+        labels = metric_field_labels(metric_id)
+        for path, expected in fields.items():
+            label = labels[path.split(".", 1)[1]] if "." in path else fixed_labels[path]
+            actual = tables.get(metric_id, {}).get(label)
+            checks.append(
+                {
+                    "indicator_id": metric_id,
+                    "field": path,
+                    "row_label": label,
+                    "expected": expected,
+                    "actual": actual,
+                    "correct": actual is not None
+                    and value_matches(
+                        actual, expected, allow_percent=path.endswith("_pct")
+                    ),
+                }
+            )
+    return checks
+
+
 async def evaluate(
     client: Langfuse, inputs: GenerationInput, judge_model: str
 ) -> dict[str, Any]:
@@ -416,10 +450,56 @@ async def evaluate(
                         indicator_contract_valid=not required_fields(inputs),
                         section_citations_valid=not inputs.thought_context.documents,
                     )
+                    if inputs.mode == "generation":
+                        output.update(
+                            assessment_scope="indicator_tables",
+                            thought_output_absent=True,
+                            section_citations_valid=None,
+                        )
                 else:
                     tables, thought = parse_tables(response)
                     required = required_fields(inputs)
                     statements = response_statements(response, thought)
+                    if inputs.mode == "generation" or (not thought and not statements):
+                        checks = indicator_table_checks(inputs, tables)
+                        thought_absent = (
+                            not thought
+                            and not statements
+                            and not any(
+                                line.strip().startswith("#") and "思想" in line
+                                for line in response.splitlines()
+                            )
+                        )
+                        output.update(
+                            execution_status="success",
+                            assessment_scope="indicator_tables",
+                            field_checks=checks,
+                            indicator_contract_valid=(
+                                set(tables) == set(required)
+                                and all(check["correct"] for check in checks)
+                                and all(
+                                    set(table)
+                                    == {
+                                        check["row_label"]
+                                        for check in checks
+                                        if check["indicator_id"] == metric_id
+                                    }
+                                    for metric_id, table in tables.items()
+                                )
+                            ),
+                            thought_output_absent=thought_absent,
+                            section_citations_valid=None,
+                        )
+                        observation.update(output=output)
+                        output["generation_model_attempts"] = (
+                            generation_counter.attempts
+                        )
+                        output["judge_model_attempts"] = judge_counter.attempts
+                        output["token_usage"] = {
+                            "generation": generation_counter.usage,
+                            "judge": judge_counter.usage,
+                        }
+                        return output
                     if not statements:
                         raise ValueError("非空正文未提供待评解读")
                     output["response_statements"] = statements
@@ -682,6 +762,8 @@ async def evaluate(
 def case_pass(output: dict[str, Any], expected: Expected, mode: str) -> bool:
     if output["execution_status"] != "success" or output["skipped"] != expected.skipped:
         return False
+    if output.get("assessment_scope") == "indicator_tables":
+        return output["indicator_contract_valid"] and output["thought_output_absent"]
     if expected.skipped:
         return (
             output["response"] == ""
@@ -715,8 +797,14 @@ def score_case(
         )
     ]
     for name in ("indicator_contract_valid", "section_citations_valid"):
-        if input["mode"] != "judge_calibration":
+        if input["mode"] != "judge_calibration" and output[name] is not None:
             scores.append(Evaluation(name=name, value=int(output[name])))
+    if output.get("assessment_scope") == "indicator_tables":
+        scores.append(
+            Evaluation(
+                name="thought_output_absent", value=int(output["thought_output_absent"])
+            )
+        )
     for name in ("faithfulness", "answer_relevancy"):
         if output[name] is not None:
             scores.append(
@@ -869,6 +957,10 @@ def main() -> None:
         calibrated = [r for r in rows if r["input"]["mode"] == "judge_calibration"]
         scored = [r for r in generated if r["output"]["faithfulness"] is not None]
         summary = {
+            "table_only_cases": sum(
+                r["output"].get("assessment_scope") == "indicator_tables"
+                for r in generated
+            ),
             "generation_cases": len(generated),
             "generation_passes": sum(r["case_pass"] for r in generated),
             "judge_calibration_cases": len(calibrated),

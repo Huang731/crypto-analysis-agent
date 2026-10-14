@@ -31,11 +31,12 @@ class MetricAgentState(AgentState):
 
 
 class SkillResult(TypedDict):
-    """本轮技能的完整展示内容及缓存复用信息。"""
+    """本轮技能的指标表格、思想原文及缓存复用信息。"""
 
     skill_name: str
     name: str
     content: str
+    thought_context: dict[str, Any]
     cache_hit: bool
 
 

@@ -20,7 +20,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite, Send, StreamWriter
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from tenacity import (
     before_sleep_log,
     retry,
@@ -43,6 +43,7 @@ from app.crypto_analysis.skill_loader import (
     get_skill_loader,
 )
 from app.crypto_analysis.skill_memory import (
+    SkillMemoryContent,
     SkillMemoryKey,
     read_skill_memory,
     resolve_memory_key,
@@ -575,24 +576,21 @@ async def generate_skill(
     result: dict[str, Any],
     analysis_subject: str,
 ) -> str:
-    """按通用格式生成表格与思想解读，只使用成功指标和实际检索材料。"""
+    """按通用格式生成指标表格，思想原文保留给最终 writer 解读。"""
     started = time.perf_counter()
     indicators = [
         {**item, "field_labels": metric_field_labels(item["indicator_id"])}
         for item in result["indicators"]
         if item["status"] == "ok"
     ]
-    thought_context = result["thought_context"]
-    # 全部缺失时返回空展示，不调用模型；只有思想材料时仍可解读已有原则。
-    if not indicators and not thought_context["documents"]:
+    # 没有成功指标时不生成表格，思想原文仍由 writer 使用。
+    if not indicators:
         content = ""
     else:
         prompt = skill_output_prompt(
             analysis_subject=analysis_subject,
             skill_name=skill.name,
             indicators=indicators,
-            thought_context=thought_context,
-            skill_instructions=skill_loader.load_skill(skill.name),
         )
         # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
         content = await _invoke_skill_output(llm, prompt)
@@ -638,6 +636,7 @@ def _build_skill_update(
         "skill_name": skill.name,
         "name": skill.scoring.name,
         "content": content,
+        "thought_context": result["thought_context"],
         "cache_hit": False,
     }
     update: DynamicAnalysisState = {"skill_results": [output]}
@@ -647,7 +646,13 @@ def _build_skill_update(
         or result["thought_context"]["status"] not in {"ok", "no_results"}
     ):
         return update
-    update["skill_memory"] = {key.cache_key: validate_skill_memory(content, key)}
+    cached_content = SkillMemoryContent(
+        content=validate_skill_memory(content, key),
+        thought_context=result["thought_context"],
+    )
+    update["skill_memory"] = {
+        key.cache_key: cached_content.model_dump_json(ensure_ascii=False)
+    }
     return update
 
 
@@ -724,49 +729,77 @@ def build_dynamic_analysis_agent(
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_worker(state: SkillWorkerState) -> DynamicAnalysisState:
-        """命中时直接返回完整技能内容，未命中时执行指标、检索并生成内容。"""
+        """先读取缓存，未命中时依次执行指标、检索原文、生成表格并写入缓存。"""
         with trace_span(
             "crypto.skill_worker", skill_name=state["skill_name"]
         ) as node_span:
             try:
+                skill_name = state["skill_name"]
+                scope = state["scope"]
                 # 根据本轮派发的快照加载技能，保持定义与规划时一致。
                 skill_loader = SkillLoader.from_snapshot(
-                    {state["skill_name"]: state["skill_source"]}
+                    {skill_name: state["skill_source"]}
                 )
-                skill = skill_loader.load_definition(state["skill_name"])
+                skill = skill_loader.load_definition(skill_name)
                 # 全局技能共用 GLOBAL 范围，其他技能按本轮币种区分缓存。
-                key = resolve_memory_key(
-                    state["scope"]["target_asset"], state["skill_name"]
-                )
+                key = resolve_memory_key(scope["target_asset"], skill_name)
+
+                # 命中时还原表格与思想原文，跳过指标执行、检索和生成。
                 cached = state["cached_memory"]
                 # 只记录是否找到缓存；缓存内容是否有效由后续校验判断。
                 node_span.metadata["cache_hit"] = cached is not None
                 if cached is not None:
-                    content = validate_skill_memory(cached, key)
+                    try:
+                        cached_content = SkillMemoryContent.model_validate_json(
+                            validate_skill_memory(cached, key)
+                        )
+                    except ValidationError as exc:
+                        raise ValueError(
+                            "技能缓存缺少结构化的表格和思想原文，"
+                            "请明确要求不用缓存重新分析"
+                        ) from exc
+                    # 已缓存的多条思想材料也只保留重排分数最高的一条。
+                    thought_context = cached_content.thought_context
+                    documents = thought_context["documents"]
+                    if len(documents) > 1:
+                        thought_context["documents"] = [
+                            max(
+                                documents,
+                                key=lambda doc: doc["metadata"]["rerank_score"],
+                            )
+                        ]
                     return {
                         "skill_results": [
                             {
                                 "skill_name": skill.name,
                                 "name": skill.scoring.name,
-                                "content": content,
+                                "content": cached_content.content,
+                                "thought_context": thought_context,
                                 "cache_hit": True,
                             }
                         ]
                     }
-                analysis_subject = (
-                    "加密市场"
-                    if key.asset_scope == "GLOBAL"
-                    else state["scope"]["target_asset"]
-                )
+
                 # 未命中时沿用原指标 Agent，执行取数、计算和结果聚合。
                 metric_agent = build_metric_agent(fast_llm, skill)
-                result = await execute_skill(metric_agent, skill, state["scope"])
+                result = await execute_skill(metric_agent, skill, scope)
+
                 # 检索与内容生成使用同一对象，避免全局缓存混入特定币种判断。
+                analysis_subject = (
+                    "加密市场" if key.asset_scope == "GLOBAL" else scope["target_asset"]
+                )
                 result["thought_context"] = await _retrieve_thought_context(
                     retriever, skill, analysis_subject
                 )
+                # 只将重排分数最高的思想原文传给生成、缓存和最终报告。
+                documents = result["thought_context"]["documents"]
+                if len(documents) > 1:
+                    result["thought_context"]["documents"] = [
+                        max(documents, key=lambda doc: doc["metadata"]["rerank_score"])
+                    ]
+
                 # 请求范围仅用于正文候选采集，不改变指标执行结果的返回契约。
-                result["scope"] = dict(state["scope"])
+                result["scope"] = dict(scope)
                 content = await generate_skill(
                     smart_llm, skill_loader, skill, result, analysis_subject
                 )
@@ -796,7 +829,18 @@ def build_dynamic_analysis_agent(
                 prompt = analysis_report_prompt(
                     target_asset=state["scope"]["target_asset"],
                     original_question=state["scope"]["resolved_question"],
-                    skill_results=ordered,
+                    content=[
+                        {
+                            "skill_name": item["skill_name"],
+                            "name": item["name"],
+                            "content": item["content"],
+                            "cache_hit": item["cache_hit"],
+                        }
+                        for item in ordered
+                    ],
+                    thought_context={
+                        item["skill_name"]: item["thought_context"] for item in ordered
+                    },
                     history_summary=state["history_summary"],
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
