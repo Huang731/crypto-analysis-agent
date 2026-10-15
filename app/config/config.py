@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # smart 用于规划、报告和审核；当前 GLM 使用文本接口。
     smart_model: str = "glm-5.1"
     smart_model_protocol: Literal["text", "multimodal"] = "text"
-    # fast 用于改写、路由、指标工具决策和技能表格；当前 Qwen 使用多模态接口。
+    # fast 用于改写、路由、指标工具决策和技能表格，使用文本接口。
     fast_model: str = "qwen3.7-flash-2026-07-15"
     fast_model_protocol: Literal["text", "multimodal"] = "multimodal"
 

@@ -67,7 +67,6 @@ class RoutingOutput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     decision: RouteDecision | None = None
     execution_status: Literal["success", "invalid_model_output", "error"]
-    attempt_count: int = Field(ge=0)
     duration_ms: float = Field(ge=0)
     error_type: str | None = None
 
@@ -98,14 +97,12 @@ async def evaluate_route(
                     if call_state.invalid_model_output
                     else "success"
                 ),
-                attempt_count=call_state.attempt_count,
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
         except Exception as exc:  # noqa: BLE001 - 评测需要记录所有单项执行失败，继续其他案例。
             # 记录失败后继续评其他案例，不重发整个案例，不上传异常中的敏感原文。
             output = RoutingOutput(
                 execution_status="error",
-                attempt_count=call_state.attempt_count,
                 duration_ms=(time.perf_counter() - started) * 1000,
                 error_type=type(exc).__name__,
             )
@@ -198,12 +195,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     statuses: Counter[str] = Counter()
     total_correct = 0
     durations: list[float] = []
-    attempts = 0
     for row in rows:
         actual = RoutingOutput.model_validate(row["output"])
         expected = row["expected_output"]["route"]
         statuses[actual.execution_status] += 1
-        attempts += actual.attempt_count
         durations.append(actual.duration_ms)
         label = (
             actual.decision.route
@@ -224,8 +219,6 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             for route, counts in matrix.items()
         },
         "confusion_matrix": {route: dict(counts) for route, counts in matrix.items()},
-        "model_attempts": attempts,
-        "retried_runs": sum(row["output"]["attempt_count"] > 1 for row in rows),
         "mean_duration_ms": sum(durations) / len(durations),
         "token_usage": None,
         "cost": None,

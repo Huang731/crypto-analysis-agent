@@ -101,12 +101,9 @@ async def _invoke_report_text(
     prompt: str,
     stream_writer: StreamWriter,
 ) -> str:
-    """流式生成正文，重试时重新开始展示，完成后校验报告。"""
-    report = await ainvoke_text(
-        llm,
-        prompt,
-        on_attempt=lambda: stream_writer({"event": "report_start", "node": "writer"}),
-    )
+    """生成正文前通知开始，完成后校验报告。"""
+    stream_writer({"event": "report_start", "node": "writer"})
+    report = await ainvoke_text(llm, prompt)
     if not report:
         raise ValueError("报告正文不能为空")
     return report

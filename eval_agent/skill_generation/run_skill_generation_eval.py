@@ -414,7 +414,9 @@ async def evaluate(
             judge_factory = (
                 make_fast_llm if judge_model == settings.fast_model else make_smart_llm
             )
-            judge = judge_factory(async_client=judge_http)
+            judge = judge_factory(async_client=judge_http).with_config(
+                callbacks=[judge_counter]
+            )
             loader = SkillLoader.from_snapshot({inputs.skill_name: inputs.skill_source})
             skill = loader.load_definition(inputs.skill_name)
             result = inputs.result.model_dump()
@@ -632,7 +634,6 @@ async def evaluate(
                                 with_thinking(judge, False),
                                 prompt,
                                 schema=GroundedJudgment,
-                                callbacks=[judge_counter],
                             ),
                             timeout=300,
                         )

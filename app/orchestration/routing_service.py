@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from api.schemas import AskRequest
-from app.observability import get_logger, log_event
+from app.observability import get_logger
 from app.tracing import trace_span
 
 
@@ -71,12 +71,6 @@ class _RoutingStreamState:
             return
         if is_root and node == "router" and isinstance(delta, dict):
             agent = delta["route"]
-            log_event(
-                _LOG,
-                "routing.state.update",
-                route=agent,
-                direct_reply=delta["direct_reply"],
-            )
             if agent == "direct":
                 self.direct_reply = delta["direct_reply"]
             else:
@@ -175,7 +169,6 @@ class RoutingService:
         self, request: AskRequest, thread_id: str, scope: dict[str, str]
     ) -> AsyncIterator[dict[str, str]]:
         """依次完成问题改写、图事件转发和最终 SSE 回答。"""
-        log_event(_LOG, "routing.start")
         scope = {**scope, "original_question": request.question}
         yield _event("progress", {"detail": "正在理解问题"})
         result = _RoutingStreamState()

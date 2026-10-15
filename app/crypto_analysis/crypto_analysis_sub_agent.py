@@ -31,7 +31,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_text, ainvoke_tools, with_tools
+from app.llm.model import ainvoke_model, ainvoke_text, with_tools
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
@@ -328,7 +328,7 @@ def skill_worker_step_limit(metric_count: int) -> int:
 )
 async def _invoke_metric_decision(llm: Any, messages: list[BaseMessage]) -> AIMessage:
     """直接调用指标决策模型，仅对模型调用和返回类型校验进行重试。"""
-    response = await ainvoke_tools(llm, messages)
+    response = await ainvoke_model(llm, messages)
     if not isinstance(response, AIMessage):
         raise TypeError("指标决策模型未返回 AIMessage")
     if response.invalid_tool_calls:

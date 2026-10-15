@@ -23,7 +23,6 @@ from dashscope import (
 )
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
-from langchain_core.callbacks.base import Callbacks
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage
@@ -44,24 +43,167 @@ _Result = TypeVar("_Result")
 _Schema = TypeVar("_Schema", bound=BaseModel)
 
 
+# 模型创建与参数绑定
+
+
+def make_model(
+    model_name: str,
+    *,
+    async_client: aiohttp.ClientSession | None = None,
+    thinking: bool | None = None,
+    role: Literal["smart", "fast", "vision"] = "smart",
+    protocol: Literal["text", "multimodal"] | None = None,
+) -> LoggedChatTongyi:
+    """按明确角色选择地址与参数，模型名称不用于推断供应商和角色。"""
+    timeout = settings.model_timeout
+    if protocol is None:
+        protocol = {
+            "smart": settings.smart_model_protocol,
+            "fast": settings.fast_model_protocol,
+            "vision": "multimodal",
+        }[role]
+    params: dict[str, Any] = {
+        "base_address": _native_address(settings.model_base_url),
+        "request_timeout": timeout,
+    }
+    if thinking is not None:
+        params["enable_thinking"] = thinking
+    if role == "vision":
+        params.update(temperature=0.1, max_tokens=4096)
+    model = LoggedChatTongyi(
+        model=model_name,
+        api_key=_api_key(),
+        model_kwargs=params,
+        max_retries=1,
+        request_timeout=timeout,
+        multimodal=protocol == "multimodal",
+        async_client=async_client,
+    )
+    # 父类 pre_init 注入的默认值会被新版 LangChain 误认为显式关闭流式。
+    # 保留默认按回调决定是否流式的行为，让报告正文继续进入图的消息流。
+    model.model_fields_set.discard("streaming")
+    return model
+
+
+def make_smart_llm(
+    *, async_client: aiohttp.ClientSession | None = None
+) -> LoggedChatTongyi:
+    """创建决策和写作模型，保留模型自身的默认思考配置。"""
+    return make_model(settings.smart_model, async_client=async_client, role="smart")
+
+
+def make_fast_llm(
+    *, async_client: aiohttp.ClientSession | None = None
+) -> LoggedChatTongyi:
+    """创建执行模型，沿用非思考模式。"""
+    return make_model(
+        settings.fast_model, async_client=async_client, role="fast", thinking=False
+    )
+
+
+def with_thinking(model: Any, enabled: bool) -> Any:
+    """生成独立的节点参数绑定，不修改共享模型。"""
+    return model.bind(enable_thinking=enabled)
+
+
+def with_tools(
+    model: Any, tools: Sequence[BaseTool | type[BaseModel]], **kwargs: Any
+) -> Any:
+    """绑定项目已有的 Pydantic 工具 schema。"""
+    if isinstance(model, RunnableBinding):
+        return (
+            with_tools(model.bound, tools, **kwargs)
+            .bind(**model.kwargs)
+            .with_config(model.config)
+        )
+    return model.bind_tools(tools, **kwargs)
+
+
+def structured_model(model: Any, schema: type[_Schema]) -> Runnable[Any, _Schema]:
+    """显式绑定输出工具，只从 Function Calling 参数解析 Pydantic 结果。"""
+    return with_tools(
+        model,
+        [schema],
+        tool_choice={"type": "function", "function": {"name": schema.__name__}},
+    ) | PydanticToolsParser(
+        tools=[schema],
+        first_tool_only=True,
+    )
+
+
+# 统一调用：重试、超时与结果类型
+
+
+@retry(
+    stop=stop_after_attempt(settings.model_max_attempts),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
+async def ainvoke_model(
+    model: Any,
+    messages: LanguageModelInput,
+    *,
+    timeout: float | None = None,
+) -> Any:
+    """统一执行模型请求、超时和重试，业务节点不再包装重试。"""
+    return await asyncio.wait_for(
+        model.ainvoke(messages),
+        timeout=settings.model_timeout if timeout is None else timeout,
+    )
+
+
+async def ainvoke_structured(
+    model: Any,
+    messages: LanguageModelInput,
+    *,
+    schema: type[_Schema],
+    timeout: float | None = None,
+) -> _Schema:
+    """通过 Function Calling 返回 Pydantic 结果。"""
+    return await ainvoke_model(
+        structured_model(model, schema),
+        messages,
+        timeout=timeout,
+    )
+
+
+async def ainvoke_text(model: Any, messages: LanguageModelInput) -> str:
+    """调用模型并返回文本正文。"""
+    response = await ainvoke_model(model, messages)
+    return response.content.strip()
+
+
+@retry(
+    stop=stop_after_attempt(settings.model_max_attempts),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
+async def ainvoke_agent_model(
+    call: Callable[[], Awaitable[_Result]], *, timeout: float = 60
+) -> _Result:
+    """只重试 Agent 当前一轮模型请求，不重复执行工具和整张图。"""
+    return await asyncio.wait_for(call(), timeout=timeout)
+
+
+def invoke_vision(messages: LanguageModelInput) -> AIMessage:
+    """同步视觉调用沿用模型 _generate 上的单层 @retry。"""
+    return make_model(settings.vision_model, role="vision").invoke(messages)
+
+
+# ChatTongyi 适配：连接、协议与流式响应
+
+
 @asynccontextmanager
-async def model_session() -> AsyncIterator[aiohttp.ClientSession]:
-    """由应用或评测案例持有连接，结束时关闭，不修改 SDK 全局配置。"""
+async def model_session(
+    client: aiohttp.ClientSession | None = None,
+) -> AsyncIterator[aiohttp.ClientSession]:
+    """复用调用方连接；未传入连接时负责创建和关闭。"""
+    if client is not None:
+        yield client
+        return
     connector = aiohttp.TCPConnector(ssl=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT))
     async with aiohttp.ClientSession(connector=connector, trust_env=True) as session:
         yield session
-
-
-@asynccontextmanager
-async def _request_session(
-    client: aiohttp.ClientSession | None,
-) -> AsyncIterator[aiohttp.ClientSession]:
-    """复用明确注入的连接；独立调用则在本次请求结束时释放连接。"""
-    if client is not None:
-        yield client
-    else:
-        async with model_session() as session:
-            yield session
 
 
 def _api_key() -> str:
@@ -83,7 +225,7 @@ def _native_address(address: str) -> str:
     return address
 
 
-def _check_response(response: Any, model_name: str) -> Any:
+def _check_response(response: Any) -> Any:
     """保留上游状态码与错误详情，脱敏后向调用方报告。"""
     if response.status_code != HTTPStatus.OK:
         reason = str(response.message).replace(_api_key(), "[已隐藏]")[:200]
@@ -158,8 +300,99 @@ class LoggedChatTongyi(ChatTongyi):
         return params
 
     def completion_with_retry(self, **kwargs: Any) -> Any:
-        # SDK 边界只执行一次，调用策略在统一入口或业务整体校验边界执行。
-        return _check_response(self.client.call(**kwargs), self.model_name)
+        # 保留父类钩子名称；同步重试由 _generate 上的 @retry 负责。
+        return _check_response(self.client.call(**kwargs))
+
+    @retry(
+        stop=stop_after_attempt(settings.model_max_attempts),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
+    def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
+        result = super()._generate(*args, **kwargs)
+        for generation in result.generations:
+            if self.multimodal and isinstance(generation.message.content, list):
+                generation.message.content = "".join(
+                    item["text"] for item in generation.message.content
+                )
+        return result
+
+    async def _agenerate(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        if self.streaming:
+            # 父类在 streaming=True 时使用 self._astream，不会进入线程池。
+            return await super()._agenerate(messages, stop, run_manager, **kwargs)
+        params = self._invocation_params(messages, stop, **kwargs)
+        client = AioMultiModalConversation if self.multimodal else AioGeneration
+        async with model_session(self.async_client) as session:
+            response = await asyncio.wait_for(
+                client.call(**params, session=session), timeout=self.request_timeout
+            )
+        payload = self._normalize_response(_check_response(response))
+        generation = ChatGeneration(**self._chat_generation_from_qwen_resp(payload))
+        self._set_usage(generation.message, payload)
+        return ChatResult(
+            generations=[generation], llm_output={"model_name": self.model_name}
+        )
+
+    async def _astream(
+        self,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: AsyncCallbackManagerForLLMRun | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[ChatGenerationChunk]:
+        async with model_session(self.async_client) as session:
+            params = self._invocation_params(messages, stop, stream=True, **kwargs)
+            params["session"] = session
+            client = AioMultiModalConversation if self.multimodal else AioGeneration
+            deadline = asyncio.get_running_loop().time() + self.request_timeout
+            responses = await asyncio.wait_for(
+                client.call(**params), timeout=self.request_timeout
+            )
+            previous = None
+            seen_metadata: dict[str, Any] = {}
+            try:
+                while True:
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    response = await asyncio.wait_for(
+                        anext(responses), timeout=remaining
+                    )
+                    payload = self._normalize_response(_check_response(response))
+                    delta = (
+                        payload
+                        if params.get("incremental_output", False)
+                        else self._delta_response(payload, previous)
+                    )
+                    previous = payload
+                    finish_reason = payload["output"]["choices"][0]["finish_reason"]
+                    final = finish_reason not in (None, "null", "")
+                    chunk = ChatGenerationChunk(
+                        **self._chat_generation_from_qwen_resp(
+                            delta, is_chunk=True, is_last_chunk=final
+                        )
+                    )
+                    # 固定元数据只保留一次；文本和工具参数继续按增量传递。
+                    if chunk.generation_info:
+                        for key, value in list(chunk.generation_info.items()):
+                            if seen_metadata.get(key) == value:
+                                del chunk.generation_info[key]
+                            else:
+                                seen_metadata[key] = value
+                        if "token_usage" in chunk.generation_info:
+                            self._set_usage(chunk.message, payload)
+                    if run_manager:
+                        await run_manager.on_llm_new_token(chunk.text, chunk=chunk)
+                    yield chunk
+            except StopAsyncIteration:
+                return
+            finally:
+                await responses.aclose()
 
     @staticmethod
     def _normalize_response(response: Any) -> dict[str, Any]:
@@ -205,29 +438,6 @@ class LoggedChatTongyi(ChatTongyi):
                     call["function"][field] = value[len(old_value) :]
         return payload
 
-    async def _agenerate(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: AsyncCallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> ChatResult:
-        if self.streaming:
-            # 父类在 streaming=True 时使用 self._astream，不会进入线程池。
-            return await super()._agenerate(messages, stop, run_manager, **kwargs)
-        params = self._invocation_params(messages, stop, **kwargs)
-        client = AioMultiModalConversation if self.multimodal else AioGeneration
-        async with _request_session(self.async_client) as session:
-            response = await asyncio.wait_for(
-                client.call(**params, session=session), timeout=self.request_timeout
-            )
-        payload = self._normalize_response(_check_response(response, self.model_name))
-        generation = ChatGeneration(**self._chat_generation_from_qwen_resp(payload))
-        self._set_usage(generation.message, payload)
-        return ChatResult(
-            generations=[generation], llm_output={"model_name": self.model_name}
-        )
-
     @staticmethod
     def _set_usage(message: Any, payload: dict[str, Any]) -> None:
         usage = payload["usage"]
@@ -237,278 +447,17 @@ class LoggedChatTongyi(ChatTongyi):
             "total_tokens": usage["input_tokens"] + usage["output_tokens"],
         }
 
-    async def _astream(
-        self,
-        messages: list[BaseMessage],
-        stop: list[str] | None = None,
-        run_manager: AsyncCallbackManagerForLLMRun | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[ChatGenerationChunk]:
-        async with _request_session(self.async_client) as session:
-            params = self._invocation_params(messages, stop, stream=True, **kwargs)
-            params["session"] = session
-            client = AioMultiModalConversation if self.multimodal else AioGeneration
-            deadline = asyncio.get_running_loop().time() + self.request_timeout
-            responses = await asyncio.wait_for(
-                client.call(**params), timeout=self.request_timeout
-            )
-            previous = None
-            seen_metadata: dict[str, Any] = {}
-            try:
-                while True:
-                    remaining = deadline - asyncio.get_running_loop().time()
-                    response = await asyncio.wait_for(
-                        anext(responses), timeout=remaining
-                    )
-                    payload = self._normalize_response(
-                        _check_response(response, self.model_name)
-                    )
-                    delta = (
-                        payload
-                        if params.get("incremental_output", False)
-                        else self._delta_response(payload, previous)
-                    )
-                    previous = payload
-                    finish_reason = payload["output"]["choices"][0]["finish_reason"]
-                    final = finish_reason not in (None, "null", "")
-                    chunk = ChatGenerationChunk(
-                        **self._chat_generation_from_qwen_resp(
-                            delta, is_chunk=True, is_last_chunk=final
-                        )
-                    )
-                    # 固定元数据只保留一次；文本和工具参数继续按增量传递。
-                    if chunk.generation_info:
-                        for key, value in list(chunk.generation_info.items()):
-                            if seen_metadata.get(key) == value:
-                                del chunk.generation_info[key]
-                            else:
-                                seen_metadata[key] = value
-                        if "token_usage" in chunk.generation_info:
-                            self._set_usage(chunk.message, payload)
-                    if run_manager:
-                        await run_manager.on_llm_new_token(chunk.text, chunk=chunk)
-                    yield chunk
-            except StopAsyncIteration:
-                return
-            finally:
-                await responses.aclose()
 
-    @retry(
-        stop=stop_after_attempt(settings.model_max_attempts),
-        wait=wait_random_exponential(min=1, max=2),
-        reraise=True,
+# 向量与重排
+
+
+def get_embeddings() -> BailianEmbeddings:
+    """统一向量模型入口，不改变现有 FAISS 维度及索引目录。"""
+    return BailianEmbeddings(
+        model=settings.embedding_model,
+        api_key=SecretStr(_api_key()),
+        base_address=_native_address(settings.model_base_url),
     )
-    def _generate(self, *args: Any, **kwargs: Any) -> ChatResult:
-        result = super()._generate(*args, **kwargs)
-        for generation in result.generations:
-            if self.multimodal and isinstance(generation.message.content, list):
-                generation.message.content = "".join(
-                    item["text"] for item in generation.message.content
-                )
-        return result
-
-
-def make_model(
-    model_name: str,
-    *,
-    async_client: aiohttp.ClientSession | None = None,
-    thinking: bool | None = None,
-    role: Literal["smart", "fast", "vision"] = "smart",
-    protocol: Literal["text", "multimodal"] | None = None,
-) -> LoggedChatTongyi:
-    """按明确角色选择地址与参数，模型名称不用于推断供应商和角色。"""
-    timeout = settings.model_timeout
-    if protocol is None:
-        protocol = {
-            "smart": settings.smart_model_protocol,
-            "fast": settings.fast_model_protocol,
-            "vision": "multimodal",
-        }[role]
-    params: dict[str, Any] = {
-        "base_address": _native_address(settings.model_base_url),
-        "request_timeout": timeout,
-    }
-    if thinking is not None:
-        params["enable_thinking"] = thinking
-    if role == "vision":
-        params.update(temperature=0.1, max_tokens=4096)
-    model = LoggedChatTongyi(
-        model=model_name,
-        api_key=_api_key(),
-        model_kwargs=params,
-        max_retries=1,
-        request_timeout=timeout,
-        multimodal=protocol == "multimodal",
-        async_client=async_client,
-    )
-    # 父类 pre_init 注入的默认值会被新版 LangChain 误认为显式关闭流式。
-    # 保留默认按回调决定是否流式的行为，让报告正文继续进入图的消息流。
-    model.model_fields_set.discard("streaming")
-    return model
-
-
-def make_smart_llm(
-    *, async_client: aiohttp.ClientSession | None = None
-) -> LoggedChatTongyi:
-    """创建决策和写作模型，保留模型自身的默认思考配置。"""
-    return make_model(settings.smart_model, async_client=async_client, role="smart")
-
-
-def make_fast_llm(
-    *, async_client: aiohttp.ClientSession | None = None
-) -> LoggedChatTongyi:
-    """创建执行模型，沿用非思考模式。"""
-    return make_model(
-        settings.fast_model, async_client=async_client, role="fast", thinking=False
-    )
-
-
-def make_vision_llm() -> LoggedChatTongyi:
-    """创建视觉模型，显式指定多模态调用协议。"""
-    return make_model(settings.vision_model, role="vision")
-
-
-def with_thinking(model: Any, enabled: bool) -> Any:
-    """生成独立的节点参数绑定，不修改共享模型。"""
-    return model.bind(enable_thinking=enabled)
-
-
-def with_tools(model: Any, tools: Sequence[BaseTool]) -> Any:
-    """绑定项目已有的 Pydantic 工具 schema。"""
-    if isinstance(model, RunnableBinding):
-        return (
-            with_tools(model.bound, tools)
-            .bind(**model.kwargs)
-            .with_config(model.config)
-        )
-    return model.bind_tools(tools)
-
-
-def structured_model(model: Any, schema: type[_Schema]) -> Runnable[Any, _Schema]:
-    """显式绑定输出工具，只从 Function Calling 参数解析 Pydantic 结果。"""
-    if isinstance(model, RunnableBinding):
-        return (
-            structured_model(model.bound, schema)
-            .bind(**model.kwargs)
-            .with_config(model.config)
-        )
-    return model.bind_tools(
-        [schema],
-        tool_choice={"type": "function", "function": {"name": schema.__name__}},
-    ) | PydanticToolsParser(
-        tools=[schema],
-        first_tool_only=True,
-    )
-
-
-async def await_model_call(
-    call: Awaitable[_Result], *, timeout: float | None = None
-) -> _Result:
-    """为普通调用和 Agent 框架回调统一设置单次总超时。"""
-    return await asyncio.wait_for(
-        call, timeout=settings.model_timeout if timeout is None else timeout
-    )
-
-
-@retry(
-    stop=stop_after_attempt(settings.model_max_attempts),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
-async def ainvoke_model(
-    model: Any,
-    messages: LanguageModelInput,
-    *,
-    callbacks: Callbacks = None,
-    timeout: float | None = None,
-    parse_result: Callable[[Any], Any] | None = None,
-    on_attempt: Callable[[], None] | None = None,
-) -> Any:
-    """统一重试请求和结果解析，业务节点不再包装重试。"""
-    if on_attempt is not None:
-        on_attempt()
-    call = (
-        model.ainvoke(messages)
-        if callbacks is None
-        else model.ainvoke(messages, config={"callbacks": callbacks})
-    )
-    result = await await_model_call(call, timeout=timeout)
-    return result if parse_result is None else parse_result(result)
-
-
-async def ainvoke_structured(
-    model: Any,
-    messages: LanguageModelInput,
-    *,
-    schema: type[_Schema],
-    callbacks: Callbacks = None,
-    timeout: float | None = None,
-) -> _Schema:
-    """调用、Pydantic 解析和类型校验整体重试，不叠加 SDK 重试。"""
-
-    def parse(result: Any) -> _Schema:
-        if not isinstance(result, schema):
-            raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
-        return result
-
-    return await ainvoke_model(
-        structured_model(model, schema),
-        messages,
-        callbacks=callbacks,
-        timeout=timeout,
-        parse_result=parse,
-    )
-
-
-async def ainvoke_text(
-    model: Any,
-    messages: LanguageModelInput,
-    *,
-    on_attempt: Callable[[], None] | None = None,
-) -> str:
-    """统一文本调用及非空校验，整体最多尝试两次。"""
-
-    def parse(response: Any) -> str:
-        if not isinstance(response.content, str):
-            raise TypeError("模型未返回文本内容")
-        content = response.content.strip()
-        if not content:
-            raise ValueError("模型返回了空文本")
-        return content
-
-    return await ainvoke_model(
-        model, messages, parse_result=parse, on_attempt=on_attempt
-    )
-
-
-async def ainvoke_tools(model: Any, messages: LanguageModelInput) -> AIMessage:
-    """统一工具响应类型与参数解析检查，错误进入同一层模型重试。"""
-
-    def parse(response: Any) -> AIMessage:
-        if not isinstance(response, AIMessage):
-            raise TypeError("指标决策模型未返回 AIMessage")
-        if response.invalid_tool_calls:
-            raise ValueError("指标决策模型返回了无法解析的工具调用")
-        return response
-
-    return await ainvoke_model(model, messages, parse_result=parse)
-
-
-@retry(
-    stop=stop_after_attempt(settings.model_max_attempts),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
-async def ainvoke_agent_model(
-    call: Callable[[], Awaitable[_Result]], *, timeout: float = 60
-) -> _Result:
-    """只重试 Agent 当前一轮模型请求，不重复执行工具和整张图。"""
-    return await await_model_call(call(), timeout=timeout)
-
-
-def invoke_vision(messages: LanguageModelInput) -> AIMessage:
-    """同步视觉调用沿用模型 _generate 上的单层 @retry。"""
-    return make_vision_llm().invoke(messages)
 
 
 class BailianEmbeddings(BaseModel, Embeddings):
@@ -546,7 +495,6 @@ class BailianEmbeddings(BaseModel, Embeddings):
                 input=texts,
                 text_type=text_type,
             ),
-            self.model,
         )
         items = sorted(
             response.output["embeddings"], key=lambda item: item["text_index"]
@@ -554,15 +502,6 @@ class BailianEmbeddings(BaseModel, Embeddings):
         if len(items) != len(texts):
             raise ValueError("百炼向量返回数量与输入数量不一致")
         return [item["embedding"] for item in items]
-
-
-def get_embeddings() -> BailianEmbeddings:
-    """统一向量模型入口，不改变现有 FAISS 维度及索引目录。"""
-    return BailianEmbeddings(
-        model=settings.embedding_model,
-        api_key=SecretStr(_api_key()),
-        base_address=_native_address(settings.model_base_url),
-    )
 
 
 @retry(
@@ -583,5 +522,4 @@ def rerank(query: str, documents: list[str]) -> Any:
             top_n=len(documents),
             return_documents=False,
         ),
-        settings.rerank_model,
     )

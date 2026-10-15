@@ -51,7 +51,6 @@ class RouteDecision(BaseModel):
 class RouteCallState(BaseModel):
     """本次调用显式持有的诊断信息，不进入业务图的会话状态。"""
 
-    attempt_count: int = 0
     invalid_model_output: bool = False
 
 
@@ -83,14 +82,7 @@ async def _invoke_route_decision(
 ) -> RouteDecision:
     """保留原特殊返回分支及无效模型输出的诊断标记。"""
 
-    def record_attempt() -> None:
-        if call_state is not None:
-            call_state.attempt_count += 1
-            call_state.invalid_model_output = False
-
-    decision = await ainvoke_model(
-        structured_model(fast, RouteDecision), messages, on_attempt=record_attempt
-    )
+    decision = await ainvoke_model(structured_model(fast, RouteDecision), messages)
     if not isinstance(decision, RouteDecision):
         if call_state is not None:
             call_state.invalid_model_output = True
