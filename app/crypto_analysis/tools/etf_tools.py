@@ -1,11 +1,12 @@
 """ETF资金流的取数和计算。"""
 
+from typing import Any
+
 from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
 
 from app.crypto_analysis.calculators.etf_flow_calculator import calculate_etf_flows
-from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.crypto_analysis.metric_service import (
     MetricJob,
     _execute_metrics,
@@ -15,7 +16,7 @@ from app.crypto_analysis.sources.crypto_etf_source import get_crypto_etf_flows
 
 @tool
 async def analyze_etf_flows(
-    runtime: ToolRuntime[MetricToolContext],
+    runtime: ToolRuntime[dict[str, Any]],
 ) -> Command:
     """取得目标资产 ETF 流量并计算、记录 ETF_Flows，返回指标状态。"""
     scope = runtime.context["scope"]

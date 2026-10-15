@@ -1,5 +1,7 @@
 """美元流动性与加密内部流动性的取数和计算。"""
 
+from typing import Any
+
 from langchain.tools import ToolRuntime, tool
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
@@ -10,7 +12,6 @@ from app.crypto_analysis.calculators.fred_calculator import (
     calculate_walcl_ma4,
 )
 from app.crypto_analysis.calculators.stablecoin_calculator import _stablecoin_metrics
-from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.crypto_analysis.metric_service import (
     MetricJob,
     _execute_metrics,
@@ -24,7 +25,7 @@ from app.crypto_analysis.sources.fred_source import get_m2_yoy_change
 
 @tool
 async def analyze_liquidity(
-    runtime: ToolRuntime[MetricToolContext],
+    runtime: ToolRuntime[dict[str, Any]],
 ) -> Command:
     """并行取得四类流动性数据，计算并记录 DXY、稳定币、M2 和美联储资产负债表指标。"""
     return await _execute_metrics(

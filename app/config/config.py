@@ -85,8 +85,8 @@ class Settings(BaseSettings):
 
     # 决策与写作模型，用于规划、汇总、报告和审核。
     smart_model: str = "glm-5.1"
-    # 执行模型使用百炼 Qwen3.5-Flash。
-    fast_model: str = "qwen3.8-flash"
+    # 执行模型使用支持工具调用的百炼 Qwen3.8-Flash。
+    fast_model: str = "qwen3.7-flash-2026-07-15"
 
     # 百炼聊天、向量、重排与视觉模型共用环境变量中的 API Key。
     dashscope_api_key: str = Field(
@@ -118,7 +118,7 @@ class Settings(BaseSettings):
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},
         "glm-5.1": {"input": 50.0, "output": 50.0},
-        "qwen3.8-flash": {"input": 0.0, "output": 0.0},
+        "qwen3.7-flash-2026-07-15": {"input": 0.0, "output": 0.0},
     }
 
     # ── 检索层（阶段 2）───────────────────────────────────────

@@ -91,3 +91,4 @@
 {"case_id":"ca572371caeb453499011ddbf0e850c5","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"68b7e732aaad42b995958e5cb56512bd","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"direct","direct_reply":"请问您想分析人工智能的哪个方面？例如：AI 行业趋势与竞争格局、代表性公司（如英伟达、微软等）的业务与财报、相关政策法规，还是 AI 概念在加密市场中的行情走势？请补充具体方向或标的。"}}
 {"case_id":"4fba7a71f82c4239a28df757a16e3da5","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"85f0d558a2684bf1937a636de571f9b6","original_question":"分析btc","input":{"resolved_question":"分析btc"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}

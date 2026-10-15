@@ -17,7 +17,7 @@ from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.config.config import PROJECT_ROOT, settings
-from app.crypto_analysis.crypto_analysis_agent import generate_skill
+from app.crypto_analysis.crypto_analysis_sub_agent import generate_skill
 from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import _make_model
@@ -338,8 +338,7 @@ def required_fields(inputs: GenerationInput) -> dict[str, dict[str, Any]]:
             continue
         values = item.model_dump()
         fields = {
-            key: values[key]
-            for key in ("indicator_id", "score", "observed_at", "url")
+            key: values[key] for key in ("indicator_id", "score", "observed_at", "url")
         }
         for group in ("raw_values", "calculated_values"):
             fields.update(

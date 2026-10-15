@@ -20,7 +20,9 @@ from tenacity import (
 from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
-from app.crypto_analysis.crypto_analysis_agent import build_dynamic_analysis_agent
+from app.crypto_analysis.crypto_analysis_parent_agent import (
+    build_crypto_analysis_parent_agent,
+)
 from app.crypto_analysis.skill_memory import merge_skill_memory
 from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
@@ -188,7 +190,7 @@ def build_routing_graph(
     checkpointer: BaseCheckpointSaver,
 ) -> CompiledStateGraph:
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
-    crypto_agent = build_dynamic_analysis_agent(smart, fast, retriever)
+    crypto_agent = build_crypto_analysis_parent_agent(smart, fast, retriever)
     topic_agent = build_topic_research_agent(smart, fast)
 
     @timed_node

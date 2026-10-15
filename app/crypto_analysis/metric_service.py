@@ -34,7 +34,6 @@ from app.crypto_analysis.calculators.stablecoin_calculator import (
     STABLECOIN_FIELD_LABELS,
 )
 from app.crypto_analysis.calculators.trend_calculator import TREND_FIELD_LABELS
-from app.crypto_analysis.crypto_analysis_state import MetricToolContext
 from app.observability import get_logger
 from app.tracing import trace_span
 
@@ -202,7 +201,7 @@ def _normalize_result(
 
 
 async def _fetch_evidence(
-    runtime: ToolRuntime[MetricToolContext],
+    runtime: ToolRuntime[dict[str, Any]],
     evidence_id: str,
     data_kind: str,
     source_action: str,
@@ -258,7 +257,7 @@ async def _fetch_evidence(
 
 
 def _compute_metric(
-    runtime: ToolRuntime[MetricToolContext],
+    runtime: ToolRuntime[dict[str, Any]],
     evidence_id: str,
     metric_id: str,
     evidence: dict[str, Any],
@@ -324,7 +323,7 @@ def _compute_metric(
 
 
 async def _execute_metrics(
-    runtime: ToolRuntime[MetricToolContext], jobs: Sequence[MetricJob]
+    runtime: ToolRuntime[dict[str, Any]], jobs: Sequence[MetricJob]
 ) -> Command:
     """一次工具调用完成取数和计算，只向模型返回各指标状态。"""
     metric_ids = [metric_id for job in jobs for metric_id in job.calculators]

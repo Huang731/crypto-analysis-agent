@@ -1,4 +1,4 @@
-"""固定取数响应，直接调用生产 execute_skill，保存 Langfuse 与本地结果。"""
+"""固定取数响应，直接调用生产指标节点，保存 Langfuse 与本地结果。"""
 
 import argparse
 import asyncio
@@ -22,14 +22,22 @@ from uuid import NAMESPACE_URL, uuid5
 import httpx
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.messages import HumanMessage
 from langchain_core.outputs import LLMResult
 from langfuse import Evaluation, Langfuse, get_client
 from langfuse.api import DatasetItem
+from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.config.config import PROJECT_ROOT, settings
-from app.crypto_analysis.crypto_analysis_agent import build_metric_agent, execute_skill
+from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
+from app.crypto_analysis.crypto_analysis_sub_agent import (
+    make_calculate_metrics,
+    make_check_metrics,
+    route_metrics,
+    skill_worker_step_limit,
+)
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
 from app.llm.model import _make_model
@@ -94,14 +102,14 @@ class SkillExecutionScope(BaseModel):
 
 
 class MetricAgentConfig(BaseModel):
-    """Agent 对象不能序列化，记录重建生产 Agent 所需的模型配置。"""
+    """保留案例模型配置，用于重建指标决策模型。"""
 
     model_config = ConfigDict(extra="forbid")
     model: str = Field(min_length=1)
 
 
 class SkillExecutionInput(BaseModel):
-    """逐项对应 execute_skill 的 metric_agent、skill、scope 三个入参。"""
+    """保留执行模型、技能定义和请求范围三个评测入参。"""
 
     model_config = ConfigDict(extra="forbid")
     metric_agent: MetricAgentConfig
@@ -172,7 +180,7 @@ class SourceCall(BaseModel):
 
 
 class SkillExecutionOutput(BaseModel):
-    """错误保留独立状态；耗时包含 execute_skill 内全部模型与工具步骤。"""
+    """错误保留独立状态；耗时包含指标循环内全部模型与工具步骤。"""
 
     model_config = ConfigDict(extra="forbid")
     result: SkillExecutionResult | None = None
@@ -191,7 +199,7 @@ class SkillExecutionOutput(BaseModel):
     token_usage: list[dict[str, Any]]
 
 
-@dataclass
+@dataclass(eq=False)
 class ReplayState(AsyncCallbackHandler):
     """一次案例持有自己的固定响应与调用记录；评测必须串行运行。"""
 
@@ -250,21 +258,6 @@ class ReplayState(AsyncCallbackHandler):
             return deepcopy(response.raw)
 
         return replay
-
-
-@dataclass
-class RecordedMetricAgent:
-    """保留生产 Agent 最终状态供检查，调用参数完全由 execute_skill 提供。"""
-
-    agent: Any
-    replay: ReplayState
-
-    async def ainvoke(self, inputs: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
-        config = kwargs["config"]
-        kwargs["config"] = {**config, "callbacks": [self.replay]}
-        state = await self.agent.ainvoke(inputs, **kwargs)
-        self.replay.agent_state = state
-        return state
 
 
 @dataclass
@@ -396,7 +389,18 @@ async def evaluate_skill(
         with ExitStack() as stack:
             for source, target in SOURCE_TARGETS.items():
                 stack.enter_context(patch(target, new=replay.source_function(source)))
-            agent = RecordedMetricAgent(build_metric_agent(llm, skill), replay)
+            # 直接复用生产指标节点，仅截断后续检索与正文生成。
+            builder = StateGraph(SkillWorkerGraphState)
+            builder.add_node("calculate_metrics", make_calculate_metrics(llm))
+            builder.add_node("check_metrics", make_check_metrics())
+            builder.add_edge(START, "calculate_metrics")
+            builder.add_edge("calculate_metrics", "check_metrics")
+            builder.add_conditional_edges(
+                "check_metrics",
+                route_metrics,
+                {"incomplete": "calculate_metrics", "complete": END},
+            )
+            graph = builder.compile()
             with client.start_as_current_observation(
                 as_type="span",
                 name="skill_execution.invoke",
@@ -410,10 +414,32 @@ async def evaluate_skill(
                 stage = "agent"
                 raw_result: Any = None
                 try:
-                    raw_result = await asyncio.wait_for(
-                        execute_skill(agent, skill, inputs.scope.model_dump()),
+                    state = await asyncio.wait_for(
+                        graph.ainvoke(
+                            {
+                                "skill": skill,
+                                "scope": inputs.scope.model_dump(),
+                                "messages": [
+                                    HumanMessage(
+                                        content=metric_execution_prompt(
+                                            skill.model_dump()
+                                        )
+                                    )
+                                ],
+                                "evidence": {},
+                                "indicator_results": {},
+                            },
+                            config={
+                                "callbacks": [replay],
+                                "recursion_limit": skill_worker_step_limit(
+                                    len(skill.scoring.metrics)
+                                ),
+                            },
+                        ),
                         timeout=timeout_seconds,
                     )
+                    replay.agent_state = state
+                    raw_result = state["metric_result"]
                     duration_ms = (time.perf_counter() - started) * 1000
                     stage = "result_validation"
                     actual = SkillExecutionResult.model_validate(raw_result)
@@ -640,7 +666,7 @@ def score_skill(
     skill = LoadedSkill.model_validate(input["skill"])
     recorded = diagnostics.raw_result
     if output is not recorded and not values_equal(output, recorded):
-        raise ValueError("案例出参与记录的 execute_skill 返回结果不一致")
+        raise ValueError("案例出参与记录的指标聚合结果不一致")
     details = {
         "execution_status": diagnostics.execution_status,
         "error_type": diagnostics.error_type,
@@ -663,7 +689,7 @@ def score_skill(
         Evaluation(
             name="duration_ms",
             value=diagnostics.duration_ms,
-            comment="execute_skill 全程耗时，包含模型、重试、工具和聚合，单位毫秒",
+            comment="指标循环全程耗时，包含模型、重试、工具和聚合，单位毫秒",
         ),
     ]
 
@@ -803,7 +829,7 @@ def main() -> None:
         truststore.inject_into_ssl()
     config = EvalSettings()
     hash_paths = [
-        PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_agent.py",
+        PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_sub_agent.py",
         PROJECT_ROOT / "app/crypto_analysis/metric_service.py",
         Path(__file__),
         *sorted((PROJECT_ROOT / "app/crypto_analysis/calculators").glob("*.py")),
@@ -844,9 +870,9 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
         "models": sorted({case.input.metric_agent.model for case in cases}),
-        "scoring_version": "execute_skill_result_v2",
+        "scoring_version": "metric_graph_result_v2",
         "input_contract": "metric_agent配置、skill、scope对应生产函数三个参数",
-        "output_contract": "案例expected_output与output均为execute_skill完整result",
+        "output_contract": "案例expected_output与output均为生产指标节点完整metric_result",
         "data_mode": "fixed_replay",
         "repetitions": str(args.repetitions),
         "case_count": str(len(cases)),
@@ -912,7 +938,7 @@ def main() -> None:
             raise RuntimeError("Langfuse 认证失败，请检查密钥和服务地址")
         client.create_dataset(
             name=args.dataset,
-            description="固定数据源响应与人工预期结果的独立 execute_skill 评测",
+            description="固定数据源响应与人工预期结果的独立指标子图评测",
             input_schema=SkillExecutionInput.model_json_schema(),
             expected_output_schema=SkillExecutionResult.model_json_schema(),
         )

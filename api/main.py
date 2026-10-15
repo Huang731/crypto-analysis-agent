@@ -24,7 +24,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from api.schemas import AskRequest
 from app.config.config import settings
-from app.crypto_analysis.crypto_analysis_agent import create_request_scope
+from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
 from app.llm.model import make_fast_llm, make_smart_llm
 from app.observability import (
     bind_request_context,

@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
-from app.crypto_analysis.crypto_analysis_agent import (
+from app.crypto_analysis.crypto_analysis_parent_agent import (
     AnalysisPlan,
     create_analysis_plan,
 )
@@ -279,7 +279,9 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
         "working_tree_sha256": hashlib.sha256(
-            (PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_agent.py").read_bytes()
+            (
+                PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_parent_agent.py"
+            ).read_bytes()
         ).hexdigest(),
         "model": settings.smart_model,
         "repetitions": str(args.repetitions),
