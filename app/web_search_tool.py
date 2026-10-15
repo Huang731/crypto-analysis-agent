@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from langchain.tools import ToolRuntime, tool
@@ -14,6 +14,8 @@ from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.browser_tool import BrowserContext
+
+SearchFreshness = Literal["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"]
 
 
 class BochaSettings(BaseSettings):
@@ -33,11 +35,18 @@ class WebSearchInput(BaseModel):
     """网页搜索参数。"""
 
     query: str = Field(min_length=1, description="搜索关键词")
+    freshness: SearchFreshness = Field(
+        description="搜索时间范围：noLimit 不限、oneDay 近一天、oneWeek 近一周、"
+        "oneMonth 近一月、oneYear 近一年；历史研究使用 noLimit，"
+        "并在 query 中明确年份或日期区间"
+    )
     max_results: int = Field(default=6, ge=1, le=10, description="最多返回结果数")
 
 
 @tool(args_schema=WebSearchInput)
-async def search_bocha(query: str, max_results: int = 6) -> dict[str, Any]:
+async def search_bocha(
+    query: str, freshness: SearchFreshness, max_results: int = 6
+) -> dict[str, Any]:
     """调用 Bocha Web Search，失败直接交给上层记录，不切换来源。"""
     if not query.strip() or not 1 <= max_results <= 10:
         raise ValueError("搜索词不能为空，max_results 必须为 1 至 10。")
@@ -54,6 +63,7 @@ async def search_bocha(query: str, max_results: int = 6) -> dict[str, Any]:
             },
             json={
                 "query": query,
+                "freshness": freshness,
                 "summary": True,
                 "count": max_results,
             },
@@ -65,10 +75,16 @@ async def search_bocha(query: str, max_results: int = 6) -> dict[str, Any]:
     rows = payload["data"]["webPages"]["value"]
     return {
         "query": query,
+        "freshness": freshness,
         "source": endpoint,
         "accessed_at": datetime.now(timezone.utc).isoformat(),
         "results": [
-            {"title": row["name"], "url": row["url"], "snippet": row["snippet"]}
+            {
+                "title": row["name"],
+                "url": row["url"],
+                "snippet": row["snippet"],
+                "published_at": row.get("datePublished"),
+            }
             for row in rows
         ],
     }
@@ -81,11 +97,12 @@ def build_web_search_tools() -> list[BaseTool]:
     async def search_for_research(
         query: str,
         runtime: ToolRuntime[BrowserContext],
+        freshness: SearchFreshness,
         max_results: int = 6,
     ) -> Command:
         """搜索候选网页并记录来源；摘要只用于定位，正式取证请调用 browse_for_evidence。"""
         result = await search_bocha.ainvoke(
-            {"query": query, "max_results": max_results}
+            {"query": query, "freshness": freshness, "max_results": max_results}
         )
         runtime.context.browser.register_search_results(result["results"])
         return Command(

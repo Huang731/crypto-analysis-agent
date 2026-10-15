@@ -73,3 +73,4 @@
 {"case_id":"2a9de2e13be548d180c4449a3918388a","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"d106d98f9c2941948bbebd9a4d5d3999","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"72b8b181be244886b204e7a5defe98f7","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"a67c98d88dd64da3b29201c76aceaec6","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}

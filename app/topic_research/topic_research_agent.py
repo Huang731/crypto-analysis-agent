@@ -5,6 +5,7 @@ import json  # 将并行发现完整交给汇总模型。
 import re  # 清理拆题结果中的常见编号。
 import sys  # 读取命令行中的研究主题。
 from collections.abc import Awaitable, Callable  # 标注节点工厂返回的可调用对象。
+from datetime import datetime, timezone
 from typing import Any  # 标注模型和消息集合。
 
 import httpx
@@ -12,7 +13,6 @@ from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentMiddleware,
     ModelRetryMiddleware,
-    hook_config,
 )
 from langchain.agents.middleware.types import (
     ModelRequest,
@@ -26,7 +26,6 @@ from langchain_core.messages import (  # 工具 Agent 的消息交互。
 )
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
-from langgraph.runtime import Runtime
 from langgraph.types import Command, Send  # 并行分派研究子问题。
 from playwright.async_api import Error as BrowserError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -36,7 +35,6 @@ from app.config.config import settings  # 读取模型配置用于成本估算�
 from app.llm.model import make_fast_llm, make_smart_llm  # 复用项目现有模型工厂。
 from app.observability import get_logger, log_event, timed_node  # 保留请求观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
-    RESEARCH_EVIDENCE_TARGET,
     AnalysisState,
     ResearchAgentState,
     SystemState,
@@ -48,8 +46,6 @@ from app.tracing import (  # 记录请求与模型调用。
 )
 from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
-    RESEARCH_SYSTEM_PROMPT,
-    research_continue_prompt,
     research_prompt,
     review_prompt,
     split_prompt,
@@ -141,30 +137,8 @@ async def _invoke_traced_model(
     return await _invoke_model(llm, prompt)
 
 
-def _used_research_urls(state: ResearchAgentState) -> set[str]:
-    """汇总已读取的原始地址、跳转后地址和已经失败的地址。"""
-    urls = {item["url"] for item in state["research_evidence"].values()}
-    urls.update(state["visited_urls"])
-    urls.update(item["url"] for item in state["tool_errors"] if "url" in item)
-    return urls
-
-
-def _can_continue_research(state: ResearchAgentState) -> bool:
-    """首次允许搜索，之后只在仍有未访问的候选页面时继续取证。"""
-    if not state["search_records"]:
-        return not state["tool_errors"]
-    used_urls = _used_research_urls(state)
-    return any(
-        item["url"] not in used_urls
-        for record in state["search_records"].values()
-        for item in record["results"]
-    )
-
-
 class ResearchModelTrace(AgentMiddleware):
-    """逐轮记录模型调用，取得三个原文后停止取证并生成结论。"""
-
-    state_schema = ResearchAgentState
+    """逐轮记录模型调用，并限制单轮等待时间。"""
 
     @trace_generation_call(
         name="topic_researcher",
@@ -179,48 +153,7 @@ class ResearchModelTrace(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        if len(
-            request.state["research_evidence"]
-        ) >= RESEARCH_EVIDENCE_TARGET or not _can_continue_research(request.state):
-            # 证据达到目标或候选页面用完后，明确禁止模型继续调用工具。
-            request = request.override(
-                tools=[],
-                model_settings={**request.model_settings, "tool_choice": "none"},
-            )
         return await asyncio.wait_for(handler(request), timeout=60)
-
-    @hook_config(can_jump_to=["model"])
-    async def aafter_model(
-        self, state: ResearchAgentState, runtime: Runtime[BrowserContext]
-    ) -> dict[str, Any] | None:
-        """模型提前返回正文时，检查是否仍有未读取的候选页面。"""
-        response = state["messages"][-1]
-        count = len(state["research_evidence"])
-        if isinstance(response, AIMessage) and len(response.tool_calls) > 1:
-            # 同一个子问题逐次执行工具，防止并行调用重复读取同一页。
-            return {
-                "messages": [
-                    response.model_copy(update={"tool_calls": response.tool_calls[:1]})
-                ]
-            }
-        if (
-            not isinstance(response, AIMessage)
-            or response.tool_calls
-            or count >= RESEARCH_EVIDENCE_TARGET
-        ):
-            return None
-        if _can_continue_research(state):
-            return {
-                "jump_to": "model",
-                "messages": [
-                    HumanMessage(
-                        content=research_continue_prompt(
-                            count, RESEARCH_EVIDENCE_TARGET
-                        )
-                    )
-                ],
-            }
-        return None
 
     async def awrap_tool_call(
         self,
@@ -229,43 +162,6 @@ class ResearchModelTrace(AgentMiddleware):
     ) -> ToolMessage | Command:
         with trace_span("topic.research_tool", tool=request.tool_call["name"]) as span:
             try:
-                message = ""
-                if len(request.state["research_evidence"]) >= RESEARCH_EVIDENCE_TARGET:
-                    message = "已取得三个不同网页的原文，请直接回答子问题。"
-                elif request.tool_call["name"] == "browse_for_evidence":
-                    used_urls = _used_research_urls(request.state)
-                    url = next(
-                        (
-                            url
-                            for url in request.tool_call["args"]["urls"]
-                            if url not in used_urls
-                        ),
-                        None,
-                    )
-                    if url is None:
-                        message = "本次调用没有新的候选页面，请使用未访问的搜索结果。"
-                    else:
-                        request = request.override(
-                            tool_call={
-                                **request.tool_call,
-                                "args": {
-                                    **request.tool_call["args"],
-                                    "urls": [url],
-                                    "max_pages": 1,
-                                },
-                            }
-                        )
-                if message:
-                    return Command(
-                        update={
-                            "messages": [
-                                ToolMessage(
-                                    content=message,
-                                    tool_call_id=request.tool_call["id"],
-                                )
-                            ]
-                        }
-                    )
                 return await handler(request)
             except (
                 BrowserError,
@@ -281,12 +177,9 @@ class ResearchModelTrace(AgentMiddleware):
                     "tool": request.tool_call["name"],
                     "error": f"{type(exc).__name__}: {exc}",
                 }
-                if request.tool_call["name"] == "browse_for_evidence":
-                    error["url"] = request.tool_call["args"]["urls"][0]
                 return Command(
                     update={
                         "tool_errors": [error],
-                        **({"visited_urls": [error["url"]]} if "url" in error else {}),
                         "messages": [
                             ToolMessage(
                                 content=json.dumps(error, ensure_ascii=False),
@@ -305,7 +198,6 @@ def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
         tools=[*build_web_search_tools(), *build_browser_tools()],
         state_schema=ResearchAgentState,
         context_schema=BrowserContext,
-        system_prompt=RESEARCH_SYSTEM_PROMPT,
         middleware=[
             ModelRetryMiddleware(
                 max_retries=1, retry_on=(Exception,), on_failure="error"
@@ -327,14 +219,15 @@ def make_researcher(
         with trace_span("topic.researcher") as node_span:
             try:
                 subquestion = state["subquestion"]
-                prompt = research_prompt(state["question"], subquestion)
+                prompt = research_prompt(
+                    state["question"], subquestion, as_of=state["scope"]["as_of"]
+                )
                 async with BrowserTool() as browser:
                     result = await research_agent.ainvoke(
                         {
                             "messages": [HumanMessage(content=prompt)],
                             "search_records": {},
                             "research_evidence": {},
-                            "visited_urls": [],
                             "tool_errors": [],
                         },
                         context=BrowserContext(browser=browser),
@@ -355,8 +248,6 @@ def make_researcher(
                     if searches
                     else "未取得外部证据"
                 )
-                if len(evidence) < RESEARCH_EVIDENCE_TARGET:
-                    verification += f"；原文证据不足 {RESEARCH_EVIDENCE_TARGET} 条"
                 finding = {
                     "question": subquestion,
                     "analysis": response.content.strip(),
@@ -612,7 +503,11 @@ async def main() -> None:  # 保留原有命令行入口。
     ) as trace:  # 为命令行运行建立根 trace。
         result = await agent.ainvoke(
             {
-                "scope": {"original_question": question, "resolved_question": question},
+                "scope": {
+                    "original_question": question,
+                    "resolved_question": question,
+                    "as_of": datetime.now(timezone.utc).isoformat(),
+                },
                 "findings": [],
             }
         )  # 直接运行父图。
