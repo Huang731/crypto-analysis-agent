@@ -290,6 +290,9 @@ def make_summarize(
 ) -> Callable[[AnalysisState], Awaitable[dict[str, str]]]:  # 创建全部发现的汇总节点。
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
 
+    # 仅本节点关闭深度思考，不修改共享模型的配置。
+    smart_llm = smart_llm.bind(extra_body={"enable_thinking": False})
+
     @timed_node  # 延续原图的节点观测。
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
         with trace_span("topic.summarize") as node_span:
@@ -417,6 +420,9 @@ def make_reviewer(
     smart_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
+
+    # 仅本节点关闭深度思考，不修改共享模型的配置。
+    smart_llm = smart_llm.bind(extra_body={"enable_thinking": False})
 
     @timed_node  # 保留审稿耗时日志。
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。

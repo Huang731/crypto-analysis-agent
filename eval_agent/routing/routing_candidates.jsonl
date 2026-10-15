@@ -74,3 +74,20 @@
 {"case_id":"d106d98f9c2941948bbebd9a4d5d3999","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"72b8b181be244886b204e7a5defe98f7","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"a67c98d88dd64da3b29201c76aceaec6","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"2016d2d7a15544fea1a4f5d55e2e1f40","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"1f7e35c56c224838baac0646ba4d342f","original_question":"长沙房价","input":{"resolved_question":"长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"58423938b3a5471a997d0fd303be7f27","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"04730477cad04d0bb2012df233cff07d","original_question":"分析btc","input":{"resolved_question":"分析比特币（BTC）"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"a047080aafce466993c667c4f216fdcf","original_question":"长沙房价","input":{"resolved_question":"分析长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"70e43c9046754d84b4a6e8c57be760f4","original_question":"长沙天气","input":{"resolved_question":"长沙的天气情况"},"actual_output":{"route":"direct","direct_reply":"你好，有什么可以帮你？"}}
+{"case_id":"20c91e895836445f8bc97e218ea38cc0","original_question":"长沙天气","input":{"resolved_question":"长沙的天气情况"},"actual_output":{"route":"direct","direct_reply":"你好，有什么可以帮你？"}}
+{"case_id":"574c6e24ac9b449ca85fbeb5ea954773","original_question":"长沙天气","input":{"resolved_question":"长沙的天气情况"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
+{"case_id":"c032d7bfce7d4efa966def987ad6fb9f","original_question":"长沙天气","input":{"resolved_question":"长沙天气"},"actual_output":{"route":"direct","direct_reply":"我无法获取实时天气数据。建议您通过手机天气应用或搜索引擎查询长沙当前的天气情况，以获取最准确的信息。"}}
+{"case_id":"45e2a41e36fa46be8c56928ad5b67690","original_question":"长沙天气","input":{"resolved_question":"长沙天气"},"actual_output":{"route":"direct","direct_reply":"抱歉，我无法提供实时天气信息。建议您查看手机天气应用或搜索引擎获取长沙最新天气情况。"}}
+{"case_id":"2664e00fb6154c709660d5d4599b10a1","original_question":"分析eth","input":{"resolved_question":"分析以太坊（ETH）"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"92b34bc79f194a498213d4519694a37d","original_question":"那btc呢","input":{"resolved_question":"分析比特币（BTC）"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"2c6a9359d57249a382464d9243490d97","original_question":"继续","input":{"resolved_question":"继续展开上一轮比特币（BTC）的分析"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"699917145e414a1b95ec2ff3a6b49d32","original_question":"人工智能","input":{"resolved_question":"人工智能"},"actual_output":{"route":"direct","direct_reply":"人工智能（AI）是让机器模拟人类智能的技术，包括学习、推理、感知和决策等能力。常见应用有自然语言处理、计算机视觉、推荐系统等。你想了解哪方面？比如技术原理、应用场景还是发展趋势？"}}
+{"case_id":"ca572371caeb453499011ddbf0e850c5","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"68b7e732aaad42b995958e5cb56512bd","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"direct","direct_reply":"请问您想分析人工智能的哪个方面？例如：AI 行业趋势与竞争格局、代表性公司（如英伟达、微软等）的业务与财报、相关政策法规，还是 AI 概念在加密市场中的行情走势？请补充具体方向或标的。"}}
+{"case_id":"4fba7a71f82c4239a28df757a16e3da5","original_question":"分析人工智能","input":{"resolved_question":"分析人工智能"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}

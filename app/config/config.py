@@ -84,9 +84,9 @@ class Settings(BaseSettings):
     )
 
     # 决策与写作模型，用于规划、汇总、报告和审核。
-    smart_model: str = "glm-5"
+    smart_model: str = "glm-5.1"
     # 执行模型使用百炼 Qwen3.5-Flash。
-    fast_model: str = "qwen3.5-flash"
+    fast_model: str = "qwen3.8-flash"
 
     # 百炼聊天、向量、重排与视觉模型共用环境变量中的 API Key。
     dashscope_api_key: str = Field(
@@ -116,15 +116,15 @@ class Settings(BaseSettings):
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
         "glm-4-flash": {"input": 0.0, "output": 0.0},  # flash 当前免费档
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
-        "qwen3.7-text-rerank": {"input": 0.5, "output": 0.0},
-        "glm-5": {"input": 50.0, "output": 50.0},
-        "qwen3.5-flash": {"input": 0.0, "output": 0.0},
+        "gte-rerank-v2": {"input": 0.5, "output": 0.0},
+        "glm-5.1": {"input": 50.0, "output": 50.0},
+        "qwen3.8-flash": {"input": 0.0, "output": 0.0},
     }
 
     # ── 检索层（阶段 2）───────────────────────────────────────
     retrieve_k: int = 8  # 混合召回条数（rerank 前）
     final_k: int = 2  # 最终送入 prompt 的材料条数
-    rerank_model: str = "qwen3.7-text-rerank"  # 百炼文本重排模型，与向量模型分别配置。
+    rerank_model: str = "gte-rerank-v2"  # 百炼文本重排模型，与向量模型分别配置。
     bm25_weight: float = 0.4  # EnsembleRetriever 权重（与向量检索互补）
     vector_weight: float = 0.6
     enable_multi_query: bool = False  # 多视角问题改写会增加模型调用，默认关闭。
