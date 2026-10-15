@@ -21,7 +21,7 @@ from app.config.config import settings
 from app.observability import get_logger
 
 if TYPE_CHECKING:
-    from playwright.async_api import Browser, Page, Playwright, Route
+    from playwright.async_api import Browser, Page, Playwright
 
 _LOG = get_logger("browser_tool")
 DEFAULT_ALLOWED_DOMAINS = {
@@ -209,15 +209,15 @@ class BrowserContext:
 
 
 class BrowseEvidenceInput(BaseModel):
-    """批量详情页取证参数。"""
+    """详情页取证参数，每次成功读取后立即保存一条原文。"""
 
     query: str = Field(min_length=1, description="研究子问题")
     urls: list[str] = Field(min_length=1, description="搜索结果中的真实详情页链接")
-    max_pages: int = Field(default=3, ge=1, le=6)
+    max_pages: int = Field(default=1, ge=1, le=6, description="每次最多读取一页")
 
 
 def _evidence_command(
-    runtime: ToolRuntime[BrowserContext], evidences: list[Evidence]
+    runtime: ToolRuntime[BrowserContext], evidences: list[Evidence], requested_url: str
 ) -> Command:
     records = {
         f"{runtime.tool_call_id}:{index}": {
@@ -237,6 +237,7 @@ def _evidence_command(
     return Command(
         update={
             "research_evidence": records,
+            "visited_urls": [requested_url],
             "messages": [
                 ToolMessage(
                     content=json.dumps(previews, ensure_ascii=False),
@@ -252,13 +253,13 @@ async def browse_for_evidence(
     query: str,
     urls: list[str],
     runtime: ToolRuntime[BrowserContext],
-    max_pages: int = 3,
+    max_pages: int = 1,
 ) -> Command:
-    """打开候选详情页提取原文，返回带 evidence_id、来源 URL 和访问时间的证据列表。"""
+    """每次打开一个候选详情页，保存带证据 ID、来源 URL 和访问时间的原文。"""
     evidences = await runtime.context.browser.browse_for_evidence(
-        query, urls, max_pages
+        query, urls, min(max_pages, 1)
     )
-    return _evidence_command(runtime, evidences)
+    return _evidence_command(runtime, evidences, urls[0])
 
 
 def build_browser_tools() -> list[BaseTool]:

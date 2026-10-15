@@ -6,6 +6,8 @@ from typing import Annotated, Any  # 声明共享状态字段。
 from langchain.agents import AgentState
 from typing_extensions import TypedDict  # 定义 LangGraph 状态。
 
+RESEARCH_EVIDENCE_TARGET = 3  # 每个子问题需要三个不同网页的原文证据。
+
 
 class SystemState(TypedDict, total=False):  # 主题研究父图的状态。
     scope: dict[str, str]  # 请求追踪信息和固定的分析时间。
@@ -30,9 +32,23 @@ def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any
     return {**left, **right}
 
 
+def _merge_evidence(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    """按实际页面 URL 去重，并行工具结果最多保留三个原文证据。"""
+    records = left.copy()
+    urls = {item["url"] for item in records.values()}
+    for key, item in right.items():
+        if len(records) >= RESEARCH_EVIDENCE_TARGET:
+            break
+        if item["url"] not in urls:
+            records[key] = item
+            urls.add(item["url"])
+    return records
+
+
 class ResearchAgentState(AgentState):
     """每个子问题独立持有搜索记录、网页原文及工具错误。"""
 
     search_records: Annotated[dict[str, dict[str, Any]], _merge_records]
-    research_evidence: Annotated[dict[str, dict[str, Any]], _merge_records]
+    research_evidence: Annotated[dict[str, dict[str, Any]], _merge_evidence]
+    visited_urls: Annotated[list[str], operator.add]
     tool_errors: Annotated[list[dict[str, str]], operator.add]

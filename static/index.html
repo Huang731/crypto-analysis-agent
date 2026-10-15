@@ -96,7 +96,6 @@
     const requestIdsEl = document.getElementById("request-ids");
     const reportEl = document.getElementById("report");
     const findingsEl = document.getElementById("findings");
-    const findingsTitleEl = document.getElementById("findings-title"); // 根据完成类型设置发现列表标题。
     const findingsList = document.getElementById("findings-list");
     const reportStatusEl = document.getElementById("report-status");
     const elapsedTimeEl = document.getElementById("elapsed-time");
@@ -308,7 +307,6 @@
       } else if (name === "done") {
         stopElapsedTime(state);
         state.finished = true;
-        findingsTitleEl.textContent = data.kind === "topic_research" ? "主题研究明细" : "数据来源列表";
         reportEl.classList.remove("blink");
         setReportStatus(data.kind === "direct" ? "已回复" : "分析完成", "complete");
         if (typeof data.report === "string" && data.report) {
@@ -322,7 +320,7 @@
           ? data.skill_results.filter(skill => skill.content).map(skill =>
               `## ${skill.name}${skill.cache_hit ? "（读取记忆）" : ""}\n\n${skill.content}`)
           : [];
-        renderFindings(data.kind === "topic_research" ? data.findings : records);
+        renderFindings(data.kind === "topic_research" ? [] : records);
         // 报告信息放在头部，不再重复追加到执行记录。
         const context = [];
         if (data.target_asset) context.push(data.target_asset);

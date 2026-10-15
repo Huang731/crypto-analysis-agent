@@ -631,7 +631,7 @@ async def evaluate(
                             .ainvoke(
                                 prompt,
                                 config={"callbacks": [judge_counter]},
-                                extra_body={"thinking": {"type": "disabled"}},
+                                extra_body={"enable_thinking": False},
                             ),
                             timeout=300,
                         )

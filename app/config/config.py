@@ -130,8 +130,6 @@ class Settings(BaseSettings):
     enable_multi_query: bool = False  # 多视角问题改写会增加模型调用，默认关闭。
     retrieval_max_concurrency: int = Field(default=3, ge=1)  # 单进程检索并发上限。
 
-    # 每个专题研究子问题的模型决策轮数上限。
-    browser_max_steps: int = 12
     # 单页操作超时（秒）
     browser_page_timeout: int = 15
     # 无头模式（测试/CI 用 True，调试用 False）

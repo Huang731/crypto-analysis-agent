@@ -62,3 +62,14 @@
 {"case_id":"3ad902a852b54e3e91aa2647a7370162","original_question":"长沙放假","input":{"resolved_question":"长沙放假"},"actual_output":{"route":"direct","direct_reply":"你想了解长沙的什么放假信息？是节假日安排、学校放假时间，还是其他具体事项？请补充更多细节，我可以帮你查找相关信息。"}}
 {"case_id":"3e4baa4b9f684b7c91c0b27b041e6443","original_question":"长沙房价","input":{"resolved_question":"长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
 {"case_id":"a8b7ac8c6be54d23a6d93003e18aab9f","original_question":"长沙房价","input":{"resolved_question":"长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"26f75d6fe87f40c49bd00b2d1264f685","original_question":"分析比特币","input":{"resolved_question":"分析比特币"},"actual_output":{"route":"direct","direct_reply":"好的，你想对比特币做哪方面的分析？\n- 价格走势与买卖时机\n- 技术原理或发展历程\n- 应用场景或行业影响\n\n请告诉我你的关注点，我会为你匹配相应的专家。"}}
+{"case_id":"f032e3614d22447a8f582e12dbfc6a77","original_question":"分析比特币","input":{"resolved_question":"分析比特币"},"actual_output":{"route":"direct","direct_reply":"你希望对比特币进行哪方面的分析？比如价格走势、买卖决策，还是技术原理、历史发展、政策影响等？请明确一下，我会为你匹配对应的研究专家。"}}
+{"case_id":"fd984b4ca26244108b58fad2a7f18f73","original_question":"分析比特币的行情","input":{"resolved_question":"分析比特币的行情"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"adcdc80ba5114a7eb9ff74b50cea1d74","original_question":"分析btc","input":{"resolved_question":"分析 BTC"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"96309b41bfcf44fd8392692a5af49bf7","original_question":"我加仓吗","input":{"resolved_question":"我加仓吗"},"actual_output":{"route":"direct","direct_reply":"请问您想对哪个加密资产加仓？例如BTC、ETH或其他币种？"}}
+{"case_id":"e43bf26f562243288e4f9b67dd3ff9a2","original_question":"btc我加仓吗","input":{"resolved_question":"BTC（比特币）我应该加仓吗？"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"d37262e4934640beafda8f52d912bc95","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"65930ad03b624c4d950cbfb7da4704fc","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"2a9de2e13be548d180c4449a3918388a","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"d106d98f9c2941948bbebd9a4d5d3999","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"72b8b181be244886b204e7a5defe98f7","original_question":"长沙的房价","input":{"resolved_question":"长沙的房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
