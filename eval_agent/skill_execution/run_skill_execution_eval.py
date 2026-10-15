@@ -19,7 +19,6 @@ from typing import Any, Literal
 from unittest.mock import patch
 from uuid import NAMESPACE_URL, uuid5
 
-import httpx
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
@@ -40,7 +39,13 @@ from app.crypto_analysis.crypto_analysis_sub_agent import (
 )
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
-from app.llm.model import _make_model
+from app.llm.model import (
+    make_fast_llm,
+    make_model,
+    make_smart_llm,
+    model_error_message,
+    model_session,
+)
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from prompts.crypto_analysis import metric_agent_system_prompt, metric_execution_prompt
 
@@ -383,9 +388,16 @@ async def evaluate_skill(
     skill = inputs.skill
     replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
-    http_client = httpx.AsyncClient(timeout=120)
-    try:
-        llm = _make_model(inputs.metric_agent.model, http_async_client=http_client)
+    async with model_session() as http_client:
+        if inputs.metric_agent.model == settings.fast_model:
+            llm = make_fast_llm(async_client=http_client)
+        elif inputs.metric_agent.model == settings.smart_model:
+            llm = make_smart_llm(async_client=http_client)
+        else:
+            # 历史案例继续使用其明确记录的文本模型，不改写案例标签。
+            llm = make_model(
+                inputs.metric_agent.model, async_client=http_client, protocol="text"
+            )
         with ExitStack() as stack:
             for source, target in SOURCE_TARGETS.items():
                 stack.enter_context(patch(target, new=replay.source_function(source)))
@@ -453,9 +465,7 @@ async def evaluate_skill(
                     duration_ms = (time.perf_counter() - started) * 1000
                     actual, status, error_type = None, "error", type(exc).__name__
                     error_stage = stage
-                    error_message = _log_reason(
-                        str(exc).replace(settings.zhipuai_api_key, "[已隐藏]")
-                    )[:1000]
+                    error_message = _log_reason(model_error_message(exc))[:1000]
                 _, errors, chain_valid = tool_trajectory(replay.agent_state, skill)
                 configured = Counter(
                     (item.source, json.dumps(item.arguments, sort_keys=True))
@@ -498,8 +508,6 @@ async def evaluate_skill(
                     level="DEFAULT" if status == "success" else "ERROR",
                 )
                 return output
-    finally:
-        await http_client.aclose()
 
 
 def values_equal(actual: Any, expected: Any) -> bool:
@@ -821,10 +829,10 @@ def main() -> None:
         parser.error("实验名称不能包含路径")
     if output_path.exists():
         parser.error(f"结果文件已存在，请更换实验名称：{output_path}")
-    if not settings.zhipuai_api_key.strip() or settings.zhipuai_api_key.startswith(
+    if not settings.dashscope_api_key.strip() or settings.dashscope_api_key.startswith(
         "xxxx"
     ):
-        parser.error("未配置 ZHIPUAI_API_KEY")
+        parser.error("未配置 DASHSCOPE_API_KEY")
     if args.system_certificates:
         truststore.inject_into_ssl()
     config = EvalSettings()

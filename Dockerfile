@@ -8,9 +8,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 COPY requirements.txt ./
 
-# 沿用现有依赖配置，智谱 SDK 单独安装以避免 PyJWT 版本冲突。
+# 安装应用依赖与浏览器运行环境，模型调用统一使用百炼 SDK。
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir --no-deps 'zhipuai>=2.0,<3' \
     && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 

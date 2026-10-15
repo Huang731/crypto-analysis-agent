@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-import httpx
 import truststore
 from langchain_core.language_models.chat_models import BaseChatModel
 from langfuse import Evaluation, Langfuse, get_client
@@ -25,7 +24,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     create_analysis_plan,
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
-from app.llm.model import make_smart_llm
+from app.llm.model import make_smart_llm, model_session
 from prompts.crypto_analysis import analysis_plan_prompt
 
 
@@ -258,10 +257,10 @@ def main() -> None:
         parser.error("实验名称不能包含路径")
     if output_path.exists():
         parser.error(f"结果文件已存在，请更换实验名称：{output_path}")
-    if not settings.zhipuai_api_key.strip() or settings.zhipuai_api_key.startswith(
+    if not settings.dashscope_api_key.strip() or settings.dashscope_api_key.startswith(
         "xxxx"
     ):
-        parser.error("未配置 ZHIPUAI_API_KEY")
+        parser.error("未配置 DASHSCOPE_API_KEY")
     if args.system_certificates:
         truststore.inject_into_ssl()
     config = EvalSettings()
@@ -301,8 +300,8 @@ def main() -> None:
     async def task(*, item: DatasetItem) -> dict[str, Any]:
         """每次只调用生产规划函数，模型连接由本项独立持有。"""
         question = PlanningInput.model_validate(item.input)
-        async with httpx.AsyncClient() as transport:
-            llm = make_smart_llm(http_async_client=transport)
+        async with model_session() as transport:
+            llm = make_smart_llm(async_client=transport)
             output = await evaluate_plan(llm, client, question, skill_descriptions)
         rows.append(
             {

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-import httpx
 import truststore
 from langchain_core.language_models.chat_models import BaseChatModel
 from langfuse import Evaluation, Langfuse, get_client
@@ -20,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
-from app.llm.model import make_fast_llm
+from app.llm.model import make_fast_llm, model_session
 from app.orchestration.routing import (
     RouteCallState,
     RouteDecision,
@@ -279,18 +278,8 @@ def main() -> None:
         parser.error("实验名称不能包含路径")
     if output_path.exists():
         parser.error(f"结果文件已存在，请更换实验名称：{output_path}")
-    api_key = (
-        settings.zhipuai_api_key
-        if settings.fast_model_provider == "zhipuai"
-        else settings.dashscope_api_key
-    ).strip()
-    key_name = (
-        "ZHIPUAI_API_KEY"
-        if settings.fast_model_provider == "zhipuai"
-        else "DASHSCOPE_API_KEY"
-    )
-    if not api_key or api_key.startswith("xxxx"):
-        parser.error(f"未配置 {key_name}")
+    if not settings.dashscope_api_key.strip():
+        parser.error("未配置 DASHSCOPE_API_KEY")
     metadata = {
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "prompt_sha256": hashlib.sha256(routing_prompt().encode("utf-8")).hexdigest(),
@@ -313,8 +302,8 @@ def main() -> None:
         """每个实验项仅运行路由，全部明细由本次执行局部持有。"""
         question = RoutingInput.model_validate(item.input)
         # 使用显式独立连接，关闭时不影响 LangChain 缓存的业务客户端。
-        async with httpx.AsyncClient() as transport:
-            llm = make_fast_llm(http_async_client=transport)
+        async with model_session() as transport:
+            llm = make_fast_llm(async_client=transport)
             output = await evaluate_route(llm, client, question)
         rows.append(
             {

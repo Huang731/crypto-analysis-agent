@@ -29,7 +29,6 @@ _NODE_LABELS = {
     "reviewer": "审稿",
     "split": "拆解研究主题",
     "researcher": "并行分析子问题",
-    "calculate_metrics": "计算指标",
     "summarize": "汇总发现",
     "summarize_history": "更新历史摘要",
 }
@@ -92,11 +91,7 @@ class _RoutingStreamState:
             event = self.route(node, "路由 实际分派与计划目标不一致")
             if event is not None:
                 yield event
-        if (
-            not isinstance(delta, dict)
-            or node not in _NODE_LABELS
-            or node == "calculate_metrics"
-        ):
+        if not isinstance(delta, dict) or node not in _NODE_LABELS:
             return
         yield _event("progress", _summarize_update(node, delta))
 
@@ -177,7 +172,7 @@ class RoutingService:
         self._routing_graph = routing_graph
 
     async def stream_ask(
-        self, request: AskRequest, thread_id: str, trace_id: str, scope: dict[str, str]
+        self, request: AskRequest, thread_id: str, scope: dict[str, str]
     ) -> AsyncIterator[dict[str, str]]:
         """依次完成问题改写、图事件转发和最终 SSE 回答。"""
         log_event(_LOG, "routing.start")
@@ -205,7 +200,7 @@ class RoutingService:
 
 def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     """把节点 state delta 摘要成前端可读的进度事件。"""
-    info = {"node": node, "label": _NODE_LABELS.get(node, node)}
+    info = {"node": node, "label": _NODE_LABELS[node]}
     if node == "router":
         info["status"] = (
             "直接回复" if delta["route"] == "direct" else _NODE_LABELS[delta["route"]]

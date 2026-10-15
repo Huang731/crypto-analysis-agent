@@ -26,12 +26,12 @@ warnings.filterwarnings(
     category=DeprecationWarning,
 )
 from langchain_community.docstore.in_memory import InMemoryDocstore
-from langchain_community.embeddings import DashScopeEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.documents import Document
 
 from app.config.config import settings
+from app.llm.model import get_embeddings
 from app.rag.loader import file_md5, list_documents, load_and_split
 from app.tracing import start_trace, trace_generation_call, trace_span
 
@@ -49,16 +49,6 @@ def _ignore_ip_normalize_warning() -> Iterator[None]:
             category=UserWarning,
         )
         yield
-
-
-def get_embeddings() -> DashScopeEmbeddings:
-    """使用 LangChain 的百炼集成，向量维度采用模型默认值。"""
-    if not settings.dashscope_api_key:
-        raise RuntimeError("未配置 DASHSCOPE_API_KEY（.env 或环境变量）")
-    return DashScopeEmbeddings(
-        model=settings.embedding_model,
-        dashscope_api_key=settings.dashscope_api_key,
-    )
 
 
 def get_vectorstore() -> FAISS:
@@ -273,6 +263,7 @@ def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
         except Exception:
             node_span.metadata["status"] = "error"
             raise
+
 
 def _load_pdf_as_documents(path: Path) -> list[Document]:
     """版面感知加载 PDF（doc-intelligence L01）。

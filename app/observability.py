@@ -140,11 +140,6 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
-    """记录带事件名、trace_id 和 thread_id 的业务日志。"""
-    logger.info(event, extra={"event": event, **fields})
-
-
 def timed_node(
     func: Callable | None = None, *, label: Callable[[Any], str] | None = None
 ) -> Callable:

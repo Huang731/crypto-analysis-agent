@@ -1,7 +1,5 @@
 """加密货币分析：请求规划、技能执行、并行汇总及报告生成。"""
 
-import asyncio
-import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,12 +19,6 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
@@ -45,6 +37,11 @@ from app.crypto_analysis.skill_memory import (
     read_skill_memory,
     resolve_memory_key,
 )
+from app.llm.model import (
+    ainvoke_structured,
+    ainvoke_text,
+    with_thinking,
+)
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
@@ -58,34 +55,16 @@ from prompts.crypto_analysis import (
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 @trace_generation_call(name="crypto_history_summary", model=settings.fast_model)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
     # 历史摘要使用执行模型，沿用模型工厂的思考配置。
-    response = await asyncio.wait_for(
-        llm.ainvoke(prompt, config={"tags": ["crypto_history_summary"]}),
-        timeout=120,
-    )
-    if not isinstance(response.content, str):
-        raise TypeError("历史摘要必须是字符串")
-    summary = response.content.strip()
+    summary = await ainvoke_text(llm, prompt)
     if not summary:
         raise ValueError("历史摘要不能为空")
     return summary
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 async def _invoke_structured_output(
     llm: Any,
     schema: type[BaseModel],
@@ -94,8 +73,7 @@ async def _invoke_structured_output(
     model_name: str,
 ) -> BaseModel:
     """函数调用、解析和类型校验整体重试，保留流标记和用量追踪。"""
-    model = llm.with_structured_output(schema, method="function_calling")
-    return await _invoke_structured_model(model, schema, prompt, trace_name, model_name)
+    return await _invoke_structured_model(llm, schema, prompt, trace_name, model_name)
 
 
 @trace_generation_call(
@@ -111,43 +89,24 @@ async def _invoke_structured_model(
     model_name: str,
 ) -> BaseModel:
     """保留模型结果的类型校验，由装饰器记录本次调用用量。"""
-    response = await model.ainvoke(
-        prompt, config={"tags": ["crypto_structured_output"]}
-    )
+    response = await ainvoke_structured(model, prompt, schema=schema)
     if not isinstance(response, schema):
         raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
     return response
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 @trace_generation_call(name="crypto_analysis_writer", model=settings.smart_model)
 async def _invoke_report_text(
     llm: Any,
     prompt: str,
-    config: RunnableConfig,
     stream_writer: StreamWriter,
 ) -> str:
     """流式生成正文，重试时重新开始展示，完成后校验报告。"""
-    stream_writer({"event": "report_start", "node": "writer"})
-    # 显式传递回调配置，让异步模型调用的正文增量进入父图消息流。
-    response = await asyncio.wait_for(
-        llm.ainvoke(
-            prompt,
-            config={
-                **config,
-                "tags": [*config.get("tags", []), "crypto_report_stream"],
-            },
-        ),
-        timeout=120,
+    report = await ainvoke_text(
+        llm,
+        prompt,
+        on_attempt=lambda: stream_writer({"event": "report_start", "node": "writer"}),
     )
-    if not isinstance(response.content, str):
-        raise TypeError("报告正文必须是字符串")
-    report = response.content.strip()
     if not report:
         raise ValueError("报告正文不能为空")
     return report
@@ -196,20 +155,10 @@ class ReportReview(BaseModel):
         return self
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
     """单次审核限定超时，调用、解析或超时异常整体最多尝试两次。"""
-    model = llm.with_structured_output(ReportReview, method="function_calling")
-    result = await asyncio.wait_for(
-        _invoke_structured_model(
-            model, ReportReview, prompt, "crypto_report_review", settings.smart_model
-        ),
-        timeout=120,
+    result = await _invoke_structured_model(
+        llm, ReportReview, prompt, "crypto_report_review", settings.smart_model
     )
     return ReportReview.model_validate(result)
 
@@ -404,9 +353,7 @@ def make_writer(smart_llm: Any) -> Callable[..., Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
     @timed_node
-    async def writer(
-        state: DynamicAnalysisState, config: RunnableConfig, runtime: Runtime
-    ) -> dict[str, Any]:
+    async def writer(state: DynamicAnalysisState, runtime: Runtime) -> dict[str, Any]:
         """依据技能内容与历史摘要撰写结论，报告只包含结论正文。"""
         with trace_span("crypto.writer") as node_span:
             try:
@@ -439,11 +386,10 @@ def make_writer(smart_llm: Any) -> Callable[..., Awaitable[dict[str, Any]]]:
                     previous_report=state["report"],
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = smart_llm.bind(extra_body={"enable_thinking": False})
+                writer_llm = with_thinking(smart_llm, False)
                 report = await _invoke_report_text(
                     writer_llm,
                     prompt,
-                    config,
                     runtime.stream_writer,
                 )
                 return {

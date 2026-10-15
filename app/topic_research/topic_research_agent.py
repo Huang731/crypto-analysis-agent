@@ -10,10 +10,7 @@ from typing import Any  # 标注模型和消息集合。
 
 import httpx
 from langchain.agents import create_agent
-from langchain.agents.middleware import (
-    AgentMiddleware,
-    ModelRetryMiddleware,
-)
+from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
@@ -28,12 +25,17 @@ from langgraph.graph import END, START, StateGraph  # 保留原有父图和子�
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
 from langgraph.types import Command, Send  # 并行分派研究子问题。
 from playwright.async_api import Error as BrowserError
-from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
 from app.config.config import settings  # 读取模型配置用于成本估算。
-from app.llm.model import make_fast_llm, make_smart_llm  # 复用项目现有模型工厂。
-from app.observability import get_logger, log_event, timed_node  # 保留请求观测。
+from app.llm.model import (
+    ainvoke_agent_model,
+    ainvoke_model,
+    make_fast_llm,
+    make_smart_llm,
+    with_thinking,
+)
+from app.observability import timed_node  # 保留节点耗时观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
     AnalysisState,
     ResearchAgentState,
@@ -53,7 +55,6 @@ from prompts.topic_research import (  # 提示词与节点逻辑分离。
     writer_prompt,
 )
 
-_LOG = get_logger("crypto_analysis.crypto_analysis_agent")  # 沿用原有日志名称。
 _NUMBER_PREFIX = re.compile(
     r"^\s*(?:\d+[.)、]\s*|[-*]\s+)"
 )  # 识别模型偶尔生成的行首编号。
@@ -111,17 +112,9 @@ def make_split(
     return split  # 返回可注册到子图的节点。
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
 async def _invoke_model(llm: Any, prompt: str) -> Any:
     """每次调用保留超时，失败最多尝试两次，耗尽后向上报告。"""
-    return await asyncio.wait_for(
-        llm.ainvoke(prompt),
-        timeout=120,
-    )
+    return await ainvoke_model(llm, prompt)
 
 
 @trace_generation_call(
@@ -153,7 +146,7 @@ class ResearchModelTrace(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        return await asyncio.wait_for(handler(request), timeout=60)
+        return await ainvoke_agent_model(lambda: handler(request), timeout=60)
 
     async def awrap_tool_call(
         self,
@@ -199,9 +192,6 @@ def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
         state_schema=ResearchAgentState,
         context_schema=BrowserContext,
         middleware=[
-            ModelRetryMiddleware(
-                max_retries=1, retry_on=(Exception,), on_failure="error"
-            ),
             ResearchModelTrace(),
         ],
         name="topic_evidence_agent",
@@ -256,12 +246,6 @@ def make_researcher(
                     "search_records": searches,
                     "tool_errors": result["tool_errors"],
                 }
-                log_event(
-                    _LOG,
-                    "research.finding.created",
-                    question=subquestion,
-                    evidence_count=len(evidence),
-                )
                 return {"findings": [finding]}
             except Exception:
                 node_span.metadata["status"] = "error"
@@ -291,7 +275,7 @@ def make_summarize(
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    smart_llm = smart_llm.bind(extra_body={"enable_thinking": False})
+    smart_llm = with_thinking(smart_llm, False)
 
     @timed_node  # 延续原图的节点观测。
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
@@ -313,9 +297,6 @@ def make_summarize(
                     or not response.content.strip()
                 ):  # 摘要不能为空。
                     raise ValueError("主题研究汇总为空")  # 阻止空摘要进入写作。
-                log_event(
-                    _LOG, "research.findings.merged", count=len(findings)
-                )  # 记录汇总数量。
                 return {
                     "research_summary": response.content.strip()
                 }  # 把摘要交给父图。
@@ -385,9 +366,7 @@ def make_writer(
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = smart_llm.bind(
-                    extra_body={"enable_thinking": False}
-                )
+                writer_llm = with_thinking(smart_llm, False)
                 response = await _invoke_traced_model(
                     writer_llm, prompt, "topic_writer", settings.smart_model
                 )
@@ -422,7 +401,7 @@ def make_reviewer(
     """审查报告完整性与证据边界，最多要求重写一次。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    smart_llm = smart_llm.bind(extra_body={"enable_thinking": False})
+    smart_llm = with_thinking(smart_llm, False)
 
     @timed_node  # 保留审稿耗时日志。
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。

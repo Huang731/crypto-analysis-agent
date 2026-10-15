@@ -1,6 +1,5 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-import logging
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import uuid4
@@ -11,12 +10,6 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 from typing_extensions import Self, TypedDict
 
 from app.config.config import settings
@@ -24,6 +17,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
 from app.crypto_analysis.skill_memory import merge_skill_memory
+from app.llm.model import ainvoke_model, structured_model
 from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
@@ -61,12 +55,6 @@ class RouteCallState(BaseModel):
     invalid_model_output: bool = False
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 async def decide_route(
     fast: BaseChatModel,
     resolved_question: str,
@@ -74,9 +62,6 @@ async def decide_route(
     call_state: RouteCallState | None = None,
 ) -> RouteDecision:
     """只执行路由，沿用模型工厂的超时和整体最多两次尝试。"""
-    if call_state is not None:
-        call_state.attempt_count += 1
-        call_state.invalid_model_output = False
     messages = [
         SystemMessage(content=routing_prompt()),
         HumanMessage(content=resolved_question),
@@ -97,9 +82,15 @@ async def _invoke_route_decision(
     call_state: RouteCallState | None,
 ) -> RouteDecision:
     """保留原特殊返回分支及无效模型输出的诊断标记。"""
-    decision = await fast.with_structured_output(
-        RouteDecision, method="function_calling"
-    ).ainvoke(messages)
+
+    def record_attempt() -> None:
+        if call_state is not None:
+            call_state.attempt_count += 1
+            call_state.invalid_model_output = False
+
+    decision = await ainvoke_model(
+        structured_model(fast, RouteDecision), messages, on_attempt=record_attempt
+    )
     if not isinstance(decision, RouteDecision):
         if call_state is not None:
             call_state.invalid_model_output = True

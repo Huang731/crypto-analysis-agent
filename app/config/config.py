@@ -1,10 +1,4 @@
-"""运行环境配置；分析规则定义在 skills/ 下各 SKILL.md，用 pydantic-settings 从 .env 读取。
-
-设计原则：
-    - 所有"会变的值"（模型名、并发数、阈值、路径）都不写死在代码里
-    - 通过环境变量覆盖，方便 Docker / 不同环境部署
-    - 一处定义，全项目 import 复用（避免散落的 magic number）
-"""
+"""运行环境配置；模型调用统一使用百炼，分析规则保留在 skills/ 中。"""
 
 from __future__ import annotations
 
@@ -15,59 +9,91 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_HERE = Path(__file__).resolve().parent
-PROJECT_ROOT = _HERE.parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _env_files() -> tuple[str, ...]:
-    """候选 .env 路径：当前工作目录、项目根目录及其上级。
-
-    兼容三种运行方式：
-        - 在项目目录跑（portfolio-projects/research-assistant/）
-        - 在仓库根跑
-        - 测试时从任意目录
-    """
-    # config.py 位于 app/config/；parents[1] 是当前项目根目录。
+    """依次加载工作目录、项目根目录及上级的 .env，后加载的值覆盖先加载的值。"""
     here = Path(__file__).resolve().parent
     candidates = [
-        Path(".env"),  # 当前工作目录
-        # 按原顺序枚举项目根目录及其上级，容器内只取实际存在的父目录层级。
+        Path(".env"),
         *(parent / ".env" for parent in here.parents[1:4]),
     ]
-    return tuple(str(p) for p in candidates)
+    return tuple(str(path) for path in candidates)
 
 
 class Settings(BaseSettings):
-    """应用配置。优先从 .env 读取，缺省值保证开箱即用。"""
+    """操作系统环境变量优先于 .env；未声明的环境配置不参与应用设置。"""
 
     model_config = SettingsConfigDict(
-        env_file=_env_files(),  # 多候选路径，pydantic 取第一个存在的
+        env_file=_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    # ── LLM 模型（多模型路由：L06/L09 的成本优化）──────────────
-    # 默认空串：允许 import 时（.env 还没加载）不崩；运行前由 cli/app 校验非空。
-    zhipuai_api_key: str = Field(default="", description="智谱模型 API Key")
-    model_base_url: str = (
-        "https://dashscope.aliyuncs.com/compatible-mode/v1"  # 百炼 OpenAI 兼容接口。
-    )
-    fast_model_provider: Literal["dashscope", "zhipuai"] = "dashscope"
-    fast_model_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
+    dashscope_api_key: str = Field(default="", description="百炼 API Key")
+    model_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
+    # 每次模型请求的超时秒数；包含首次调用在内的总尝试次数。
+    model_timeout: float = Field(default=120.0, gt=0)
+    model_max_attempts: int = Field(default=2, ge=1)
+
+    # 聊天模型：保留 smart/fast 职责，通过协议字段明确选择原生接口。
+    # smart 用于规划、报告和审核；当前 GLM 使用文本接口。
+    smart_model: str = "glm-5.1"
+    smart_model_protocol: Literal["text", "multimodal"] = "text"
+    # fast 用于改写、路由、指标工具决策和技能表格；当前 Qwen 使用多模态接口。
+    fast_model: str = "qwen3.7-flash-2026-07-15"
+    fast_model_protocol: Literal["text", "multimodal"] = "multimodal"
+
+    # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
+    # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
+    model_price_table: dict[str, dict[str, float]] = {
+        "glm-5.1": {"input": 50.0, "output": 50.0},
+        "qwen3.7-flash-2026-07-15": {"input": 0.0, "output": 0.0},
+        "text-embedding-v4": {"input": 0.5, "output": 0.0},
+        "gte-rerank-v2": {"input": 0.5, "output": 0.0},
+        "glm-4.5-air": {"input": 50.0, "output": 50.0},
+        "glm-4-flash": {"input": 0.0, "output": 0.0},
+    }
+
+    # 文档入库：源文档目录、切片长度与重叠字符数。
     docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
-    # 会话状态数据库，可通过 CHECKPOINT_DB_PATH 环境变量覆盖。
+    chunk_size: int = Field(default=1000, gt=0)
+    chunk_overlap: int = Field(default=150, ge=0)
+    table_format: Literal["markdown", "html"] = "markdown"
+    # 图片描述与图像问答使用多模态原生接口；统一沿用模型超时与重试配置。
+    vision_model: str = "qwen3.5-ocr"
+
+    # 向量索引：维度必须与模型默认输出一致；更换向量模型后需重新入库。
+    embedding_model: str = "text-embedding-v4"
+    embedding_dimensions: int = Field(default=1024, gt=0)
+    embed_batch_size: int = Field(default=10, ge=1, le=10)
+    faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "text-embedding-v4-1024")
+
+    # 混合检索：先融合 BM25 与向量召回结果，再由重排模型选出最终材料。
+    retrieve_k: int = 8
+    final_k: int = 2
+    bm25_weight: float = 0.4
+    vector_weight: float = 0.6
+    rerank_model: str = "gte-rerank-v2"
+    # 多查询会增加改写调用；并发上限约束单个共享检索实例的正在执行任务。
+    enable_multi_query: bool = False
+    retrieval_max_concurrency: int = Field(default=3, ge=1)
+
+    # 技能定义与会话持久化：分析规则来自 Skill，会话状态保存到 SQLite。
+    skills_dir: str = str(PROJECT_ROOT / "skills")
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
-    # 路由候选采集单独开关，记录实际输出，不作为评测正确答案。
+
+    # 评测候选采集：保存实际输入输出供人工标注，不直接作为标准答案。
     routing_capture_enabled: bool = False
     routing_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "routing" / "routing_candidates.jsonl"
     )
-    # 规划候选采集独立于路由，默认记录正常请求中的实际计划。
     planning_capture_enabled: bool = True
     planning_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "planning" / "planning_candidates.jsonl"
     )
-    # 两类 Skill 候选独立采集，实际结果需人工确认后才能作为评测预期。
     skill_execution_capture_enabled: bool = True
     skill_execution_capture_path: str = str(
         PROJECT_ROOT
@@ -83,66 +109,16 @@ class Settings(BaseSettings):
         / "skill_generation_candidates.jsonl"
     )
 
-    # 决策与写作模型，用于规划、汇总、报告和审核。
-    smart_model: str = "glm-5.1"
-    # 执行模型使用支持工具调用的百炼 Qwen3.8-Flash。
-    fast_model: str = "qwen3.7-flash-2026-07-15"
-
-    # 百炼聊天、向量、重排与视觉模型共用环境变量中的 API Key。
-    dashscope_api_key: str = Field(
-        default="",
-        description="百炼聊天、向量、重排与视觉模型 API Key",
-    )
-    embedding_model: str = "text-embedding-v4"
-    # 仅配置 FAISS 索引维度，不传给 SDK；必须与模型默认输出维度一致。
-    embedding_dimensions: int = Field(default=1024, gt=0)
-    # 更换模型后使用新目录重新入库，避免混用旧模型的向量。
-    faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "text-embedding-v4-1024")
-    chunk_size: int = Field(default=1000, gt=0)
-    chunk_overlap: int = Field(default=150, ge=0)
-    embed_batch_size: int = Field(default=10, ge=1, le=10)
-
-    # PDF 表格表示与图片理解，可通过环境变量覆盖。
-    table_format: Literal["markdown", "html"] = "markdown"
-    vision_model: str = "qwen3.5-ocr"
-    vision_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    vision_timeout: float = Field(default=120.0, gt=0)
-    vision_max_retries: int = Field(default=2, ge=1)
-
-    # 分析规范、指标和权重定义在各自 SKILL.md 中。
-    skills_dir: str = str(PROJECT_ROOT / "skills")
-
-    model_price_table: dict[str, dict[str, float]] = {
-        "glm-4.5-air": {"input": 50.0, "output": 50.0},
-        "glm-4-flash": {"input": 0.0, "output": 0.0},  # flash 当前免费档
-        "text-embedding-v4": {"input": 0.5, "output": 0.0},
-        "gte-rerank-v2": {"input": 0.5, "output": 0.0},
-        "glm-5.1": {"input": 50.0, "output": 50.0},
-        "qwen3.7-flash-2026-07-15": {"input": 0.0, "output": 0.0},
-    }
-
-    # ── 检索层（阶段 2）───────────────────────────────────────
-    retrieve_k: int = 8  # 混合召回条数（rerank 前）
-    final_k: int = 2  # 最终送入 prompt 的材料条数
-    rerank_model: str = "gte-rerank-v2"  # 百炼文本重排模型，与向量模型分别配置。
-    bm25_weight: float = 0.4  # EnsembleRetriever 权重（与向量检索互补）
-    vector_weight: float = 0.6
-    enable_multi_query: bool = False  # 多视角问题改写会增加模型调用，默认关闭。
-    retrieval_max_concurrency: int = Field(default=3, ge=1)  # 单进程检索并发上限。
-
-    # 单页操作超时（秒）
+    # 浏览器取证：单页超时单位为秒，域名白名单为空时沿用默认访问规则。
     browser_page_timeout: int = 15
-    # 无头模式（测试/CI 用 True，调试用 False）
     browser_headless: bool = True
-    # 固定域名白名单，逗号分隔；空值允许默认域名及实际搜索结果中的域名。
     browser_domain_allowlist: str = ""
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """单例配置。lru_cache 保证全进程只读一次 .env。"""
+    """每个进程只加载一次配置。"""
     return Settings()  # type: ignore[call-arg]
 
 
-# 便捷别名，全项目用 `from .config import settings`
 settings = get_settings()

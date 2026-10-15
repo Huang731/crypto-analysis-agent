@@ -18,33 +18,12 @@ import hashlib
 import json
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
 from app.config.config import settings
+from app.llm.model import invoke_vision
 from prompts.rag_vision import answer_with_image_prompt, describe_image_prompt
 
 # 描述缓存目录（落盘，按图片哈希去重）
 _CACHE_DIR = Path(settings.docs_dir).parent / "vision_cache"
-
-
-def _make_vision_model() -> ChatOpenAI:
-    """通过百炼兼容接口创建视觉模型，设置超时与 SDK 重试。"""
-    api_key = settings.dashscope_api_key.strip()
-    if not api_key:
-        raise ValueError("未配置 DASHSCOPE_API_KEY")
-    base_url = settings.vision_base_url.strip()
-    if not base_url:
-        raise ValueError("未配置 VISION_BASE_URL")
-    return ChatOpenAI(
-        model=settings.vision_model,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=0.1,
-        timeout=settings.vision_timeout,
-        max_retries=settings.vision_max_retries,
-        max_tokens=4096,
-        use_responses_api=False,
-    )
 
 
 def _image_hash(image_bytes: bytes) -> str:
@@ -103,8 +82,7 @@ def _call_vlm_describe(image_bytes: bytes) -> str:
     b64 = base64.b64encode(image_bytes).decode()
     data_url = f"data:image/png;base64,{b64}"
 
-    vlm = _make_vision_model()
-    resp = vlm.invoke(
+    resp = invoke_vision(
         [
             {
                 "role": "user",
@@ -143,8 +121,7 @@ def answer_with_image(
     b64 = base64.b64encode(image_bytes).decode()
     data_url = f"data:image/png;base64,{b64}"
 
-    vlm = _make_vision_model()
-    resp = vlm.invoke(
+    resp = invoke_vision(
         [
             {
                 "role": "user",

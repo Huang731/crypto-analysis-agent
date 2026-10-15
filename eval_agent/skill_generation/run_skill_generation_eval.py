@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
 
-import httpx
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
 from langfuse import Evaluation, Langfuse
@@ -20,7 +19,14 @@ from app.config.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_sub_agent import generate_skill
 from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
-from app.llm.model import _make_model
+from app.llm.model import (
+    ainvoke_structured,
+    make_fast_llm,
+    make_smart_llm,
+    model_error_message,
+    model_session,
+    with_thinking,
+)
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from eval_agent.skill_execution.run_skill_execution_eval import (
     SkillExecutionResult,
@@ -402,14 +408,13 @@ async def evaluate(
     }
     try:
         async with AsyncExitStack() as stack:
-            generation_http = await stack.enter_async_context(
-                httpx.AsyncClient(timeout=120)
+            generation_http = await stack.enter_async_context(model_session())
+            judge_http = await stack.enter_async_context(model_session())
+            generator = make_fast_llm(async_client=generation_http)
+            judge_factory = (
+                make_fast_llm if judge_model == settings.fast_model else make_smart_llm
             )
-            judge_http = await stack.enter_async_context(httpx.AsyncClient(timeout=120))
-            generator = _make_model(
-                settings.fast_model, http_async_client=generation_http
-            )
-            judge = _make_model(judge_model, http_async_client=judge_http)
+            judge = judge_factory(async_client=judge_http)
             loader = SkillLoader.from_snapshot({inputs.skill_name: inputs.skill_source})
             skill = loader.load_definition(inputs.skill_name)
             result = inputs.result.model_dump()
@@ -623,14 +628,11 @@ async def evaluate(
                         input=prompt,
                     ) as judge_observation:
                         judgment = await asyncio.wait_for(
-                            judge.with_structured_output(
-                                GroundedJudgment, method="json_mode"
-                            )
-                            .with_retry(stop_after_attempt=2)
-                            .ainvoke(
+                            ainvoke_structured(
+                                with_thinking(judge, False),
                                 prompt,
-                                config={"callbacks": [judge_counter]},
-                                extra_body={"enable_thinking": False},
+                                schema=GroundedJudgment,
+                                callbacks=[judge_counter],
                             ),
                             timeout=300,
                         )
@@ -731,7 +733,7 @@ async def evaluate(
             )
         if active_stage == "judge":
             output["judge_raw_response"] = judge_counter.last_response
-        message = str(exc).replace(settings.zhipuai_api_key, "[已隐藏]")
+        message = model_error_message(exc)
         output["error_message"] = _log_reason(message)[:400]
         print(
             json.dumps(

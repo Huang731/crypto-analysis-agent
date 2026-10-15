@@ -1,7 +1,5 @@
 """加密资产技能执行子图：缓存、指标循环、内容生成及结果收尾。"""
 
-import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -19,12 +17,6 @@ from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from tenacity import (
-    before_sleep_log,
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
@@ -39,6 +31,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
+from app.llm.model import ainvoke_text, ainvoke_tools, with_tools
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
@@ -281,12 +274,7 @@ async def generate_skill(
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
-    response = await llm.with_retry(stop_after_attempt=2).ainvoke(
-        prompt, config={"tags": ["crypto_skill_output"]}
-    )
-    if not isinstance(response.content, str):
-        raise TypeError("技能内容必须是字符串")
-    content = response.content.strip()
+    content = await ainvoke_text(llm, prompt)
     if not content:
         raise ValueError("技能内容不能为空")
     return content
@@ -331,12 +319,6 @@ def skill_worker_step_limit(metric_count: int) -> int:
 # 技能执行子图
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    before_sleep=before_sleep_log(_LOG, logging.WARNING),
-    reraise=True,
-)
 @trace_generation_call(
     name="crypto_metric_decision",
     model=settings.fast_model,
@@ -344,11 +326,9 @@ def skill_worker_step_limit(metric_count: int) -> int:
     input_format="messages",
     output_format="json",
 )
-async def _invoke_metric_decision(
-    llm: Any, messages: list[BaseMessage], config: RunnableConfig
-) -> AIMessage:
+async def _invoke_metric_decision(llm: Any, messages: list[BaseMessage]) -> AIMessage:
     """直接调用指标决策模型，仅对模型调用和返回类型校验进行重试。"""
-    response = await asyncio.wait_for(llm.ainvoke(messages, config=config), timeout=120)
+    response = await ainvoke_tools(llm, messages)
     if not isinstance(response, AIMessage):
         raise TypeError("指标决策模型未返回 AIMessage")
     if response.invalid_tool_calls:
@@ -436,12 +416,11 @@ def make_calculate_metrics(fast_llm: Any) -> Callable[..., Awaitable[list[Any]]]
                 registry = get_tool_registry()
                 tools = [registry[name] for name in state["skill"].tools]
                 response = await _invoke_metric_decision(
-                    fast_llm.bind_tools(tools),
+                    with_tools(fast_llm, tools),
                     [
                         SystemMessage(content=metric_agent_system_prompt()),
                         *state["messages"],
                     ],
-                    config,
                 )
                 updates: list[Any] = [Command(update={"messages": [response]})]
                 if response.tool_calls:

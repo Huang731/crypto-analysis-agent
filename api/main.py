@@ -11,6 +11,8 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated
 
+from aiohttp import ClientSession
+
 if __package__ in (None, ""):
     # 以 `python api/main.py` 直接运行时，sys.path[0] 是 api/ 而非项目根目录。
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -25,11 +27,10 @@ from sse_starlette.sse import EventSourceResponse
 from api.schemas import AskRequest
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
-from app.llm.model import make_fast_llm, make_smart_llm
+from app.llm.model import make_fast_llm, make_smart_llm, model_session
 from app.observability import (
     bind_request_context,
     get_logger,
-    log_event,
     new_trace_id,
     reset_request_context,
 )
@@ -52,10 +53,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        async with AsyncSqliteSaver.from_conn_string(
-            str(checkpoint_path)
-        ) as checkpointer:
-            app.state.routing_service = _build_routing_service(retriever, checkpointer)
+        async with (
+            model_session() as client,
+            AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer,
+        ):
+            app.state.routing_service = _build_routing_service(
+                retriever, checkpointer, client
+            )
             yield
     finally:
         await retriever.aclose()
@@ -94,10 +98,13 @@ def _elapsed_ms(started: float) -> int:
 
 
 def _build_routing_service(
-    retriever: KBRetriever, checkpointer: BaseCheckpointSaver
+    retriever: KBRetriever,
+    checkpointer: BaseCheckpointSaver,
+    client: ClientSession,
 ) -> RoutingService:
     """构建共享检索器和会话存储的路由图，由应用生命周期持有。"""
-    smart, fast = make_smart_llm(), make_fast_llm()
+    smart = make_smart_llm(async_client=client)
+    fast = make_fast_llm(async_client=client)
     graph = build_routing_graph(smart, fast, retriever, checkpointer=checkpointer)
     return RoutingService(graph)
 
@@ -161,12 +168,10 @@ async def ask(
             _request_context(trace_id, thread_id),
         ):
             started = time.perf_counter()
-            log_event(_LOG, "request.start", question_chars=len(req.question))
             try:
-                async for item in service.stream_ask(req, thread_id, trace_id, scope):
+                async for item in service.stream_ask(req, thread_id, scope):
                     # 客户端断开后立即停止，避免继续消耗 LLM 调用。
                     if await request.is_disconnected():
-                        log_event(_LOG, "request.disconnected")
                         trace.output = {"status": "disconnected"}
                         return
                     if item.get("event") == "done":
@@ -177,7 +182,6 @@ async def ask(
                             "report_chars": len(payload.get("report", "")),
                         }
                     yield item
-                log_event(_LOG, "request.done", duration_ms=_elapsed_ms(started))
                 if trace.output is None:
                     trace.output = {"status": "done"}
             except Exception as exc:  # noqa: BLE001 - SSE 已开始推送，任何异常都必须转成 error 事件返回给前端。

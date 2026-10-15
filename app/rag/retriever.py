@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-from http import HTTPStatus
 from typing import Any
 
 import jieba
-from dashscope import TextReRank
 from langchain_classic.retrievers.ensemble import EnsembleRetriever
 from langchain_classic.retrievers.multi_query import MultiQueryRetriever
 from langchain_community.retrievers import BM25Retriever
@@ -14,7 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from app.config.config import settings
-from app.llm.model import make_fast_llm
+from app.llm.model import make_fast_llm, rerank
 from app.rag.ingest import get_vectorstore
 from app.tracing import trace_generation_call, trace_span
 
@@ -63,7 +61,7 @@ def build_hybrid_retriever() -> BaseRetriever:
             if settings.enable_multi_query:
                 return MultiQueryRetriever.from_llm(
                     retriever=hybrid,
-                    llm=make_fast_llm().with_retry(stop_after_attempt=2),
+                    llm=make_fast_llm(),
                 )
             return hybrid
         except Exception:
@@ -80,17 +78,11 @@ def build_hybrid_retriever() -> BaseRetriever:
 )
 def _call_rerank(query: str, docs: list[Document], *, generation: Any) -> Any:
     """保留重排返回值检查，用量直接采用接口返回的总输入 token。"""
-    resp = TextReRank.call(
-        api_key=settings.dashscope_api_key,
-        model=settings.rerank_model,
-        query=query,
-        documents=[doc.page_content for doc in docs],
-        top_n=len(docs),
-        return_documents=False,
-    )
-    if resp.status_code != HTTPStatus.OK:
+    try:
+        resp = rerank(query, [doc.page_content for doc in docs])
+    except Exception:
         generation.metadata["status"] = "error"
-        raise RuntimeError(f"百炼重排失败：{resp.code}，{resp.message}")
+        raise
     generation.output = {"result_count": len(resp.output.results)}
     return resp
 

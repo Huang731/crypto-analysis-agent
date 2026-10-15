@@ -4,7 +4,8 @@ from langchain_core.language_models.chat_models import BaseChatModel  # 标注�
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.config.config import settings
-from app.observability import get_logger, log_event
+from app.llm.model import ainvoke_text
+from app.observability import get_logger
 from app.tracing import trace_generation_call
 from prompts.query_rewriter import query_rewriter_prompt
 
@@ -31,13 +32,6 @@ async def rewrite_question(
         )
         raise
 
-    log_event(
-        _LOG,
-        "query.rewrite.done",
-        original=question,
-        previous_question=previous_question,
-        rewritten=rewritten,
-    )
     return rewritten
 
 
@@ -51,10 +45,7 @@ async def _rewrite_messages(
     llm: BaseChatModel, messages: list[SystemMessage | HumanMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    response = await llm.with_retry(stop_after_attempt=2).ainvoke(messages)
-    if not isinstance(response.content, str):
-        raise TypeError("问题改写模型未返回文本内容")
-    rewritten = response.content.strip()
+    rewritten = await ainvoke_text(llm, messages)
     if not rewritten:
         raise ValueError("问题改写模型返回了空文本")
     return rewritten
