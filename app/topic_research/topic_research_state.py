@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from langchain.agents import AgentState
 from typing_extensions import TypedDict
 
-RESEARCH_EVIDENCE_TARGET = 1  # 每个子问题取得一条网页原文证据后结束取证。
+RESEARCH_EVIDENCE_TARGET = 2  # 每个子问题取得一条网页原文证据后结束取证。
 
 
 class SystemState(TypedDict, total=False):

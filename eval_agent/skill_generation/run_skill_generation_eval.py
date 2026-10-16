@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.messages import convert_to_openai_messages
 from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -33,7 +34,7 @@ from eval_agent.skill_execution.run_skill_execution_eval import (
     values_equal,
 )
 from prompts.crypto_analysis import skill_output_messages
-from prompts.skill_generation_eval import skill_generation_judge_prompt
+from prompts.skill_generation_eval import skill_generation_judge_messages
 
 
 class DocumentEvidence(BaseModel):
@@ -618,7 +619,7 @@ async def evaluate(
                             )
                         },
                     }
-                    prompt = skill_generation_judge_prompt(
+                    judge_messages = skill_generation_judge_messages(
                         inputs.user_input,
                         response,
                         contexts,
@@ -640,7 +641,7 @@ async def evaluate(
                         """只重试裁判请求与结构化校验，保留整体超时。"""
                         return await ainvoke_structured(
                             judge.bind(enable_thinking=False),
-                            prompt,
+                            judge_messages,
                             schema=GroundedJudgment,
                         )
 
@@ -648,7 +649,7 @@ async def evaluate(
                         as_type="generation",
                         name="skill_generation.judge",
                         model=judge_model,
-                        input=prompt,
+                        input=convert_to_openai_messages(judge_messages),
                     ) as judge_observation:
                         judgment = await asyncio.wait_for(
                             invoke_judge(),
