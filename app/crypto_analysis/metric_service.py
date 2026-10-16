@@ -352,7 +352,6 @@ async def _execute_metrics(
     indicator_evidence_ids: dict[str, str] = {}
     for job, record in zip(jobs, fetched, strict=True):
         evidence_id = f"{runtime.tool_call_id}:{job.data_kind}"
-        evidence[evidence_id] = record
         for metric_id, calculator in job.calculators.items():
             results[metric_id] = _compute_metric(
                 runtime,
@@ -362,6 +361,26 @@ async def _execute_metrics(
                 calculator,
             )
             indicator_evidence_ids[metric_id] = evidence_id
+
+        # 所有共用数据的指标计算完成后，返回证据只移除 K 线明细。
+        # 使用副本，保留计算输入及 OI、Funding 等其他原始证据。
+        if record["status"] == "ok":
+            raw = record["raw"]
+            if job.data_kind in {"trend", "dxy"}:
+                raw = {key: value for key, value in raw.items() if key != "payload"}
+            elif job.data_kind == "derivatives" and isinstance(
+                raw.get("payload"), dict
+            ):
+                raw = {
+                    **raw,
+                    "payload": {
+                        key: value
+                        for key, value in raw["payload"].items()
+                        if key != "klines"
+                    },
+                }
+            record = {**record, "raw": raw}
+        evidence[evidence_id] = record
 
     summaries = [
         {
