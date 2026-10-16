@@ -164,6 +164,7 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
     },
     generation_arg="generation",
     unit="TOKENS",
+    kind="generation",
 )
 def _embed_batch(
     vs: FAISS,

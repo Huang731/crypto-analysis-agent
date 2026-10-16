@@ -75,6 +75,7 @@ def build_hybrid_retriever() -> BaseRetriever:
     usage_attr="usage.total_tokens",
     metadata=lambda arguments: {"candidate_count": len(arguments.arguments["docs"])},
     generation_arg="generation",
+    kind="generation",
 )
 def _call_rerank(query: str, docs: list[Document], *, generation: Any) -> Any:
     """保留重排返回值检查，用量直接采用接口返回的总输入 token。"""

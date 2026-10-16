@@ -41,7 +41,6 @@ from app.topic_research.topic_research_state import (  # 使用主题研究专�
 from app.tracing import (  # 记录请求与模型调用。
     start_trace,
     trace_generation_call,
-    trace_span,
 )
 from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
@@ -79,32 +78,28 @@ def make_split(
     """把用户主题拆成三个可独立分析的子问题。"""
 
     @timed_node  # 沿用现有节点耗时和失败日志。
+    @trace_generation_call(name="topic.split", kind="span")
     async def split(state: AnalysisState) -> dict[str, list[str]]:  # 返回并行研究任务。
-        with trace_span("topic.split") as node_span:
-            try:
-                prompt = split_prompt(state["question"])  # 提供原始研究主题。
-                response = await _invoke_traced_model(
-                    glm_4_flash_llm, prompt, "topic_split", settings.glm_4_flash_model
-                )
-                if not isinstance(response.content, str):  # 消息内容必须是文本。
-                    raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
-                subquestions = [  # 按行读取研究任务。
-                    _NUMBER_PREFIX.sub("", line).strip()  # 只清理编号和空白。
-                    for line in response.content.splitlines()  # 遍历模型返回的每一行。
-                    if line.strip()  # 忽略纯空白行。
-                ]  # 完成子问题列表。
-                if (
-                    len(subquestions) != _SUBQUESTION_COUNT
-                    or len(set(subquestions)) != _SUBQUESTION_COUNT
-                    or any(not item for item in subquestions)
-                ):  # 要求恰好三个不同的问题。
-                    raise ValueError(
-                        "主题拆解必须返回三个非空且不同的子问题"
-                    )  # 拒绝缺漏或重复任务。
-                return {"subquestions": subquestions}  # 交给 Send 并行分派。
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        prompt = split_prompt(state["question"])  # 提供原始研究主题。
+        response = await _invoke_traced_model(
+            glm_4_flash_llm, prompt, "topic_split", settings.glm_4_flash_model
+        )
+        if not isinstance(response.content, str):  # 消息内容必须是文本。
+            raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
+        subquestions = [  # 按行读取研究任务。
+            _NUMBER_PREFIX.sub("", line).strip()  # 只清理编号和空白。
+            for line in response.content.splitlines()  # 遍历模型返回的每一行。
+            if line.strip()  # 忽略纯空白行。
+        ]  # 完成子问题列表。
+        if (
+            len(subquestions) != _SUBQUESTION_COUNT
+            or len(set(subquestions)) != _SUBQUESTION_COUNT
+            or any(not item for item in subquestions)
+        ):  # 要求恰好三个不同的问题。
+            raise ValueError(
+                "主题拆解必须返回三个非空且不同的子问题"
+            )  # 拒绝缺漏或重复任务。
+        return {"subquestions": subquestions}  # 交给 Send 并行分派。
 
     return split  # 返回可注册到子图的节点。
 
@@ -119,6 +114,7 @@ async def _invoke_model(llm: Any, prompt: str) -> Any:
     model=lambda arguments: arguments.arguments["model_name"],
     output_attr="content",
     skip_non_text_output=True,
+    kind="generation",
 )
 async def _invoke_traced_model(
     llm: Any, prompt: str, trace_name: str, model_name: str
@@ -137,6 +133,7 @@ class ResearchModelTrace(AgentMiddleware):
         input_format="model_request",
         output_attr="result",
         output_format="messages",
+        kind="generation",
     )
     async def awrap_model_call(
         self,
@@ -197,51 +194,47 @@ def make_researcher(
     research_agent = build_research_agent(glm_4_flash_llm)
 
     @timed_node
+    @trace_generation_call(name="topic.researcher", kind="span")
     async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
-        with trace_span("topic.researcher") as node_span:
-            try:
-                subquestion = state["subquestion"]
-                prompt = research_prompt(
-                    state["question"], subquestion, as_of=state["scope"]["as_of"]
-                )
-                async with BrowserTool() as browser:
-                    result = await research_agent.ainvoke(
-                        {
-                            "messages": [HumanMessage(content=prompt)],
-                            "search_records": {},
-                            "research_evidence": {},
-                            "tool_errors": [],
-                        },
-                        context=BrowserContext(browser=browser),
-                    )
-                response = result["messages"][-1]
-                if (
-                    not isinstance(response, AIMessage)
-                    or not isinstance(response.content, str)
-                    or not response.content.strip()
-                ):
-                    raise ValueError(f"研究子问题未返回有效内容：{subquestion}")
-                evidence = list(result["research_evidence"].values())
-                searches = list(result["search_records"].values())
-                verification = (
-                    "已提取网页原文"
-                    if evidence
-                    else "仅有搜索摘要，未提取原文"
-                    if searches
-                    else "未取得外部证据"
-                )
-                finding = {
-                    "question": subquestion,
-                    "analysis": response.content.strip(),
-                    "verification": verification,
-                    "evidence": evidence,
-                    "search_records": searches,
-                    "tool_errors": result["tool_errors"],
-                }
-                return {"findings": [finding]}
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        subquestion = state["subquestion"]
+        prompt = research_prompt(
+            state["question"], subquestion, as_of=state["scope"]["as_of"]
+        )
+        async with BrowserTool() as browser:
+            result = await research_agent.ainvoke(
+                {
+                    "messages": [HumanMessage(content=prompt)],
+                    "search_records": {},
+                    "research_evidence": {},
+                    "tool_errors": [],
+                },
+                context=BrowserContext(browser=browser),
+            )
+        response = result["messages"][-1]
+        if (
+            not isinstance(response, AIMessage)
+            or not isinstance(response.content, str)
+            or not response.content.strip()
+        ):
+            raise ValueError(f"研究子问题未返回有效内容：{subquestion}")
+        evidence = list(result["research_evidence"].values())
+        searches = list(result["search_records"].values())
+        verification = (
+            "已提取网页原文"
+            if evidence
+            else "仅有搜索摘要，未提取原文"
+            if searches
+            else "未取得外部证据"
+        )
+        finding = {
+            "question": subquestion,
+            "analysis": response.content.strip(),
+            "verification": verification,
+            "evidence": evidence,
+            "search_records": searches,
+            "tool_errors": result["tool_errors"],
+        }
+        return {"findings": [finding]}
 
     return researcher
 
@@ -274,34 +267,25 @@ def make_summarize(
     )
 
     @timed_node  # 延续原图的节点观测。
+    @trace_generation_call(name="topic.summarize", kind="span")
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
-        with trace_span("topic.summarize") as node_span:
-            try:
-                findings = state["findings"]  # 读取 reducer 合并的所有发现。
-                if len(findings) != _SUBQUESTION_COUNT:  # 缺少并行结果时停止。
-                    raise ValueError(
-                        "主题研究发现数量不完整"
-                    )  # 不用部分结果伪装完整研究。
-                prompt = summarize_prompt(
-                    json.dumps(findings, ensure_ascii=False)
-                )  # 提供全部并行结果。
-                response = await _invoke_traced_model(
-                    glm_smart_llm,
-                    prompt,
-                    "topic_summarize",
-                    settings.glm_smart_model,
-                )
-                if (
-                    not isinstance(response.content, str)
-                    or not response.content.strip()
-                ):  # 摘要不能为空。
-                    raise ValueError("主题研究汇总为空")  # 阻止空摘要进入写作。
-                return {
-                    "research_summary": response.content.strip()
-                }  # 把摘要交给父图。
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        findings = state["findings"]  # 读取 reducer 合并的所有发现。
+        if len(findings) != _SUBQUESTION_COUNT:  # 缺少并行结果时停止。
+            raise ValueError("主题研究发现数量不完整")  # 不用部分结果伪装完整研究。
+        prompt = summarize_prompt(
+            json.dumps(findings, ensure_ascii=False)
+        )  # 提供全部并行结果。
+        response = await _invoke_traced_model(
+            glm_smart_llm,
+            prompt,
+            "topic_summarize",
+            settings.glm_smart_model,
+        )
+        if (
+            not isinstance(response.content, str) or not response.content.strip()
+        ):  # 摘要不能为空。
+            raise ValueError("主题研究汇总为空")  # 阻止空摘要进入写作。
+        return {"research_summary": response.content.strip()}  # 把摘要交给父图。
 
     return summarize  # 返回汇总节点。
 
@@ -327,22 +311,22 @@ def make_research_team(
 ]:  # 保留原有父图对子图的调用边界。
     """从本轮请求范围取得主题，并把子图结果回写父图。"""
 
+    @trace_generation_call(name="topic.research_subgraph", kind="span")
+    async def invoke_subgraph(state: AnalysisState) -> dict[str, Any]:
+        """记录子图执行过程，模型用量由子图内部的调用记录。"""
+        return await sub_graph.ainvoke(state)
+
     @timed_node  # 记录并行研究整体耗时。
+    @trace_generation_call(name="topic.research_team", kind="span")
     async def research_team(state: SystemState) -> dict[str, Any]:  # 返回摘要和发现。
-        with trace_span("topic.research_team") as node_span:
-            try:
-                question = _latest_question(state["scope"])
-                with trace_span("topic.research_subgraph"):
-                    result = await sub_graph.ainvoke(
-                        {"question": question, "findings": [], "scope": state["scope"]}
-                    )  # 运行拆题并行汇总子图。
-                return {
-                    "findings": result["findings"],
-                    "research_summary": result["research_summary"],
-                }  # 回流父图。
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        question = _latest_question(state["scope"])
+        result = await invoke_subgraph(
+            {"question": question, "findings": [], "scope": state["scope"]}
+        )  # 运行拆题并行汇总子图。
+        return {
+            "findings": result["findings"],
+            "research_summary": result["research_summary"],
+        }  # 回流父图。
 
     return research_team  # 返回父图节点。
 
@@ -353,47 +337,38 @@ def make_writer(
     """依据研究摘要写报告，并处理审稿意见。"""
 
     @timed_node  # 保留原有写作节点观测。
+    @trace_generation_call(name="topic.writer", kind="span")
     async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告正文。
-        with trace_span("topic.writer") as node_span:
-            try:
-                question = _latest_question(state["scope"])
-                feedback = state.get("feedback", "")  # 重写时读取审稿意见。
-                prompt = writer_prompt(
-                    question,
-                    state["research_summary"],
-                    feedback,
-                    json.dumps(state["findings"], ensure_ascii=False),
-                )  # 首轮反馈为空，重写时提供具体意见。
-                # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = glm_smart_llm.bind(
-                    extra_body={
-                        "thinking": {"type": "disabled"},
-                    }
-                )
-                response = await _invoke_traced_model(
-                    writer_llm, prompt, "topic_writer", settings.glm_smart_model
-                )
-                if (
-                    not isinstance(response.content, str)
-                    or not response.content.strip()
-                ):  # 报告必须有正文。
-                    raise ValueError("主题研究报告为空")  # 不返回空报告。
-                evidence_count = sum(
-                    len(item["evidence"]) for item in state["findings"]
-                )
-                covered_count = sum(
-                    bool(item["evidence"]) for item in state["findings"]
-                )
-                report = (
-                    f"资料范围：提取 {evidence_count} 条网页原文，覆盖 {covered_count}/{len(state['findings'])} 个子问题。\n\n"
-                    + response.content.strip()
-                )
-                return {
-                    "report": report,
-                }  # 保存最终报告。
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        question = _latest_question(state["scope"])
+        feedback = state.get("feedback", "")  # 重写时读取审稿意见。
+        prompt = writer_prompt(
+            question,
+            state["research_summary"],
+            feedback,
+            json.dumps(state["findings"], ensure_ascii=False),
+        )  # 首轮反馈为空，重写时提供具体意见。
+        # 仅本节点关闭深度思考，不修改共享模型的配置。
+        writer_llm = glm_smart_llm.bind(
+            extra_body={
+                "thinking": {"type": "disabled"},
+            }
+        )
+        response = await _invoke_traced_model(
+            writer_llm, prompt, "topic_writer", settings.glm_smart_model
+        )
+        if (
+            not isinstance(response.content, str) or not response.content.strip()
+        ):  # 报告必须有正文。
+            raise ValueError("主题研究报告为空")  # 不返回空报告。
+        evidence_count = sum(len(item["evidence"]) for item in state["findings"])
+        covered_count = sum(bool(item["evidence"]) for item in state["findings"])
+        report = (
+            f"资料范围：提取 {evidence_count} 条网页原文，覆盖 {covered_count}/{len(state['findings'])} 个子问题。\n\n"
+            + response.content.strip()
+        )
+        return {
+            "report": report,
+        }  # 保存最终报告。
 
     return writer  # 返回父图写作节点。
 
@@ -411,53 +386,46 @@ def make_reviewer(
     )
 
     @timed_node  # 保留审稿耗时日志。
+    @trace_generation_call(name="topic.reviewer", kind="span")
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。
-        with trace_span("topic.reviewer") as node_span:
-            try:
-                count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
-                prompt = review_prompt(
-                    state["report"],
-                    _latest_question(state["scope"]),
-                    json.dumps(state["findings"], ensure_ascii=False),
-                )  # 提供实际生成的报告。
-                response = await _invoke_traced_model(
-                    glm_smart_llm,
-                    prompt,
-                    "topic_reviewer",
-                    settings.glm_smart_model,
-                )
-                if (
-                    not isinstance(response.content, str)
-                    or not response.content.strip()
-                ):  # 审稿结果必须可读。
-                    raise ValueError("主题研究审稿结果为空")  # 不默认视为合格。
-                lines = (
-                    response.content.strip().splitlines()
-                )  # 读取首行判断和后续意见。
-                decision = lines[0].strip(" *")  # 去除无关空白或 Markdown 强调符。
-                if decision not in {"合格", "不合格"}:  # 只接受明确结论。
-                    raise ValueError("主题研究审稿结论无效")  # 不猜测模糊回复。
-                if (
-                    decision == "不合格" and count >= _MAX_REVIEWS
-                ):  # 达到审稿上限后，沿用加密货币报告的强制通过处理。
-                    return {
-                        "review_decision": "pass",
-                        "review_count": count,
-                        "feedback": f"已达{_MAX_REVIEWS}轮审稿上限，强制通过。",
-                    }
-                feedback = (
-                    "\n".join(lines[1:]).strip() if decision == "不合格" else ""
-                )  # 仅不合格时保留修改意见。
-                if decision == "不合格" and not feedback:  # 重写需要可执行的反馈。
-                    raise ValueError("主题研究审稿未提供修改意见")  # 不执行无目标重写。
-                return {
-                    "review_decision": "pass" if decision == "合格" else "rework",
-                    "review_count": count,
-                    "feedback": feedback,
-                }  # 更新审稿状态。
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
+        prompt = review_prompt(
+            state["report"],
+            _latest_question(state["scope"]),
+            json.dumps(state["findings"], ensure_ascii=False),
+        )  # 提供实际生成的报告。
+        response = await _invoke_traced_model(
+            glm_smart_llm,
+            prompt,
+            "topic_reviewer",
+            settings.glm_smart_model,
+        )
+        if (
+            not isinstance(response.content, str) or not response.content.strip()
+        ):  # 审稿结果必须可读。
+            raise ValueError("主题研究审稿结果为空")  # 不默认视为合格。
+        lines = response.content.strip().splitlines()  # 读取首行判断和后续意见。
+        decision = lines[0].strip(" *")  # 去除无关空白或 Markdown 强调符。
+        if decision not in {"合格", "不合格"}:  # 只接受明确结论。
+            raise ValueError("主题研究审稿结论无效")  # 不猜测模糊回复。
+        if (
+            decision == "不合格" and count >= _MAX_REVIEWS
+        ):  # 达到审稿上限后，沿用加密货币报告的强制通过处理。
+            return {
+                "review_decision": "pass",
+                "review_count": count,
+                "feedback": f"已达{_MAX_REVIEWS}轮审稿上限，强制通过。",
+            }
+        feedback = (
+            "\n".join(lines[1:]).strip() if decision == "不合格" else ""
+        )  # 仅不合格时保留修改意见。
+        if decision == "不合格" and not feedback:  # 重写需要可执行的反馈。
+            raise ValueError("主题研究审稿未提供修改意见")  # 不执行无目标重写。
+        return {
+            "review_decision": "pass" if decision == "合格" else "rework",
+            "review_count": count,
+            "feedback": feedback,
+        }  # 更新审稿状态。
 
     return reviewer  # 返回父图审稿节点。
 

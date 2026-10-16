@@ -40,6 +40,7 @@ async def rewrite_question(
     model=settings.bailian_fast_model,
     input_arg="messages",
     input_format="messages",
+    kind="generation",
 )
 async def _rewrite_messages(
     llm: BaseChatModel, messages: list[SystemMessage | HumanMessage]

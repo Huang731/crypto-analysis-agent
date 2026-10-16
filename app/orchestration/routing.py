@@ -65,6 +65,7 @@ async def decide_route(
     input_arg="messages",
     input_format="messages",
     output_format="json",
+    kind="generation",
 )
 async def _invoke_route_decision(
     fast: BaseChatModel,

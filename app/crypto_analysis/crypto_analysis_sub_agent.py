@@ -170,7 +170,9 @@ async def generate_skill(
     return content
 
 
-@trace_generation_call(name="crypto_skill_output", model=settings.bailian_fast_model)
+@trace_generation_call(
+    name="crypto_skill_output", model=settings.bailian_fast_model, kind="generation"
+)
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
@@ -226,6 +228,7 @@ def skill_worker_step_limit(metric_count: int) -> int:
     input_arg="messages",
     input_format="messages",
     output_format="json",
+    kind="generation",
 )
 async def _invoke_metric_decision(llm: Any, messages: list[BaseMessage]) -> AIMessage:
     """直接调用指标决策模型，仅对模型调用和返回类型校验进行重试。"""

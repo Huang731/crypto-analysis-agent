@@ -259,8 +259,9 @@ def _trace_attribute(value: Any, path: str) -> Any:
 
 def trace_generation_call(
     name: _TraceLabel,
-    model: _TraceLabel,
+    model: _TraceLabel | None = None,
     *,
+    kind: Literal["span", "generation"] = "generation",
     input_arg: str = "prompt",
     input_format: _TraceFormat | Literal["documents"] = "text",
     output_attr: str | None = None,
@@ -271,7 +272,11 @@ def trace_generation_call(
     skip_non_text_output: bool = False,
     unit: str | None = None,
 ) -> Callable[[_TraceFunction], _TraceFunction]:
-    """统一同步与异步调用追踪，按配置统计用量，保留返回值和异常。"""
+    """统一普通流程与模型调用追踪，仅 generation 统计用量和成本。"""
+    if kind not in {"span", "generation"}:
+        raise ValueError(f"不支持的追踪类型：{kind}")
+    if kind == "generation" and model is None:
+        raise ValueError("模型调用追踪必须指定 model")
 
     def decorate(func: _TraceFunction) -> _TraceFunction:
         func_signature = signature(func)
@@ -285,6 +290,8 @@ def trace_generation_call(
             return arguments
 
         def finish(generation: _Span, arguments: BoundArguments, output: Any) -> None:
+            if kind == "span":
+                return
             if usage_attr is not None:
                 generation.usage = {
                     "input": _trace_attribute(output, usage_attr),
@@ -316,11 +323,21 @@ def trace_generation_call(
             if unit is not None:
                 generation.usage["unit"] = unit
 
-        def context(arguments: BoundArguments) -> Any:
+        @contextmanager
+        def context(arguments: BoundArguments) -> Iterator[_Span]:
             trace_name = name(arguments) if callable(name) else name
-            model_name = model(arguments) if callable(model) else model
             meta = metadata(arguments) if metadata is not None else {}
-            return trace_generation(trace_name, model=model_name, **meta)
+            if kind == "span":
+                with trace_span(trace_name, **meta) as span:
+                    try:
+                        yield span
+                    except Exception:
+                        span.metadata["status"] = "error"
+                        raise
+                return
+            model_name = model(arguments) if callable(model) else model
+            with trace_generation(trace_name, model=cast(str, model_name), **meta) as g:
+                yield g
 
         if iscoroutinefunction(func):
 

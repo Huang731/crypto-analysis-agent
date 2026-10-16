@@ -53,7 +53,9 @@ from prompts.crypto_analysis import (
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
-@trace_generation_call(name="crypto_history_summary", model=settings.glm_4_flash_model)
+@trace_generation_call(
+    name="crypto_history_summary", model=settings.glm_4_flash_model, kind="generation"
+)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
     # 历史摘要使用 GLM-4-Flash，沿用统一调用的重试和超时。
@@ -64,7 +66,9 @@ async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     return summary
 
 
-@trace_generation_call(name="crypto_analysis_writer", model=settings.glm_smart_model)
+@trace_generation_call(
+    name="crypto_analysis_writer", model=settings.glm_smart_model, kind="generation"
+)
 async def _invoke_report_text(
     llm: Any,
     prompt: str,
@@ -123,7 +127,10 @@ class ReportReview(BaseModel):
 
 
 @trace_generation_call(
-    name="crypto_report_review", model=settings.glm_smart_model, output_format="json"
+    name="crypto_report_review",
+    model=settings.glm_smart_model,
+    output_format="json",
+    kind="generation",
 )
 async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
     """记录审核用量，模型调用与校验统一交给结构化入口。"""
@@ -131,7 +138,10 @@ async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
 
 
 @trace_generation_call(
-    name="crypto_analysis_plan", model=settings.glm_4_flash_model, output_format="json"
+    name="crypto_analysis_plan",
+    model=settings.glm_4_flash_model,
+    output_format="json",
+    kind="generation",
 )
 async def _invoke_analysis_plan(llm: Any, prompt: str) -> AnalysisPlan:
     """记录规划用量，模型调用与校验统一交给结构化入口。"""
