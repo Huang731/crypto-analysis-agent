@@ -33,15 +33,14 @@ def routing_prompt() -> str:
         3. **澄清优先**：当用户问题缺少必要分析对象（如只说"分析一下"未提币种/标的），必须选 `direct` 并提出澄清问题，不得猜测路由。
         
         ## 直接回复规则
-        - 选择专家时：`direct_reply` 必须为空字符串 `""`
         - 选择 direct 时：根据用户问题，在 `direct_reply` 中直接给出准确、清晰的回答，只有缺少回答所必需的信息时才提出澄清问题；涉及最新价格、最新政策、近期事件或需要外部资料支撑的研究，交给对应专家，不得仅凭模型记忆回答。
         
         ### 路由决策示例
         用户：分析BTC
-        选择 crypto_analysis_agent，direct_reply 为空。
+        选择 crypto_analysis_agent。
         
         用户：分析比特币矿企最新财报
-        选择 topic_research_agent，direct_reply 为空。
+        选择 topic_research_agent。
         
         用户：帮我分析一下
         选择 direct，direct_reply 为“请问您想分析哪个标的？是加密资产行情还是特定公司/行业研究？”。

@@ -39,12 +39,9 @@ class RouteDecision(BaseModel):
 
     @model_validator(mode="after")
     def validate_reply(self) -> Self:
-        """拒绝空直接回复，以及专家分支夹带的回复。"""
-        if self.route == "direct":
-            if not self.direct_reply.strip():
-                raise ValueError("直接回复分支必须提供非空正文")
-        elif self.direct_reply:
-            raise ValueError("专家分支的 direct_reply 必须为空")
+        """直接回复分支必须提供非空正文。"""
+        if self.route == "direct" and not self.direct_reply.strip():
+            raise ValueError("直接回复分支必须提供非空正文")
         return self
 
 

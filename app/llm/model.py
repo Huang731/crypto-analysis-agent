@@ -25,11 +25,12 @@ from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
-from langchain_core.runnables import RunnableBinding
+from langchain_core.runnables import RunnableBinding, RunnableConfig
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, SecretStr
 
 from app.config.config import settings
+from prompts.structured_output import structured_output_instruction
 
 _Schema = TypeVar("_Schema", bound=BaseModel)
 
@@ -142,23 +143,29 @@ async def ainvoke_model(
 
 async def ainvoke_structured(
     model: Any,
-    messages: LanguageModelInput,
+    messages: list[BaseMessage],
     *,
     schema: type[_Schema],
     timeout: float | None = None,
 ) -> _Schema:
-    """单次强制通过工具调用返回目标对象，保留调用超时。"""
-    binding = model if isinstance(model, RunnableBinding) else None
-    if binding is not None:
-        model = binding.bound
-    structured = model.with_structured_output(
-        schema, method="function_calling", tool_choice="required"
-    )
-    if binding is not None:
-        structured = structured.bind(**binding.kwargs).with_config(binding.config)
+    """按模型接口选择结构化协议，统一返回校验后的对象并保留调用超时。"""
+    parameters: dict[str, Any] = {}
+    config: RunnableConfig = {}
+    if isinstance(model, RunnableBinding):
+        parameters = model.kwargs
+        config = model.config
+        model = model.bound
+    request_messages = messages
+    if isinstance(model, ChatOpenAI):
+        structured = model.with_structured_output(schema, method="json_mode")
+        request_messages = [structured_output_instruction(schema), *messages]
+    else:
+        structured = model.with_structured_output(
+            schema, method="function_calling", tool_choice="required"
+        )
     return await ainvoke_model(
-        structured,
-        messages,
+        structured.bind(**parameters).with_config(config),
+        request_messages,
         timeout=timeout,
     )
 

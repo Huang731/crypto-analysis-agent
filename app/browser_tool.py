@@ -14,7 +14,14 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import BaseModel, Field
+from tenacity import (
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 from typing_extensions import Self
 
 from app.config.config import settings
@@ -54,6 +61,28 @@ class Evidence:
     url: str
     accessed_at: str
     page_title: str = ""
+
+
+class PageRequestError(RuntimeError):
+    """保留失败地址和状态码，供网页重试判断使用。"""
+
+    def __init__(self, url: str, status_code: int | None) -> None:
+        self.url = url
+        self.status_code = status_code
+        status = status_code if status_code is not None else "无响应"
+        super().__init__(f"网页请求失败：HTTP {status}")
+
+
+def should_retry_page(exc: BaseException) -> bool:
+    """仅重试超时、无响应及指定的临时服务故障。"""
+    if isinstance(exc, PlaywrightTimeoutError):
+        return True
+    return isinstance(exc, PageRequestError) and exc.status_code in {
+        None,
+        502,
+        503,
+        504,
+    }
 
 
 class BrowserTool:
@@ -113,12 +142,12 @@ class BrowserTool:
             await page.close()
 
     async def _safe_goto(self, page: "Page", url: str) -> None:
-        """导航失败直接报错，不返回成功或自动切换来源。"""
+        """校验导航响应，失败保留状态码，不自动切换来源。"""
         self._check_url(url)
         response = await page.goto(url, wait_until="domcontentloaded")
         if response is None or response.status >= 400:
-            raise RuntimeError(
-                f"网页请求失败：HTTP {response.status if response else '无响应'}"
+            raise PageRequestError(
+                url, response.status if response is not None else None
             )
         self._check_url(page.url)
 
@@ -144,12 +173,18 @@ class BrowserTool:
             page_title=title,
         )
 
+    @retry(
+        retry=retry_if_exception(should_retry_page),
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(min=1, max=3),
+        reraise=True,
+    )
     async def extract_from_page(
         self,
         url: str,
         selectors: list[str] | None = None,
     ) -> Evidence:
-        """打开详情页，提取正文或指定区域，最后释放页面上下文。"""
+        """单页最多尝试三次，每次独立创建和关闭页面。"""
         self._check_url(url)
         async with self._new_page() as page:
             await self._safe_goto(page, url)
