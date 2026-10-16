@@ -3,6 +3,7 @@
 import operator
 from typing import Annotated, Any, Literal
 
+from langchain.agents import AgentState
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from typing_extensions import TypedDict
@@ -27,6 +28,20 @@ class DynamicAnalysisState(TypedDict, total=False):
     review_decision: Literal["pending", "pass", "rework"]
     review_count: int
     review_feedback: str
+
+
+class MetricAgentState(AgentState):
+    """指标 Agent 独立维护消息、原始证据和计算结果。"""
+
+    evidence: Annotated[dict[str, dict[str, Any]], _merge_records]
+    indicator_results: Annotated[dict[str, dict[str, Any]], _merge_records]
+
+
+class MetricAgentContext(TypedDict):
+    """由程序传入当前技能与请求范围，不由模型生成。"""
+
+    skill: LoadedSkill
+    scope: dict[str, str]
 
 
 class SkillWorkerGraphState(TypedDict, total=False):

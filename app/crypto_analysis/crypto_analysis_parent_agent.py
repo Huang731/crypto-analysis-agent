@@ -49,24 +49,31 @@ from prompts.crypto_analysis import (
     analysis_plan_messages,
     analysis_report_messages,
     analysis_review_messages,
-    history_summary_prompt,
+    history_summary_messages,
 )
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
 @trace_generation_call(
-    name="crypto_history_summary", model=settings.glm_4_flash_model, kind="generation"
+    name="crypto_history_summary",
+    model=settings.glm_4_flash_model,
+    input_arg="messages",
+    input_format="messages",
+    record_io=True,
+    kind="generation",
 )
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
-async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
-    """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
+async def _invoke_history_summary(
+    llm: BaseChatModel, messages: list[BaseMessage]
+) -> str:
+    """直接生成摘要正文，保留正文非空校验与有限重试。"""
     # 历史摘要使用 GLM-4-Flash，调用与正文校验整体重试。
-    response = await ainvoke_model(llm, prompt)
+    response = await ainvoke_model(llm, messages)
     summary = response.content.strip()
     if not summary:
         raise ValueError("历史摘要不能为空")
@@ -458,15 +465,13 @@ def make_summarize_history(
 
     @timed_node
     async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
-        """在报告生成后更新累计结论摘要，无适用技能时保留已有摘要。"""
-        update: dict[str, str] = {}
-        if state["plan"]["skill_names"]:
-            prompt = history_summary_prompt(
-                previous_summary=state.get("history_summary", ""),
-                report=state["report"],
-            )
-            summary = await _invoke_history_summary(glm_4_flash_llm, prompt)
-            update = {"history_summary": summary}
+        """根据本轮最终报告更新累计结论摘要。"""
+        messages = history_summary_messages(
+            previous_summary=state.get("history_summary", ""),
+            report=state["report"],
+        )
+        summary = await _invoke_history_summary(glm_4_flash_llm, messages)
+        update = {"history_summary": summary}
         if settings.summarize_history_capture_enabled:
             append_node_candidate(
                 node="summarize_history",
@@ -475,6 +480,7 @@ def make_summarize_history(
                     "plan": state["plan"],
                     "previous_summary": state.get("history_summary", ""),
                     "report": state["report"],
+                    "messages": messages_to_dict(messages),
                 },
                 actual_output=update,
                 path=settings.summarize_history_capture_path,

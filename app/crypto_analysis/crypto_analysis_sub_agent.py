@@ -1,24 +1,22 @@
 """加密资产技能执行子图：缓存、指标循环、内容生成及结果收尾。"""
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
 from math import fsum
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_core.runnables import RunnableConfig
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
-from langgraph.graph.message import add_messages
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.prebuilt import ToolNode
-from langgraph.runtime import Runtime
-from langgraph.types import Command
-from pydantic import ValidationError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
+    MetricAgentContext,
+    MetricAgentState,
     SkillWorkerGraphState,
 )
 from app.crypto_analysis.metric_service import metric_field_labels
@@ -228,27 +226,44 @@ def skill_worker_step_limit(metric_count: int) -> int:
 # 技能执行子图
 
 
-@trace_generation_call(
-    name="crypto_metric_decision",
-    model=settings.bailian_fast_model,
-    input_arg="messages",
-    input_format="messages",
-    output_format="json",
-    kind="generation",
-)
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
-async def _invoke_metric_decision(llm: Any, messages: list[BaseMessage]) -> AIMessage:
-    """直接调用指标决策模型，仅对模型调用和返回类型校验进行重试。"""
-    response = await ainvoke_model(llm, messages)
-    if not isinstance(response, AIMessage):
-        raise TypeError("指标决策模型未返回 AIMessage")
-    if response.invalid_tool_calls:
-        raise ValueError("指标决策模型返回了无法解析的工具调用")
-    return response
+class MetricModelTrace(AgentMiddleware):
+    """保留指标模型的用量追踪、单次超时与有限重试。"""
+
+    @trace_generation_call(
+        name="crypto_metric_decision",
+        model=settings.bailian_fast_model,
+        input_arg="request",
+        input_format="model_request",
+        output_attr="result",
+        output_format="messages",
+        kind="generation",
+    )
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """只重试模型请求及消息校验，不重复执行已完成的工具。"""
+        response = await asyncio.wait_for(handler(request), timeout=120)
+        if not response.result:
+            raise TypeError("指标决策模型未返回 AIMessage")
+        allowed_tools = {tool.name for tool in request.tools}
+        for message in response.result:
+            if not isinstance(message, AIMessage):
+                raise TypeError("指标决策模型未返回 AIMessage")
+            if message.invalid_tool_calls:
+                raise ValueError("指标决策模型返回了无法解析的工具调用")
+            for call in message.tool_calls:
+                if call["name"] not in allowed_tools:
+                    raise ValueError(
+                        f"指标决策模型请求了当前技能未注册的工具：{call['name']}"
+                    )
+        return response
 
 
 def _select_thought_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -267,63 +282,47 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
 
     @timed_node
     async def read_cache(state: SkillWorkerGraphState) -> dict[str, Any]:
-        with trace_span("crypto.skill.read_cache") as node_span:
-            try:
-                name = state["skill_name"]
-                loader = SkillLoader.from_snapshot({name: state["skill_source"]})
-                skill = loader.load_definition(name)
-                key = resolve_memory_key(state["scope"]["target_asset"], name)
-                cached = state["cached_memory"]
-                node_span.metadata["cache_hit"] = cached is not None
-                if cached is not None:
-                    try:
-                        content = SkillMemoryContent.model_validate_json(
-                            validate_skill_memory(cached, key)
-                        )
-                    except ValidationError as exc:
-                        raise ValueError(
-                            "技能缓存缺少结构化的表格和思想原文，"
-                            "请明确要求不用缓存重新分析"
-                        ) from exc
-                    update = {
-                        "skill": skill,
-                        "skill_result": {
-                            "skill_name": skill.name,
-                            "name": skill.scoring.name,
-                            "content": content.content,
-                            "thought_context": _select_thought_context(
-                                content.thought_context
-                            ),
-                            "cache_hit": True,
-                        },
-                    }
-                else:
-                    update = {
-                        "skill": skill,
-                        "messages": [
-                            HumanMessage(
-                                content=metric_execution_prompt(skill.model_dump())
-                            )
-                        ],
-                        "evidence": {},
-                        "indicator_results": {},
-                    }
-                if settings.read_cache_capture_enabled:
-                    append_node_candidate(
-                        node="read_cache",
-                        scope=state["scope"],
-                        input={
-                            "skill_name": name,
-                            "skill_source": state["skill_source"],
-                            "cached_memory": cached,
-                        },
-                        actual_output=update,
-                        path=settings.read_cache_capture_path,
-                    )
-                return update
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        name = state["skill_name"]
+        loader = SkillLoader.from_snapshot({name: state["skill_source"]})
+        skill = loader.load_definition(name)
+        key = resolve_memory_key(state["scope"]["target_asset"], name)
+        cached = state["cached_memory"]
+        if cached is not None:
+            content = SkillMemoryContent.model_validate_json(
+                validate_skill_memory(cached, key)
+            )
+            update = {
+                "skill": skill,
+                "skill_result": {
+                    "skill_name": skill.name,
+                    "name": skill.scoring.name,
+                    "content": content.content,
+                    "thought_context": _select_thought_context(content.thought_context),
+                    "cache_hit": True,
+                },
+            }
+        else:
+            update = {
+                "skill": skill,
+                "messages": [
+                    HumanMessage(content=metric_execution_prompt(skill.model_dump()))
+                ],
+                "evidence": {},
+                "indicator_results": {},
+            }
+        if settings.read_cache_capture_enabled:
+            append_node_candidate(
+                node="read_cache",
+                scope=state["scope"],
+                input={
+                    "skill_name": name,
+                    "skill_source": state["skill_source"],
+                    "cached_memory": cached,
+                },
+                actual_output=update,
+                path=settings.read_cache_capture_path,
+            )
+        return update
 
     return read_cache
 
@@ -333,63 +332,70 @@ def route_cache(state: SkillWorkerGraphState) -> Literal["hit", "miss"]:
     return "hit" if state["cached_memory"] is not None else "miss"
 
 
+@trace_generation_call(name="crypto.metric_agent", kind="span")
+async def _invoke_metric_agent(
+    agent: CompiledStateGraph, state: SkillWorkerGraphState
+) -> MetricAgentState:
+    """追踪指标 Agent 整体执行，模型用量由内部中间件统计。"""
+    return await agent.ainvoke(
+        {
+            "messages": state["messages"],
+            "evidence": state["evidence"],
+            "indicator_results": state["indicator_results"],
+        },
+        context={"skill": state["skill"], "scope": state["scope"]},
+    )
+
+
 def make_calculate_metrics(
     bailian_fast_llm: Any,
-) -> Callable[..., Awaitable[list[Any]]]:
-    """创建单轮模型决策及工具执行节点，循环交由子图控制。"""
+) -> Callable[..., Awaitable[dict[str, Any]]]:
+    """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
 
     @timed_node
-    async def calculate_metrics(
-        state: SkillWorkerGraphState, config: RunnableConfig, runtime: Runtime
-    ) -> list[Any]:
-        with trace_span("crypto.skill.calculate_metrics") as node_span:
-            try:
-                registry = get_tool_registry()
-                tools = [registry[name] for name in state["skill"].tools]
-                messages = [
-                    SystemMessage(content=metric_agent_system_prompt()),
-                    *state["messages"],
-                ]
-                response = await _invoke_metric_decision(
-                    bailian_fast_llm.bind_tools(tools),
-                    messages,
-                )
-                updates: list[Any] = [Command(update={"messages": [response]})]
-                if response.tool_calls:
-                    # 工具读取完整状态；当前技能上下文由程序注入，不交给模型生成。
-                    tool_state = {
-                        **state,
-                        "messages": add_messages(state["messages"], [response]),
-                    }
-                    tool_runtime = replace(
-                        runtime,
-                        context={"skill": state["skill"], "scope": state["scope"]},
-                    )
-                    tool_updates = await ToolNode(tools).ainvoke(
-                        tool_state, config=config, runtime=tool_runtime
-                    )
-                    # 手动调用工具执行器后，必须向图返回更新以应用原 reducer。
-                    if isinstance(tool_updates, dict):
-                        updates.append(tool_updates)
-                    else:
-                        updates.extend(tool_updates)
-                if settings.calculate_metrics_capture_enabled:
-                    append_node_candidate(
-                        node="calculate_metrics",
-                        scope=state["scope"],
-                        input={
-                            "skill": state["skill"],
-                            "messages": messages,
-                            "indicator_results": state["indicator_results"],
-                            "evidence": state["evidence"],
-                        },
-                        actual_output={"response": response, "updates": updates},
-                        path=settings.calculate_metrics_capture_path,
-                    )
-                return updates
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+    async def calculate_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
+        registry = get_tool_registry()
+        # 工具执行后直接退出本轮 Agent，由外层检查节点决定是否继续。
+        tools = [
+            registry[name].model_copy(update={"return_direct": True})
+            for name in state["skill"].tools
+        ]
+        agent = create_agent(
+            model=bailian_fast_llm,
+            tools=tools,
+            system_prompt=metric_agent_system_prompt(),
+            state_schema=MetricAgentState,
+            context_schema=MetricAgentContext,
+            middleware=[MetricModelTrace()],
+            name="crypto_metric_agent",
+        )
+        result = await _invoke_metric_agent(agent, state)
+        # 外层状态已有输入历史，只回传本轮新增消息，避免重复合并旧消息。
+        new_messages = result["messages"][len(state["messages"]) :]
+        if settings.calculate_metrics_capture_enabled:
+            append_node_candidate(
+                node="calculate_metrics",
+                scope=state["scope"],
+                input={
+                    "skill": state["skill"],
+                    "messages": [
+                        SystemMessage(content=metric_agent_system_prompt()),
+                        *state["messages"],
+                    ],
+                    "indicator_results": state["indicator_results"],
+                    "evidence": state["evidence"],
+                },
+                actual_output={
+                    "response": new_messages[0],
+                    "updates": {**result, "messages": new_messages},
+                },
+                path=settings.calculate_metrics_capture_path,
+            )
+        return {
+            "messages": new_messages,
+            "evidence": result["evidence"],
+            "indicator_results": result["indicator_results"],
+        }
 
     return calculate_metrics
 

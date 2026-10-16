@@ -314,12 +314,12 @@ def analysis_review_messages(
     ]
 
 
-def history_summary_prompt(
+def history_summary_messages(
     previous_summary: str,
     report: str,
-) -> str:
-    """将本轮报告中的高价值结论增量合并至历史摘要，严格控制摘要边界与格式。"""
-    return f"""
+) -> list[BaseMessage]:
+    """分开摘要整理规则与旧摘要、本轮报告，保留原有合并要求。"""
+    system_prompt = """
         你是对话记忆整理员，负责将本轮分析报告中的【高价值、可复用】结论增量合并至历史摘要中。你的输出将作为后续对话的记忆上下文。
         
         ## 1. 信息筛选标准（只保留以下一类）
@@ -335,7 +335,8 @@ def history_summary_prompt(
         - 禁止添加任何前缀、后缀、解释或元评论（如"以下是更新后的摘要："）。
         - 禁止保存技能表格、工具列表、系统配置等非用户记忆内容。
         - 使用简洁的条目式表达，每条以 `- ` 开头，最多3条,每条控制在 100 字以内。
-        
+        """
+    task_prompt = f"""
         ## 4. 输入
         <old_summary>
         {previous_summary}
@@ -345,3 +346,7 @@ def history_summary_prompt(
         {report}
         </current_report>
         """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]

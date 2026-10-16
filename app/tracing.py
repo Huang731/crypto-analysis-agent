@@ -192,11 +192,6 @@ class _ConsoleBackend:
                     f"{prefix}{branch} {tag} {s.name} ({s.duration_ms}ms){extra}",
                     file=sys.stderr,
                 )
-                if s.kind == "generation":
-                    if s.input is not None:
-                        print(f"{child_prefix}输入: {s.input}", file=sys.stderr)
-                    if s.output is not None:
-                        print(f"{child_prefix}输出: {s.output}", file=sys.stderr)
                 if s.children:
                     walk(s.children, child_prefix)
 
