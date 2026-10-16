@@ -63,7 +63,6 @@ def skill_generation_judge_prompt(
         "即使具体值全部错误也不能据此降低相关性。"
         "scope判断话题是否越界，不判断建议的安全性或事实正确性；"
         "错误的信号参考仍属于信号参考话题。"
-        "\n4. 只返回严格符合output_schema的JSON对象及简短中文relevance_reason。"
-        "不得输出Markdown或JSON之外的正文。分数由代码按量表计算。"
+        "\n4. relevance_reason：简要说明相关性评分依据。分数由代码按量表计算。"
         f"\n待评数据：\n{json.dumps(payload, ensure_ascii=False)}"
     )

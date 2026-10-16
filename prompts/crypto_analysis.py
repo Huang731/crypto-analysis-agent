@@ -36,7 +36,7 @@ def metric_agent_system_prompt() -> str:
 def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseMessage]:
     """保留规划规则与示例，将系统规则和本轮输入分为两条消息。"""
     system_prompt = """\
-            你是加密货币分析规划员。仅输出一个合法 JSON 对象，包含且仅包含 target_asset、skill_names、refresh 三个字段。严禁输出任何解释、注释或额外文本。
+            你是加密货币分析规划员，负责确定目标资产、所需技能及是否刷新数据。
             
             ## 字段决策规则
             
@@ -66,15 +66,15 @@ def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseM
             
             ### 示例 1：上下文追问 + 多领域取并集 (核心示例)
             用户问题：分析以太坊（ETH）的趋势和资金面后，是否减仓？
-            {"target_asset": "ETH", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}
+            目标资产为 ETH；技能选择 analyzing-crypto-derivatives、analyzing-crypto-etf-flows、analyzing-crypto-sentiment、analyzing-crypto-trend；不刷新数据。
             
             ### 示例 2：泛问全选 + 伪刷新词拦截
             用户问题：分析BTC的走势，帮我获取最新行情
-            {"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}
+            目标资产为 BTC；技能选择 analyzing-crypto-derivatives、analyzing-crypto-etf-flows、analyzing-crypto-sentiment、analyzing-crypto-trend；不刷新数据。
             
             ### 示例 3：明确限定 + 显式刷新
             用户问题：只看BTC的均线和资金费率，用最新数据重新算
-            {"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-trend"], "refresh": true}
+            目标资产为 BTC；技能选择 analyzing-crypto-derivatives、analyzing-crypto-trend；刷新数据。
             """
     task_prompt = f"""\
             ## 输入
@@ -273,19 +273,17 @@ def analysis_review_messages(
         3. **思想引用合规**：思想引用必须以对应 `skill_name` 的 `thought_context` 原文及出处为准。检查有无虚构来源、误读原文、将相关性说成已证实因果关系；引用论述附近未标注对应文档 `metadata.source` 的可读书名及 `metadata.section` 的章节或页码，或标注与元数据不符，判为不合格。允许去除文件扩展名、技术标签及规范化书名、章节和页码格式；按来源含义与定位信息核对，不要求逐字复现原始元数据。若缺少材料或出处且报告已明确说明限制，不算错误。
         5. **格式与规范**：报告应为中文、结论先行，不输出完整指标表格、JSON、内部字段名（如 indicator_id）或工具执行过程。
         
-        ## 输出格式与思维链要求
-        请严格以 **纯 JSON 格式** 输出审核结果，不要包含任何 Markdown 代码块标记（如 ```json），不要输出任何解释性废话。
-        
+        ## 核查记录要求
         在给出最终 passed 结论前，**必须**先在 review_process 字段中执行结构化核查。
         禁止使用“已核对”、“符合要求”、“数据准确”等无实质内容的概括性表述。
         每一项核查都必须采用【报告原文】vs【证据原文/表格数据】的对质格式。若某项无问题，也需简要列出比对的关键数值或词句。
         
-        JSON 结构与示例如下：
-        {{
-          "review_process": "1.【问题回应】用户问'是否加仓'，报告首段结论为'暂不建议调整仓位'，已直接回应。\n2.【数据核查】报告称'过去7日持仓量下降4.68%' vs 技能表格 oi_data 显示统计窗口为'过去5日'且降幅为'-4.68%'。发现时间窗口不一致。\n3.【思想引用】报告引用克鲁格曼资本流动逻辑 vs thought_context 中 macro_econ 原文确述及美元潮汐对风险资产分流，未套用固定汇率前提，引用合规。\n4.【操作边界】报告设定加仓条件为'ETF连续3日净流入超2亿' vs 输入数据仅含单日及5日均值，无'连续3日'粒度。属自行补造触发条件。",
-          "passed": false,
-          "feedback": "1. 数据时间窗口错误：报告中'过去7日持仓量'应修正为'过去5日'，依据为 oi_data 表格统计范围。\n2. 虚构操作触发条件：删除'连续3日超2亿美元'的加仓条件，因输入数据不支持该时间粒度。应改为基于现有5日均值的条件触发表述。"
-        }}
+        核查示例：
+        - 问题回应：用户问“是否加仓”，报告首段结论为“暂不建议调整仓位”，已直接回应。
+        - 数据核查：报告称“过去7日持仓量下降4.68%”，但技能表格 oi_data 的统计窗口为“过去5日”、降幅为“-4.68%”，时间窗口不一致。
+        - 思想引用：报告引用克鲁格曼资本流动逻辑，thought_context 中 macro_econ 原文确述及美元潮汐对风险资产分流，未套用固定汇率前提，引用合规。
+        - 操作边界：报告设定“ETF连续3日净流入超2亿”的加仓条件，但输入仅含单日及5日均值，没有连续3日数据，属于补造触发条件。
+        - 审核结论：不通过。修改意见应指出将“过去7日”修正为“过去5日”的证据，并要求删除证据不支持的连续3日加仓条件，改为基于现有5日均值的条件触发表述。
         
         ---
         """

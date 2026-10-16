@@ -147,11 +147,13 @@ async def ainvoke_structured(
     schema: type[_Schema],
     timeout: float | None = None,
 ) -> _Schema:
-    """单次通过模型默认结构化输出返回目标对象，保留调用超时。"""
+    """单次强制通过工具调用返回目标对象，保留调用超时。"""
     binding = model if isinstance(model, RunnableBinding) else None
     if binding is not None:
         model = binding.bound
-    structured = model.with_structured_output(schema)
+    structured = model.with_structured_output(
+        schema, method="function_calling", tool_choice="required"
+    )
     if binding is not None:
         structured = structured.bind(**binding.kwargs).with_config(binding.config)
     return await ainvoke_model(
@@ -219,6 +221,20 @@ class LoggedChatTongyi(ChatTongyi):
         default=None, exclude=True, repr=False
     )
     top_p: float | None = None
+
+    def with_structured_output(
+        self,
+        schema: type[_Schema],
+        *,
+        method: Literal["function_calling"] = "function_calling",
+        tool_choice: Literal["required"] = "required",
+        include_raw: bool = False,
+    ) -> Any:
+        """沿用父类工具解析，仅补齐统一入口的调用方式与强制工具参数。"""
+        if method != "function_calling":
+            raise ValueError("百炼结构化输出仅支持 function_calling")
+        structured = super().with_structured_output(schema, include_raw=include_raw)
+        return structured.bind(tool_choice=tool_choice)
 
     @property
     def _default_params(self) -> dict[str, Any]:

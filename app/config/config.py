@@ -84,81 +84,69 @@ class Settings(BaseSettings):
     # 评测候选采集：保存实际输入输出供人工标注，不直接作为标准答案。
     routing_capture_enabled: bool = True
     routing_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "routing" / "routing_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "routing_candidates.jsonl"
     )
     planning_capture_enabled: bool = True
     planning_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "planning" / "planning_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "planning_candidates.jsonl"
     )
     skill_execution_capture_enabled: bool = True
     skill_execution_capture_path: str = str(
-        PROJECT_ROOT
-        / "eval_agent"
-        / "skill_execution"
-        / "skill_execution_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_execution_candidates.jsonl"
     )
     skill_generation_capture_enabled: bool = True
     skill_generation_capture_path: str = str(
-        PROJECT_ROOT
-        / "eval_agent"
-        / "skill_generation"
-        / "skill_generation_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_generation_candidates.jsonl"
     )
     rewrite_capture_enabled: bool = True
     rewrite_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "rewrite" / "rewrite_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "rewrite_candidates.jsonl"
     )
     read_cache_capture_enabled: bool = True
     read_cache_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "read_cache" / "read_cache_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "read_cache_candidates.jsonl"
     )
     calculate_metrics_capture_enabled: bool = True
     calculate_metrics_capture_path: str = str(
         PROJECT_ROOT
         / "eval_agent"
-        / "calculate_metrics"
+        / "candidates"
         / "calculate_metrics_candidates.jsonl"
     )
     check_metrics_capture_enabled: bool = True
     check_metrics_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "check_metrics" / "check_metrics_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "check_metrics_candidates.jsonl"
     )
     generate_content_capture_enabled: bool = True
     generate_content_capture_path: str = str(
-        PROJECT_ROOT
-        / "eval_agent"
-        / "generate_content"
-        / "generate_content_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "generate_content_candidates.jsonl"
     )
     finalize_skill_capture_enabled: bool = True
     finalize_skill_capture_path: str = str(
-        PROJECT_ROOT
-        / "eval_agent"
-        / "finalize_skill"
-        / "finalize_skill_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "finalize_skill_candidates.jsonl"
     )
     skill_worker_capture_enabled: bool = True
     skill_worker_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "skill_worker" / "skill_worker_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_worker_candidates.jsonl"
     )
     writer_capture_enabled: bool = True
     writer_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "writer" / "writer_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "writer_candidates.jsonl"
     )
     reviewer_capture_enabled: bool = True
     reviewer_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "reviewer" / "reviewer_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "reviewer_candidates.jsonl"
     )
     summarize_history_capture_enabled: bool = True
     summarize_history_capture_path: str = str(
         PROJECT_ROOT
         / "eval_agent"
-        / "summarize_history"
+        / "candidates"
         / "summarize_history_candidates.jsonl"
     )
     finalize_capture_enabled: bool = True
     finalize_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "finalize" / "finalize_candidates.jsonl"
+        PROJECT_ROOT / "eval_agent" / "candidates" / "finalize_candidates.jsonl"
     )
 
     # 浏览器取证：单页超时单位为秒。

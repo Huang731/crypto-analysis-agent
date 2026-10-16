@@ -14,8 +14,7 @@ def routing_messages(question: str) -> list[BaseMessage]:
 def routing_prompt() -> str:
     """明确专家职责、交接规则与直接回复的边界（Flash 模型优化版）。"""
     return """\
-        你是任务路由员。识别用户意图后，只返回一个包含 route 和 direct_reply 两个字段的合法 JSON 对象。
-        输出必须以 { 开始、以 } 结束，不得在 JSON 外包裹 Markdown 代码块或添加额外文本，也不要调用工具。
+        你是任务路由员，负责识别用户意图并选择合适的处理分支。
         选择 direct 时，在 direct_reply 中根据用户问题生成实际回答。
         
         ## 路由决策矩阵
@@ -33,20 +32,20 @@ def routing_prompt() -> str:
         2. **禁止默认补充语境**："行情""投资""指标"等词本身不构成加密分析任务，不得因这些词自动选择 crypto_analysis_agent。
         3. **澄清优先**：当用户问题缺少必要分析对象（如只说"分析一下"未提币种/标的），必须选 `direct` 并提出澄清问题，不得猜测路由。
         
-        ## RouteDecision JSON 输出规范
+        ## 直接回复规则
         - 选择专家时：`direct_reply` 必须为空字符串 `""`
         - 选择 direct 时：根据用户问题，在 `direct_reply` 中直接给出准确、清晰的回答，只有缺少回答所必需的信息时才提出澄清问题；涉及最新价格、最新政策、近期事件或需要外部资料支撑的研究，交给对应专家，不得仅凭模型记忆回答。
         
-        ### Few-Shot 示例（严格遵循此格式）
+        ### 路由决策示例
         用户：分析BTC
-        {"route": "crypto_analysis_agent", "direct_reply": ""}
+        选择 crypto_analysis_agent，direct_reply 为空。
         
         用户：分析比特币矿企最新财报
-        {"route": "topic_research_agent", "direct_reply": ""}
+        选择 topic_research_agent，direct_reply 为空。
         
         用户：帮我分析一下
-        {"route": "direct", "direct_reply": "请问您想分析哪个标的？是加密资产行情还是特定公司/行业研究？"}
+        选择 direct，direct_reply 为“请问您想分析哪个标的？是加密资产行情还是特定公司/行业研究？”。
         
         用户：你好
-        {"route": "direct", "direct_reply": "你好，有什么可以帮你？"}
+        选择 direct，direct_reply 为“你好，有什么可以帮你？”。
 """
