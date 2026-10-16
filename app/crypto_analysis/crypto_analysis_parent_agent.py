@@ -6,7 +6,6 @@ from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, messages_to_dict
-from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
@@ -30,10 +29,7 @@ from app.crypto_analysis.crypto_analysis_sub_agent import (
     build_crypto_analysis_sub_agent,
     skill_worker_step_limit,
 )
-from app.crypto_analysis.skill_loader import (
-    SkillLoader,
-    get_skill_loader,
-)
+from app.crypto_analysis.skill_loader import get_skill_loader
 from app.crypto_analysis.skill_memory import (
     read_skill_memory,
     resolve_memory_key,
@@ -44,7 +40,7 @@ from app.llm.model import (
 )
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
-from app.tracing import trace_generation_call, trace_span
+from app.tracing import trace_generation_call
 from prompts.crypto_analysis import (
     analysis_plan_messages,
     analysis_report_messages,
@@ -124,10 +120,8 @@ class AnalysisPlan(BaseModel):
     @field_validator("skill_names")
     @classmethod
     def unique_skill_names(cls, names: list[str]) -> list[str]:
-        """拒绝重复技能，避免并行派发同一技能多次。"""
-        if len(names) != len(set(names)):
-            raise ValueError("分析计划中的技能名称不能重复")
-        return names
+        """按首次出现顺序去重，避免并行派发同一技能多次。"""
+        return list(dict.fromkeys(names))
 
 
 class ReportReview(BaseModel):
@@ -222,48 +216,24 @@ async def create_analysis_plan(
 def make_skill_worker(
     sub_graph: CompiledStateGraph,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
-    """沿用父图调用边界和整体追踪，转交技能子图执行。"""
+    """沿用父图调用边界，转交技能子图执行。"""
 
     @timed_node(label=lambda state: state["skill_name"])
-    async def skill_worker(
-        state: SkillWorkerGraphState, config: RunnableConfig
-    ) -> dict[str, Any]:
-        with trace_span("crypto.skill_worker", skill_name=state["skill_name"]) as span:
-            try:
-                name = state["skill_name"]
-                skill = SkillLoader.from_snapshot(
-                    {name: state["skill_source"]}
-                ).load_definition(name)
-                # 按指标数量限制子图步数，避免缺失结果时无限循环。
-                result = await sub_graph.ainvoke(
-                    state,
-                    config={
-                        **config,
-                        "recursion_limit": skill_worker_step_limit(
-                            len(skill.scoring.metrics)
-                        ),
-                    },
-                )
-                span.metadata["cache_hit"] = result["skill_result"]["cache_hit"]
-                update = {"skill_results": [result["skill_result"]]}
-                if "skill_memory" in result:
-                    update["skill_memory"] = result["skill_memory"]
-                if settings.skill_worker_capture_enabled:
-                    append_node_candidate(
-                        node="skill_worker",
-                        scope=state["scope"],
-                        input={
-                            "skill_name": name,
-                            "skill_source": state["skill_source"],
-                            "cached_memory": state["cached_memory"],
-                        },
-                        actual_output=update,
-                        path=settings.skill_worker_capture_path,
-                    )
-                return update
-            except Exception:
-                span.metadata["status"] = "error"
-                raise
+    async def skill_worker(state: SkillWorkerGraphState) -> dict[str, Any]:
+        name = state["skill_name"]
+        skill_loader = get_skill_loader()
+        skill = skill_loader.load_definition(name)
+        # 按指标数量限制子图步数，避免缺失结果时无限循环。
+        result = await sub_graph.ainvoke(
+            state,
+            config={
+                "recursion_limit": skill_worker_step_limit(len(skill.scoring.metrics)),
+            },
+        )
+        update = {"skill_results": [result["skill_result"]]}
+        if "skill_memory" in result:
+            update["skill_memory"] = result["skill_memory"]
+        return update
 
     return skill_worker
 
@@ -287,6 +257,10 @@ def make_plan(
             question,
             skill_loader.format_skill_descriptions(),
         )
+        available_names = {skill.name for skill in skill_loader.list_skills()}
+        selection["skill_names"] = [
+            name for name in selection["skill_names"] if name in available_names
+        ]
         if settings.planning_capture_enabled:
             append_node_candidate(
                 node="plan",
@@ -305,7 +279,6 @@ def make_plan(
             "review_decision": "pending",
             "review_count": 0,
             "review_feedback": "",
-            "skill_sources": skill_loader.snapshot(),
             "plan": selection,
             "scope": scope,
             # 缓存跨轮保留，追加型报告输入每轮从空列表开始。
@@ -325,7 +298,6 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
             "skill_worker",
             {
                 "skill_name": name,
-                "skill_source": state["skill_sources"][name],
                 "scope": state["scope"],
                 "cached_memory": (
                     None

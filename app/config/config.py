@@ -90,21 +90,9 @@ class Settings(BaseSettings):
     planning_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "planning_candidates.jsonl"
     )
-    skill_execution_capture_enabled: bool = True
-    skill_execution_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_execution_candidates.jsonl"
-    )
-    skill_generation_capture_enabled: bool = True
-    skill_generation_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_generation_candidates.jsonl"
-    )
     rewrite_capture_enabled: bool = True
     rewrite_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "rewrite_candidates.jsonl"
-    )
-    read_cache_capture_enabled: bool = True
-    read_cache_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "read_cache_candidates.jsonl"
     )
     calculate_metrics_capture_enabled: bool = True
     calculate_metrics_capture_path: str = str(
@@ -120,14 +108,6 @@ class Settings(BaseSettings):
     generate_content_capture_enabled: bool = True
     generate_content_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "generate_content_candidates.jsonl"
-    )
-    finalize_skill_capture_enabled: bool = True
-    finalize_skill_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "finalize_skill_candidates.jsonl"
-    )
-    skill_worker_capture_enabled: bool = True
-    skill_worker_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_worker_candidates.jsonl"
     )
     writer_capture_enabled: bool = True
     writer_capture_path: str = str(

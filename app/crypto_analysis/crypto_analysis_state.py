@@ -19,7 +19,6 @@ def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any
 
 class DynamicAnalysisState(TypedDict, total=False):
     scope: dict[str, str]
-    skill_sources: dict[str, str]
     plan: dict[str, Any]
     skill_results: Annotated[list[dict[str, Any]], operator.add]
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
@@ -49,7 +48,6 @@ class SkillWorkerGraphState(TypedDict, total=False):
 
     messages: Annotated[list[AnyMessage], add_messages]
     skill_name: str
-    skill_source: str
     skill: LoadedSkill
     scope: dict[str, str]
     cached_memory: str | None

@@ -20,7 +20,7 @@ from app.crypto_analysis.crypto_analysis_state import (
     SkillWorkerGraphState,
 )
 from app.crypto_analysis.metric_service import metric_field_labels
-from app.crypto_analysis.skill_loader import LoadedSkill, SkillLoader
+from app.crypto_analysis.skill_loader import LoadedSkill, get_skill_loader
 from app.crypto_analysis.skill_memory import (
     SkillMemoryContent,
     resolve_memory_key,
@@ -214,7 +214,7 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
     @timed_node
     async def read_cache(state: SkillWorkerGraphState) -> dict[str, Any]:
         name = state["skill_name"]
-        loader = SkillLoader.from_snapshot({name: state["skill_source"]})
+        loader = get_skill_loader()
         skill = loader.load_definition(name)
         key = resolve_memory_key(state["scope"]["target_asset"], name)
         cached = state["cached_memory"]
@@ -241,18 +241,6 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
                 "evidence": {},
                 "indicator_results": {},
             }
-        if settings.read_cache_capture_enabled:
-            append_node_candidate(
-                node="read_cache",
-                scope=state["scope"],
-                input={
-                    "skill_name": name,
-                    "skill_source": state["skill_source"],
-                    "cached_memory": cached,
-                },
-                actual_output=update,
-                path=settings.read_cache_capture_path,
-            )
         return update
 
     return read_cache
@@ -436,7 +424,7 @@ def make_generate_content(
                 scope=state["scope"],
                 input={
                     "skill_name": state["skill_name"],
-                    "skill_source": state["skill_source"],
+                    "skill_source": get_skill_loader().load_skill(state["skill_name"]),
                     "metric_result": state["metric_result"],
                     "analysis_subject": analysis_subject,
                 },
