@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.config.config import PROJECT_ROOT, settings
-from app.crypto_analysis.crypto_analysis_sub_agent import generate_skill
+from app.crypto_analysis.crypto_analysis_sub_agent import _invoke_skill_output
 from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import (
@@ -32,6 +32,7 @@ from eval_agent.skill_execution.run_skill_execution_eval import (
     duration_summary,
     values_equal,
 )
+from prompts.crypto_analysis import skill_output_messages
 from prompts.skill_generation_eval import skill_generation_judge_prompt
 
 
@@ -418,11 +419,7 @@ async def evaluate(
             judge = judge_factory(async_client=judge_http).with_config(
                 callbacks=[judge_counter]
             )
-            loader = SkillLoader.from_snapshot({inputs.skill_name: inputs.skill_source})
-            skill = loader.load_definition(inputs.skill_name)
             result = inputs.result.model_dump()
-            result["thought_context"] = inputs.thought_context.model_dump()
-            result["scope"] = {"resolved_question": inputs.user_input}
             with client.start_as_current_observation(
                 as_type="span",
                 name="skill_generation.invoke",
@@ -431,13 +428,22 @@ async def evaluate(
                 started = time.perf_counter()
                 active_stage = "generation"
                 if inputs.mode == "generation":
+                    indicators = [
+                        {
+                            **item.model_dump(),
+                            "field_labels": metric_field_labels(item.indicator_id),
+                        }
+                        for item in inputs.result.indicators
+                        if item.status == "ok"
+                    ]
                     response = await asyncio.wait_for(
-                        generate_skill(
+                        _invoke_skill_output(
                             generator.with_config(callbacks=[generation_counter]),
-                            loader,
-                            skill,
-                            result,
-                            inputs.analysis_subject,
+                            skill_output_messages(
+                                analysis_subject=inputs.analysis_subject,
+                                skill_name=inputs.skill_name,
+                                indicators=indicators,
+                            ),
                         ),
                         timeout=300,
                     )

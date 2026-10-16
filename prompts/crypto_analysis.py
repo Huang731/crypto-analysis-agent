@@ -97,14 +97,14 @@ def thought_retrieval_prompt(
     return f"检索与{target_asset}的{skill_name}相关的知识。相关指标：{metric_names}。"
 
 
-def skill_output_prompt(
+def skill_output_messages(
     analysis_subject: str,
     skill_name: str,
     indicators: list[dict[str, Any]],
-) -> str:
-    """按通用展示规则生成指标表格。"""
+) -> list[BaseMessage]:
+    """分开表格展示规则与本轮成功指标数据。"""
 
-    prompt_template = """\
+    system_template = """\
         根据成功指标，生成中文 Markdown 指标表格。
 
         ## 输出规则
@@ -145,19 +145,24 @@ def skill_output_prompt(
         | 负向方向指标DI | 21.91 |
         | 指标分数 | 5 |
         | 观测日期 | 2026-10-13 |
-        | 来源链接 | https://www.binance.com/ |
-
+        | 来源链接 | https://www.binance.com/ |"""
+    task_template = """\
         ## 任务上下文
         - 分析对象：{analysis_subject}
         - 技能：{skill_name}
         - 成功指标：
         {indicators_json}"""
 
-    return prompt_template.format(
-        analysis_subject=analysis_subject,
-        skill_name=skill_name,
-        indicators_json=json.dumps(indicators, ensure_ascii=False, indent=2),
-    )
+    return [
+        SystemMessage(content=system_template.format()),
+        HumanMessage(
+            content=task_template.format(
+                analysis_subject=analysis_subject,
+                skill_name=skill_name,
+                indicators_json=json.dumps(indicators, ensure_ascii=False, indent=2),
+            )
+        ),
+    ]
 
 
 def analysis_report_messages(

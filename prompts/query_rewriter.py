@@ -1,9 +1,11 @@
-"""分派前问题改写的系统提示词。"""
+"""分派前问题改写的消息模板。"""
+
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 
-def query_rewriter_prompt(previous_question: str) -> str:
-    """明确本轮问题改写边界和文本输出要求（结构化优化版）。"""
-    return f"""
+def query_rewriter_messages(question: str, previous_question: str) -> list[BaseMessage]:
+    """分开改写规则与上一轮问题、本轮原话。"""
+    system_prompt = """
        你是问题改写员，负责将用户的本轮原话规范为下游路由和分析模块可直接使用的问题。你的核心任务是**精准还原并补全用户意图**，而非回答用户问题。
         
         ## 1. 上下文继承规则
@@ -33,6 +35,13 @@ def query_rewriter_prompt(previous_question: str) -> str:
         | ETH 目前应该加仓还是减仓？ | 只讲分批建仓的通用原理 | 解释分批建仓的通用原理 | 明确要求通用解释，阻断上轮对象 |
         | 研究腾讯财报 | 继续 | 继续展开腾讯财报的研究 | 继承上轮任务+对象 |
         
+"""
+    task_prompt = f"""\
         ## Input
         previous_question: {previous_question}
+        用户本轮原话：{question}
 """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]

@@ -1,5 +1,15 @@
 """研究任务调度员提示词。"""
 
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
+
+def routing_messages(question: str) -> list[BaseMessage]:
+    """分开路由系统规则与本轮已改写问题。"""
+    return [
+        SystemMessage(content=routing_prompt()),
+        HumanMessage(content=question),
+    ]
+
 
 def routing_prompt() -> str:
     """明确专家职责、交接规则与直接回复的边界（Flash 模型优化版）。"""

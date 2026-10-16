@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -23,7 +23,6 @@ from app.crypto_analysis.metric_service import metric_field_labels
 from app.crypto_analysis.skill_loader import LoadedSkill, SkillLoader
 from app.crypto_analysis.skill_memory import (
     SkillMemoryContent,
-    SkillMemoryKey,
     resolve_memory_key,
     validate_skill_memory,
 )
@@ -35,7 +34,7 @@ from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import (
     metric_agent_system_prompt,
     metric_execution_prompt,
-    skill_output_prompt,
+    skill_output_messages,
     thought_retrieval_prompt,
 )
 
@@ -128,94 +127,26 @@ async def _retrieve_thought_context(
         }
 
 
-async def generate_skill(
-    llm: Any,
-    skill_loader: SkillLoader,
-    skill: LoadedSkill,
-    result: dict[str, Any],
-    analysis_subject: str,
-) -> str:
-    """按通用格式生成指标表格，思想原文保留给最终 writer 解读。"""
-    indicators = [
-        {**item, "field_labels": metric_field_labels(item["indicator_id"])}
-        for item in result["indicators"]
-        if item["status"] == "ok"
-    ]
-    # 没有成功指标时不生成表格，思想原文仍由 writer 使用。
-    if not indicators:
-        content = ""
-    else:
-        prompt = skill_output_prompt(
-            analysis_subject=analysis_subject,
-            skill_name=skill.name,
-            indicators=indicators,
-        )
-        # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
-        content = await _invoke_skill_output(llm, prompt)
-    if settings.skill_generation_capture_enabled:
-        append_node_candidate(
-            node="generate_skill",
-            scope=result["scope"],
-            input={
-                "model": llm.model_name,
-                "skill_source": skill_loader.load_skill(skill.name),
-                "skill_name": skill.name,
-                "analysis_subject": analysis_subject,
-                "result": result,
-            },
-            actual_output=content,
-            path=settings.skill_generation_capture_path,
-        )
-    return content
-
-
 @trace_generation_call(
-    name="crypto_skill_output", model=settings.bailian_fast_model, kind="generation"
+    name="crypto_skill_output",
+    model=settings.bailian_fast_model,
+    input_arg="messages",
+    input_format="messages",
+    kind="generation",
 )
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
-async def _invoke_skill_output(llm: Any, prompt: str) -> str:
+async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
-    response = await ainvoke_model(llm, prompt)
+    response = await ainvoke_model(llm, messages, timeout=120)
     content = response.content.strip()
     if not content:
         raise ValueError("技能内容不能为空")
     return content
-
-
-def _build_skill_update(
-    skill: LoadedSkill,
-    key: SkillMemoryKey,
-    result: dict[str, Any],
-    content: str,
-) -> SkillWorkerGraphState:
-    """回传展示内容，沿用指标完整成功且检索正常的缓存写入条件。"""
-    output: dict[str, Any] = {
-        "skill_name": skill.name,
-        "name": skill.scoring.name,
-        "content": content,
-        "thought_context": result["thought_context"],
-        "cache_hit": False,
-    }
-    update: SkillWorkerGraphState = {"skill_result": output}
-    if (
-        not content.strip()
-        or result["status"] != "ok"
-        or result["thought_context"]["status"] not in {"ok", "no_results"}
-    ):
-        return update
-    cached_content = SkillMemoryContent(
-        content=validate_skill_memory(content, key),
-        thought_context=result["thought_context"],
-    )
-    update["skill_memory"] = {
-        key.cache_key: cached_content.model_dump_json(ensure_ascii=False)
-    }
-    return update
 
 
 def skill_worker_step_limit(metric_count: int) -> int:
@@ -433,18 +364,6 @@ def make_check_metrics() -> Callable[
                 result = aggregate_skill_results(
                     skill, [records[metric.id] for metric in skill.scoring.metrics]
                 )
-                if settings.skill_execution_capture_enabled:
-                    append_node_candidate(
-                        node="skill_execution",
-                        scope=state["scope"],
-                        input={
-                            "model": settings.bailian_fast_model,
-                            "skill": skill,
-                            "evidence": state["evidence"],
-                        },
-                        actual_output=result,
-                        path=settings.skill_execution_capture_path,
-                    )
                 update = {"metric_result": result}
             if settings.check_metrics_capture_enabled:
                 append_node_candidate(
@@ -480,55 +399,51 @@ def make_generate_content(
 
     @timed_node
     async def generate_content(state: SkillWorkerGraphState) -> dict[str, Any]:
-        with trace_span("crypto.skill.generate_content") as node_span:
-            try:
-                skill = state["skill"]
-                key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
-                analysis_subject = (
-                    "加密市场"
-                    if key.asset_scope == "GLOBAL"
-                    else state["scope"]["target_asset"]
-                )
-                thought_context = _select_thought_context(
-                    await _retrieve_thought_context(retriever, skill, analysis_subject)
-                )
-                result = {
-                    **state["metric_result"],
-                    "thought_context": thought_context,
-                    "scope": dict(state["scope"]),
-                }
-                loader = SkillLoader.from_snapshot(
-                    {state["skill_name"]: state["skill_source"]}
-                )
-                content = await generate_skill(
-                    bailian_fast_llm, loader, skill, result, analysis_subject
-                )
-                update = {
-                    "skill_result": {
-                        "skill_name": skill.name,
-                        "name": skill.scoring.name,
-                        "content": content,
-                        "thought_context": thought_context,
-                        "cache_hit": False,
-                    }
-                }
-                if settings.generate_content_capture_enabled:
-                    append_node_candidate(
-                        node="generate_content",
-                        scope=state["scope"],
-                        input={
-                            "skill_name": state["skill_name"],
-                            "skill_source": state["skill_source"],
-                            "metric_result": state["metric_result"],
-                            "analysis_subject": analysis_subject,
-                        },
-                        actual_output=update,
-                        path=settings.generate_content_capture_path,
-                    )
-                return update
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        skill = state["skill"]
+        key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
+        analysis_subject = (
+            "加密市场"
+            if key.asset_scope == "GLOBAL"
+            else state["scope"]["target_asset"]
+        )
+        thought_context = _select_thought_context(
+            await _retrieve_thought_context(retriever, skill, analysis_subject)
+        )
+        indicators = [
+            {**item, "field_labels": metric_field_labels(item["indicator_id"])}
+            for item in state["metric_result"]["indicators"]
+            if item["status"] == "ok"
+        ]
+        messages = skill_output_messages(
+            analysis_subject=analysis_subject,
+            skill_name=skill.name,
+            indicators=indicators,
+        )
+        # 技能内容直接使用 Markdown 正文，避免外层 JSON 转义。
+        content = await _invoke_skill_output(bailian_fast_llm, messages)
+        update = {
+            "skill_result": {
+                "skill_name": skill.name,
+                "name": skill.scoring.name,
+                "content": content,
+                "thought_context": thought_context,
+                "cache_hit": False,
+            }
+        }
+        if settings.generate_content_capture_enabled:
+            append_node_candidate(
+                node="generate_content",
+                scope=state["scope"],
+                input={
+                    "skill_name": state["skill_name"],
+                    "skill_source": state["skill_source"],
+                    "metric_result": state["metric_result"],
+                    "analysis_subject": analysis_subject,
+                },
+                actual_output=update,
+                path=settings.generate_content_capture_path,
+            )
+        return update
 
     return generate_content
 
@@ -540,30 +455,23 @@ def make_finalize_skill() -> Callable[
 
     @timed_node
     async def finalize_skill(state: SkillWorkerGraphState) -> dict[str, Any]:
-        skill = state["skill"]
+        output = state["skill_result"]
+        update: dict[str, Any] = {"skill_result": output}
         if state["cached_memory"] is not None:
-            update = {"skill_result": state["skill_result"]}
-        else:
-            output = state["skill_result"]
-            result = {
-                **state["metric_result"],
-                "thought_context": output["thought_context"],
-            }
-            key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
-            update = _build_skill_update(skill, key, result, output["content"])
-        if settings.finalize_skill_capture_enabled:
-            append_node_candidate(
-                node="finalize_skill",
-                scope=state["scope"],
-                input={
-                    "skill": skill,
-                    "cached_memory": state["cached_memory"],
-                    "skill_result": state["skill_result"],
-                    "metric_result": state.get("metric_result"),
-                },
-                actual_output=update,
-                path=settings.finalize_skill_capture_path,
-            )
+            return update
+        thought_context = output["thought_context"]
+        if state["metric_result"]["status"] != "ok" or thought_context[
+            "status"
+        ] not in {"ok", "no_results"}:
+            return update
+        key = resolve_memory_key(state["scope"]["target_asset"], state["skill"].name)
+        cached_content = SkillMemoryContent(
+            content=output["content"],
+            thought_context=thought_context,
+        )
+        update["skill_memory"] = {
+            key.cache_key: cached_content.model_dump_json(ensure_ascii=False)
+        }
         return update
 
     return finalize_skill

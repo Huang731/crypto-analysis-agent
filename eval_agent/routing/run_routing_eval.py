@@ -13,7 +13,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 from langfuse import Evaluation, Langfuse, get_client
 from langfuse.api import DatasetItem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -26,7 +25,7 @@ from app.orchestration.routing import (
     RouteTarget,
     _invoke_route_decision,
 )
-from prompts.routing import routing_prompt
+from prompts.routing import routing_messages, routing_prompt
 
 
 class RoutingInput(BaseModel):
@@ -86,10 +85,7 @@ async def evaluate_route(
         metadata={"model": settings.bailian_fast_model},
     ) as observation:
         try:
-            messages = [
-                SystemMessage(content=routing_prompt()),
-                HumanMessage(content=question.resolved_question),
-            ]
+            messages = routing_messages(question.resolved_question)
             decision = await _invoke_route_decision(llm, messages)
             output = RoutingOutput(
                 decision=decision,

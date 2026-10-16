@@ -3,7 +3,7 @@
 from typing import Annotated, Any, Literal
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -23,7 +23,7 @@ from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import trace_generation_call, trace_span
-from prompts.routing import routing_prompt
+from prompts.routing import routing_messages
 
 _LOG = get_logger("crypto_analysis.routing")
 RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
@@ -63,10 +63,12 @@ class RouteDecision(BaseModel):
 )
 async def _invoke_route_decision(
     llm: BaseChatModel,
-    messages: list[SystemMessage | HumanMessage],
+    messages: list[BaseMessage],
 ) -> RouteDecision:
     """保留路由追踪，对结构化调用和校验整体重试。"""
-    decision = await ainvoke_structured(llm, messages, schema=RouteDecision)
+    decision = await ainvoke_structured(
+        llm, messages, schema=RouteDecision, timeout=120
+    )
     if decision is None:
         raise ValueError("路由模型返回了空决策")
     return decision
@@ -167,10 +169,7 @@ def build_routing_graph(
     @timed_node
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
-        messages = [
-            SystemMessage(content=routing_prompt()),
-            HumanMessage(content=state["resolved_question"]),
-        ]
+        messages = routing_messages(state["resolved_question"])
         decision: RouteDecision = await _invoke_route_decision(
             glm_4_flash_llm,
             messages,
