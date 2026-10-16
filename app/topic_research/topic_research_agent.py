@@ -31,12 +31,14 @@ from app.config.config import settings  # 读取模型配置用于成本估算�
 from app.llm.model import (
     ainvoke_agent_model,
     ainvoke_model,
-    make_fast_llm,
-    make_smart_llm,
+    make_glm_4_flash_llm,
+    make_glm_smart_llm,
     with_thinking,
+    zhipuai_model_session,
 )
 from app.observability import timed_node  # 保留节点耗时观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
+    RESEARCH_EVIDENCE_TARGET,
     AnalysisState,
     ResearchAgentState,
     SystemState,
@@ -75,7 +77,7 @@ def _latest_question(
 
 
 def make_split(
-    fast_llm: Any,
+    glm_4_flash_llm: Any,
 ) -> Callable[
     [AnalysisState], Awaitable[dict[str, list[str]]]
 ]:  # 创建研究主题拆解节点。
@@ -87,7 +89,7 @@ def make_split(
             try:
                 prompt = split_prompt(state["question"])  # 提供原始研究主题。
                 response = await _invoke_traced_model(
-                    fast_llm, prompt, "topic_split", settings.fast_model
+                    glm_4_flash_llm, prompt, "topic_split", settings.glm_4_flash_model
                 )
                 if not isinstance(response.content, str):  # 消息内容必须是文本。
                     raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
@@ -135,7 +137,7 @@ class ResearchModelTrace(AgentMiddleware):
 
     @trace_generation_call(
         name="topic_researcher",
-        model=settings.fast_model,
+        model=settings.glm_4_flash_model,
         input_arg="request",
         input_format="model_request",
         output_attr="result",
@@ -146,7 +148,31 @@ class ResearchModelTrace(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        return await ainvoke_agent_model(lambda: handler(request), timeout=60)
+        if len(request.state.get("research_evidence", {})) >= RESEARCH_EVIDENCE_TARGET:
+            request = request.override(tools=[], tool_choice="none")
+        response = await ainvoke_agent_model(lambda: handler(request), timeout=60)
+        previous_calls = [
+            call
+            for message in request.messages
+            if isinstance(message, AIMessage)
+            for call in message.tool_calls
+        ]
+        for message in response.result:
+            if not isinstance(message, AIMessage):
+                continue
+            for call in message.tool_calls:
+                if any(
+                    previous["name"] == call["name"]
+                    and previous["args"] == call["args"]
+                    for previous in previous_calls
+                ):
+                    # 重复调用不写入历史，关闭工具后根据已有结果结束研究。
+                    request = request.override(tools=[], tool_choice="none")
+                    return await ainvoke_agent_model(
+                        lambda request=request: handler(request), timeout=60
+                    )
+                previous_calls.append(call)
+        return response
 
     async def awrap_tool_call(
         self,
@@ -184,10 +210,10 @@ class ResearchModelTrace(AgentMiddleware):
                 )
 
 
-def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
+def build_research_agent(glm_4_flash_llm: Any) -> CompiledStateGraph:
     """复用工具图，每次执行通过上下文注入独立浏览会话。"""
     return create_agent(
-        model=fast_llm,
+        model=glm_4_flash_llm,
         tools=[*build_web_search_tools(), *build_browser_tools()],
         state_schema=ResearchAgentState,
         context_schema=BrowserContext,
@@ -199,10 +225,10 @@ def build_research_agent(fast_llm: Any) -> CompiledStateGraph:
 
 
 def make_researcher(
-    fast_llm: Any,
+    glm_4_flash_llm: Any,
 ) -> Callable[[dict[str, Any]], Awaitable[dict[str, list[dict[str, Any]]]]]:
     """让研究 Agent 搜索、浏览原文，再根据实际工具证据分析子问题。"""
-    research_agent = build_research_agent(fast_llm)
+    research_agent = build_research_agent(glm_4_flash_llm)
 
     @timed_node
     async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
@@ -270,12 +296,12 @@ def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全
 
 
 def make_summarize(
-    smart_llm: Any,
+    glm_smart_llm: Any,
 ) -> Callable[[AnalysisState], Awaitable[dict[str, str]]]:  # 创建全部发现的汇总节点。
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    smart_llm = with_thinking(smart_llm, False)
+    glm_smart_llm = with_thinking(glm_smart_llm, False)
 
     @timed_node  # 延续原图的节点观测。
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
@@ -290,7 +316,10 @@ def make_summarize(
                     json.dumps(findings, ensure_ascii=False)
                 )  # 提供全部并行结果。
                 response = await _invoke_traced_model(
-                    smart_llm, prompt, "topic_summarize", settings.smart_model
+                    glm_smart_llm,
+                    prompt,
+                    "topic_summarize",
+                    settings.glm_smart_model,
                 )
                 if (
                     not isinstance(response.content, str)
@@ -308,12 +337,12 @@ def make_summarize(
 
 
 def build_analysis_sub_graph(
-    smart_llm: Any, fast_llm: Any
+    glm_smart_llm: Any, glm_4_flash_llm: Any
 ) -> CompiledStateGraph:  # 保留原有拆题并行汇总子图。
     graph = StateGraph(AnalysisState)  # 创建研究子图。
-    graph.add_node("split", make_split(fast_llm))  # 先拆分研究主题。
-    graph.add_node("researcher", make_researcher(fast_llm))  # 并行分析各子问题。
-    graph.add_node("summarize", make_summarize(smart_llm))  # 汇总全部发现。
+    graph.add_node("split", make_split(glm_4_flash_llm))  # 先拆分研究主题。
+    graph.add_node("researcher", make_researcher(glm_4_flash_llm))  # 并行分析各子问题。
+    graph.add_node("summarize", make_summarize(glm_smart_llm))  # 汇总全部发现。
     graph.add_edge(START, "split")  # 从拆题进入子图。
     graph.add_conditional_edges("split", send_subquestions)  # 使用 Send 分派三个任务。
     graph.add_edge("researcher", "summarize")  # 等待并行研究结束后汇总。
@@ -349,7 +378,7 @@ def make_research_team(
 
 
 def make_writer(
-    smart_llm: Any,
+    glm_smart_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告写作节点。
     """依据研究摘要写报告，并处理审稿意见。"""
 
@@ -366,9 +395,9 @@ def make_writer(
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = with_thinking(smart_llm, False)
+                writer_llm = with_thinking(glm_smart_llm, False)
                 response = await _invoke_traced_model(
-                    writer_llm, prompt, "topic_writer", settings.smart_model
+                    writer_llm, prompt, "topic_writer", settings.glm_smart_model
                 )
                 if (
                     not isinstance(response.content, str)
@@ -396,12 +425,12 @@ def make_writer(
 
 
 def make_reviewer(
-    smart_llm: Any,
+    glm_smart_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    smart_llm = with_thinking(smart_llm, False)
+    glm_smart_llm = with_thinking(glm_smart_llm, False)
 
     @timed_node  # 保留审稿耗时日志。
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。
@@ -414,7 +443,10 @@ def make_reviewer(
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 提供实际生成的报告。
                 response = await _invoke_traced_model(
-                    smart_llm, prompt, "topic_reviewer", settings.smart_model
+                    glm_smart_llm,
+                    prompt,
+                    "topic_reviewer",
+                    settings.glm_smart_model,
                 )
                 if (
                     not isinstance(response.content, str)
@@ -460,14 +492,16 @@ def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有�
 
 
 def build_topic_research_agent(
-    smart_llm: Any, fast_llm: Any
+    glm_smart_llm: Any, glm_4_flash_llm: Any
 ) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
     """把主题研究子图封装为 路由 可调用的 Agent。"""
-    sub_graph = build_analysis_sub_graph(smart_llm, fast_llm)  # 复用拆题并行汇总设计。
+    sub_graph = build_analysis_sub_graph(
+        glm_smart_llm, glm_4_flash_llm
+    )  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
-    builder.add_node("writer", make_writer(smart_llm))  # 报告写作节点。
-    builder.add_node("reviewer", make_reviewer(smart_llm))  # 有界审稿节点。
+    builder.add_node("writer", make_writer(glm_smart_llm))  # 报告写作节点。
+    builder.add_node("reviewer", make_reviewer(glm_smart_llm))  # 有界审稿节点。
     builder.add_edge(START, "research_team")  # 从用户问题开始研究。
     builder.add_edge("research_team", "writer")  # 研究完成后写报告。
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。
@@ -480,27 +514,29 @@ async def main() -> None:  # 保留原有命令行入口。
     question = (
         " ".join(sys.argv[1:]).strip() or "分析人工智能对教育行业的影响"
     )  # 读取用户研究主题。
-    agent = build_topic_research_agent(
-        make_smart_llm(), make_fast_llm()
-    )  # 创建主题研究图。
-    with start_trace(
-        "topic_research.cli", question_chars=len(question)
-    ) as trace:  # 为命令行运行建立根 trace。
-        result = await agent.ainvoke(
-            {
-                "scope": {
-                    "original_question": question,
-                    "resolved_question": question,
-                    "as_of": datetime.now(timezone.utc).isoformat(),
-                },
-                "findings": [],
-            }
-        )  # 直接运行父图。
-        trace.output = {
-            "status": "done",
-            "report_chars": len(result["report"]),
-        }  # 只记录结果状态和长度。
-        print(result["report"])  # 输出已通过审稿的报告。
+    async with zhipuai_model_session() as client:
+        agent = build_topic_research_agent(
+            make_glm_smart_llm(async_client=client),
+            make_glm_4_flash_llm(async_client=client),
+        )  # 创建主题研究图。
+        with start_trace(
+            "topic_research.cli", question_chars=len(question)
+        ) as trace:  # 为命令行运行建立根 trace。
+            result = await agent.ainvoke(
+                {
+                    "scope": {
+                        "original_question": question,
+                        "resolved_question": question,
+                        "as_of": datetime.now(timezone.utc).isoformat(),
+                    },
+                    "findings": [],
+                }
+            )  # 直接运行父图。
+            trace.output = {
+                "status": "done",
+                "report_chars": len(result["report"]),
+            }  # 只记录结果状态和长度。
+            print(result["report"])  # 输出已通过审稿的报告。
 
 
 if __name__ == "__main__":  # 仅在直接运行模块时执行示例。

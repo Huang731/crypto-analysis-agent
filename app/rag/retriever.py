@@ -12,7 +12,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
 from app.config.config import settings
-from app.llm.model import make_fast_llm, rerank
+from app.llm.model import make_bailian_fast_llm, rerank
 from app.rag.ingest import get_vectorstore
 from app.tracing import trace_generation_call, trace_span
 
@@ -61,7 +61,7 @@ def build_hybrid_retriever() -> BaseRetriever:
             if settings.enable_multi_query:
                 return MultiQueryRetriever.from_llm(
                     retriever=hybrid,
-                    llm=make_fast_llm(),
+                    llm=make_bailian_fast_llm(),
                 )
             return hybrid
         except Exception:

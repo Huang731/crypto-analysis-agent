@@ -6,7 +6,7 @@ from typing import Annotated, Any
 from langchain.agents import AgentState
 from typing_extensions import TypedDict
 
-RESEARCH_EVIDENCE_TARGET = 3  # 每个子问题需要三个不同网页的原文证据。
+RESEARCH_EVIDENCE_TARGET = 1  # 每个子问题取得一条网页原文证据后结束取证。
 
 
 class SystemState(TypedDict, total=False):
@@ -33,7 +33,7 @@ def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any
 
 
 def _merge_evidence(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    """按实际页面 URL 去重，并行工具结果最多保留三个原文证据。"""
+    """按实际页面 URL 去重，并行工具结果最多保留一条原文证据。"""
     records = left.copy()
     urls = {item["url"] for item in records.values()}
     for key, item in right.items():

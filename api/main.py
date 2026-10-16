@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Annotated
 
 from aiohttp import ClientSession
+from httpx import AsyncClient
 
 if __package__ in (None, ""):
     # 以 `python api/main.py` 直接运行时，sys.path[0] 是 api/ 而非项目根目录。
@@ -27,7 +28,14 @@ from sse_starlette.sse import EventSourceResponse
 from api.schemas import AskRequest
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
-from app.llm.model import make_fast_llm, make_smart_llm, model_session
+from app.llm.model import (
+    make_bailian_fast_llm,
+    make_bailian_smart_llm,
+    make_glm_4_flash_llm,
+    make_glm_smart_llm,
+    model_session,
+    zhipuai_model_session,
+)
 from app.observability import (
     bind_request_context,
     get_logger,
@@ -54,11 +62,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         async with (
-            model_session() as client,
+            model_session() as bailian_client,
+            zhipuai_model_session() as zhipuai_client,
             AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer,
         ):
             app.state.routing_service = _build_routing_service(
-                retriever, checkpointer, client
+                retriever=retriever,
+                checkpointer=checkpointer,
+                bailian_client=bailian_client,
+                zhipuai_client=zhipuai_client,
             )
             yield
     finally:
@@ -98,14 +110,25 @@ def _elapsed_ms(started: float) -> int:
 
 
 def _build_routing_service(
+    *,
     retriever: KBRetriever,
     checkpointer: BaseCheckpointSaver,
-    client: ClientSession,
+    bailian_client: ClientSession,
+    zhipuai_client: AsyncClient,
 ) -> RoutingService:
-    """构建共享检索器和会话存储的路由图，由应用生命周期持有。"""
-    smart = make_smart_llm(async_client=client)
-    fast = make_fast_llm(async_client=client)
-    graph = build_routing_graph(smart, fast, retriever, checkpointer=checkpointer)
+    """集中组装两组模型，复用各自连接并显式注入路由图。"""
+    bailian_smart_llm = make_bailian_smart_llm(async_client=bailian_client)
+    bailian_fast_llm = make_bailian_fast_llm(async_client=bailian_client)
+    glm_smart_llm = make_glm_smart_llm(async_client=zhipuai_client)
+    glm_4_flash_llm = make_glm_4_flash_llm(async_client=zhipuai_client)
+    graph = build_routing_graph(
+        bailian_smart_llm=bailian_smart_llm,
+        bailian_fast_llm=bailian_fast_llm,
+        retriever=retriever,
+        checkpointer=checkpointer,
+        glm_smart_llm=glm_smart_llm,
+        glm_4_flash_llm=glm_4_flash_llm,
+    )
     return RoutingService(graph)
 
 

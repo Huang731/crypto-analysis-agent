@@ -40,9 +40,9 @@ from app.crypto_analysis.crypto_analysis_sub_agent import (
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
 from app.llm.model import (
-    make_fast_llm,
+    make_bailian_fast_llm,
+    make_bailian_smart_llm,
     make_model,
-    make_smart_llm,
     model_error_message,
     model_session,
 )
@@ -389,10 +389,10 @@ async def evaluate_skill(
     replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
     async with model_session() as http_client:
-        if inputs.metric_agent.model == settings.fast_model:
-            llm = make_fast_llm(async_client=http_client)
-        elif inputs.metric_agent.model == settings.smart_model:
-            llm = make_smart_llm(async_client=http_client)
+        if inputs.metric_agent.model == settings.bailian_fast_model:
+            llm = make_bailian_fast_llm(async_client=http_client)
+        elif inputs.metric_agent.model == settings.bailian_smart_model:
+            llm = make_bailian_smart_llm(async_client=http_client)
         else:
             # 历史案例继续使用其明确记录的文本模型，不改写案例标签。
             llm = make_model(

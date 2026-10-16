@@ -37,7 +37,7 @@ async def rewrite_question(
 
 @trace_generation_call(
     name="question_rewriter",
-    model=settings.fast_model,
+    model=settings.bailian_fast_model,
     input_arg="messages",
     input_format="messages",
 )

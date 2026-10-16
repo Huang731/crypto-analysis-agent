@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     # 问答接口尚无访问认证，先通过 SSH 隧道访问。
     ports:
-      - "127.0.0.1:8003:8003"
+      - "0.0.0.0:8003:8003"
     env_file:
       - .env
     environment:

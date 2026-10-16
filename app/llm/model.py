@@ -1,4 +1,4 @@
-"""统一百炼模型创建、调用策略和协议转换。"""
+"""统一模型创建、调用策略与百炼协议适配。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from http import HTTPStatus
 from typing import Any, Literal, TypeVar
 
 import aiohttp
+import httpx
 import truststore
 from dashscope import (
     AioGeneration,
@@ -30,6 +31,7 @@ from langchain_core.output_parsers.openai_tools import PydanticToolsParser
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import Runnable, RunnableBinding
 from langchain_core.tools import BaseTool
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, SecretStr
 from tenacity import (
     retry,
@@ -58,8 +60,8 @@ def make_model(
     timeout = settings.model_timeout
     if protocol is None:
         protocol = {
-            "smart": settings.smart_model_protocol,
-            "fast": settings.fast_model_protocol,
+            "smart": settings.bailian_smart_model_protocol,
+            "fast": settings.bailian_fast_model_protocol,
             "vision": "multimodal",
         }[role]
     params: dict[str, Any] = {
@@ -85,24 +87,73 @@ def make_model(
     return model
 
 
-def make_smart_llm(
+def make_bailian_smart_llm(
     *, async_client: aiohttp.ClientSession | None = None
 ) -> LoggedChatTongyi:
     """创建决策和写作模型，保留模型自身的默认思考配置。"""
-    return make_model(settings.smart_model, async_client=async_client, role="smart")
+    return make_model(
+        settings.bailian_smart_model, async_client=async_client, role="smart"
+    )
 
 
-def make_fast_llm(
+def make_bailian_fast_llm(
     *, async_client: aiohttp.ClientSession | None = None
 ) -> LoggedChatTongyi:
     """创建执行模型，沿用非思考模式。"""
     return make_model(
-        settings.fast_model, async_client=async_client, role="fast", thinking=False
+        settings.bailian_fast_model,
+        async_client=async_client,
+        role="fast",
+        thinking=False,
     )
+
+
+def _zhipuai_api_key() -> str:
+    """请求智谱前校验密钥，避免未配置主题研究时阻断其他功能启动。"""
+    key = settings.zhipuai_api_key.strip()
+    if not key or key.startswith("xxxx"):
+        raise ValueError("未配置 ZHIPUAI_API_KEY")
+    return key
+
+
+def _make_zhipuai_llm(
+    model_name: str, *, async_client: httpx.AsyncClient | None = None
+) -> ChatOpenAI:
+    """主题研究直连智谱，超时与重试沿用统一调用层。"""
+    return ChatOpenAI(
+        model=model_name,
+        api_key=_zhipuai_api_key,
+        base_url=settings.zhipuai_base_url,
+        timeout=settings.model_timeout,
+        # 由 ainvoke_model 和 ainvoke_agent_model 统一重试，避免叠加。
+        max_retries=0,
+        use_responses_api=False,
+        stream_usage=True,
+        http_async_client=async_client,
+    )
+
+
+def make_glm_smart_llm(*, async_client: httpx.AsyncClient | None = None) -> ChatOpenAI:
+    """创建主题研究的汇总、写作和审稿模型，思考配置由节点绑定。"""
+    return _make_zhipuai_llm(settings.glm_smart_model, async_client=async_client)
+
+
+def make_glm_4_flash_llm(
+    *, async_client: httpx.AsyncClient | None = None
+) -> ChatOpenAI:
+    """创建主题研究的拆题和工具执行模型。"""
+    return _make_zhipuai_llm(settings.glm_4_flash_model, async_client=async_client)
 
 
 def with_thinking(model: Any, enabled: bool) -> Any:
     """生成独立的节点参数绑定，不修改共享模型。"""
+    if isinstance(model, ChatOpenAI):
+        return model.bind(
+            extra_body={
+                **(model.extra_body or {}),
+                "thinking": {"type": "enabled" if enabled else "disabled"},
+            }
+        )
     return model.bind(enable_thinking=enabled)
 
 
@@ -206,6 +257,15 @@ async def model_session(
         yield session
 
 
+@asynccontextmanager
+async def zhipuai_model_session() -> AsyncIterator[httpx.AsyncClient]:
+    """主题研究共享异步连接，随应用或命令行生命周期关闭。"""
+    async with httpx.AsyncClient(
+        verify=truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ) as session:
+        yield session
+
+
 def _api_key() -> str:
     key = settings.dashscope_api_key.strip()
     if not key or key.startswith("xxxx"):
@@ -238,8 +298,9 @@ def _check_response(response: Any) -> Any:
 def model_error_message(error: Exception) -> str:
     """统一错误脱敏，避免对空密钥执行字符串替换。"""
     message = str(error)
-    if settings.dashscope_api_key:
-        message = message.replace(settings.dashscope_api_key, "[已隐藏]")
+    for key in (settings.dashscope_api_key, settings.zhipuai_api_key):
+        if key:
+            message = message.replace(key, "[已隐藏]")
     return message
 
 

@@ -21,8 +21,8 @@ from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import (
     ainvoke_structured,
-    make_fast_llm,
-    make_smart_llm,
+    make_bailian_fast_llm,
+    make_bailian_smart_llm,
     model_error_message,
     model_session,
     with_thinking,
@@ -410,9 +410,11 @@ async def evaluate(
         async with AsyncExitStack() as stack:
             generation_http = await stack.enter_async_context(model_session())
             judge_http = await stack.enter_async_context(model_session())
-            generator = make_fast_llm(async_client=generation_http)
+            generator = make_bailian_fast_llm(async_client=generation_http)
             judge_factory = (
-                make_fast_llm if judge_model == settings.fast_model else make_smart_llm
+                make_bailian_fast_llm
+                if judge_model == settings.bailian_fast_model
+                else make_bailian_smart_llm
             )
             judge = judge_factory(async_client=judge_http).with_config(
                 callbacks=[judge_counter]
@@ -842,8 +844,8 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument(
         "--judge-model",
-        choices=(settings.fast_model, settings.smart_model),
-        default=settings.smart_model,
+        choices=(settings.bailian_fast_model, settings.bailian_smart_model),
+        default=settings.bailian_smart_model,
     )
     parser.add_argument("--system-certificates", action="store_true")
     args = parser.parse_args()
@@ -869,7 +871,7 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     metadata = {
-        "generator_model": settings.fast_model,
+        "generator_model": settings.bailian_fast_model,
         "judge_model": args.judge_model,
         "scoring_method": "project_llm_judge_v2",
         "faithfulness_definition": "正确表格字段与有证据支持的正文句子占全部待评字段及句子的比例；句内全部事实须有依据",

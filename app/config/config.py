@@ -1,4 +1,4 @@
-"""运行环境配置；模型调用统一使用百炼，分析规则保留在 skills/ 中。"""
+"""运行环境配置；按 Agent 配置模型服务，分析规则保留在 skills/ 中。"""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +29,7 @@ class Settings(BaseSettings):
         env_file=_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
@@ -38,13 +39,35 @@ class Settings(BaseSettings):
     model_timeout: float = Field(default=120.0, gt=0)
     model_max_attempts: int = Field(default=2, ge=1)
 
-    # 聊天模型：保留 smart/fast 职责，通过协议字段明确选择原生接口。
-    # smart 用于规划、报告和审核；当前 GLM 使用文本接口。
-    smart_model: str = "glm-5.1"
-    smart_model_protocol: Literal["text", "multimodal"] = "text"
-    # fast 用于改写、路由、指标工具决策和技能表格，使用文本接口。
-    fast_model: str = "qwen3.7-flash-2026-07-15"
-    fast_model_protocol: Literal["text", "multimodal"] = "multimodal"
+    # 百炼模型：保留 smart/fast 职责，并兼容已有环境变量名称。
+    # smart 为百炼高能力模型，当前使用文本接口。
+    bailian_smart_model: str = Field(
+        default="glm-5.1",
+        validation_alias=AliasChoices("BAILIAN_SMART_MODEL", "SMART_MODEL"),
+    )
+    bailian_smart_model_protocol: Literal["text", "multimodal"] = Field(
+        default="text",
+        validation_alias=AliasChoices(
+            "BAILIAN_SMART_MODEL_PROTOCOL", "SMART_MODEL_PROTOCOL"
+        ),
+    )
+    # fast 用于指标工具决策、技能表格和检索改写。
+    bailian_fast_model: str = Field(
+        default="qwen3.7-flash-2026-07-15",
+        validation_alias=AliasChoices("BAILIAN_FAST_MODEL", "FAST_MODEL"),
+    )
+    bailian_fast_model_protocol: Literal["text", "multimodal"] = Field(
+        default="multimodal",
+        validation_alias=AliasChoices(
+            "BAILIAN_FAST_MODEL_PROTOCOL", "FAST_MODEL_PROTOCOL"
+        ),
+    )
+
+    # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
+    zhipuai_api_key: str = Field(default="", repr=False, description="智谱 API Key")
+    zhipuai_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    glm_smart_model: str = "glm-4.5-air"
+    glm_4_flash_model: str = "glm-4-flash"
 
     # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
     # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
@@ -86,7 +109,7 @@ class Settings(BaseSettings):
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
 
     # 评测候选采集：保存实际输入输出供人工标注，不直接作为标准答案。
-    routing_capture_enabled: bool = False
+    routing_capture_enabled: bool = True
     routing_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "routing" / "routing_candidates.jsonl"
     )

@@ -55,10 +55,10 @@ from prompts.crypto_analysis import (
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
 
-@trace_generation_call(name="crypto_history_summary", model=settings.fast_model)
+@trace_generation_call(name="crypto_history_summary", model=settings.glm_4_flash_model)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
-    # 历史摘要使用执行模型，沿用模型工厂的思考配置。
+    # 历史摘要使用 GLM-4-Flash，沿用统一调用的重试和超时。
     summary = await ainvoke_text(llm, prompt)
     if not summary:
         raise ValueError("历史摘要不能为空")
@@ -95,7 +95,7 @@ async def _invoke_structured_model(
     return response
 
 
-@trace_generation_call(name="crypto_analysis_writer", model=settings.smart_model)
+@trace_generation_call(name="crypto_analysis_writer", model=settings.glm_smart_model)
 async def _invoke_report_text(
     llm: Any,
     prompt: str,
@@ -155,7 +155,7 @@ class ReportReview(BaseModel):
 async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
     """单次审核限定超时，调用、解析或超时异常整体最多尝试两次。"""
     result = await _invoke_structured_model(
-        llm, ReportReview, prompt, "crypto_report_review", settings.smart_model
+        llm, ReportReview, prompt, "crypto_report_review", settings.glm_smart_model
     )
     return ReportReview.model_validate(result)
 
@@ -186,7 +186,7 @@ async def create_analysis_plan(
         AnalysisPlan,
         prompt,
         "crypto_analysis_plan",
-        settings.smart_model,
+        settings.glm_4_flash_model,
     )
     return plan.model_dump()
 
@@ -269,7 +269,7 @@ def make_skill_worker(
 
 
 def make_plan(
-    fast_llm: Any,
+    glm_4_flash_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建本轮技能规划节点。"""
 
@@ -282,7 +282,7 @@ def make_plan(
                 if not isinstance(question, str) or not question.strip():
                     raise ValueError("技能分析缺少有效用户问题")
                 selection = await create_analysis_plan(
-                    fast_llm,
+                    glm_4_flash_llm,
                     question,
                     skill_loader.format_skill_descriptions(),
                 )
@@ -346,7 +346,9 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
     ]
 
 
-def make_writer(smart_llm: Any) -> Callable[..., Awaitable[dict[str, Any]]]:
+def make_writer(
+    glm_smart_llm: BaseChatModel,
+) -> Callable[..., Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
     @timed_node
@@ -383,7 +385,7 @@ def make_writer(smart_llm: Any) -> Callable[..., Awaitable[dict[str, Any]]]:
                     previous_report=state["report"],
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = with_thinking(smart_llm, False)
+                writer_llm = with_thinking(glm_smart_llm, False)
                 report = await _invoke_report_text(
                     writer_llm,
                     prompt,
@@ -400,7 +402,7 @@ def make_writer(smart_llm: Any) -> Callable[..., Awaitable[dict[str, Any]]]:
 
 
 def make_reviewer(
-    smart_llm: Any,
+    glm_smart_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建报告审核节点，保留原有审核规则。"""
 
@@ -423,7 +425,7 @@ def make_reviewer(
                     history_summary=state["history_summary"],
                 )
                 # 复用结构化调用的流标记，审核内容不进入报告正文。
-                review = await _invoke_report_review(smart_llm, prompt)
+                review = await _invoke_report_review(glm_smart_llm, prompt)
                 node_span.output = {
                     "review_process": review.review_process,
                     "passed": review.passed,
@@ -456,7 +458,7 @@ def route_after_review(state: DynamicAnalysisState) -> str:
 
 
 def make_summarize_history(
-    fast_llm: Any,
+    glm_4_flash_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, str]]]:
     """创建累计历史摘要节点。"""
 
@@ -469,23 +471,27 @@ def make_summarize_history(
             previous_summary=state.get("history_summary", ""),
             report=state["report"],
         )
-        summary = await _invoke_history_summary(fast_llm, prompt)
+        summary = await _invoke_history_summary(glm_4_flash_llm, prompt)
         return {"history_summary": summary}
 
     return summarize_history
 
 
 def build_crypto_analysis_parent_agent(
-    smart_llm: Any, fast_llm: Any, retriever: KBRetriever
+    glm_smart_llm: BaseChatModel,
+    bailian_fast_llm: Any,
+    retriever: KBRetriever,
+    *,
+    glm_4_flash_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
-    sub_graph = build_crypto_analysis_sub_agent(fast_llm, retriever)
+    sub_graph = build_crypto_analysis_sub_agent(bailian_fast_llm, retriever)
     builder = StateGraph(DynamicAnalysisState)
-    builder.add_node("plan", make_plan(fast_llm))
+    builder.add_node("plan", make_plan(glm_4_flash_llm))
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
-    builder.add_node("writer", make_writer(smart_llm))
-    builder.add_node("reviewer", make_reviewer(smart_llm))
-    builder.add_node("summarize_history", make_summarize_history(fast_llm))
+    builder.add_node("writer", make_writer(glm_smart_llm))
+    builder.add_node("reviewer", make_reviewer(glm_smart_llm))
+    builder.add_node("summarize_history", make_summarize_history(glm_4_flash_llm))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")

@@ -270,7 +270,7 @@ async def generate_skill(
     return content
 
 
-@trace_generation_call(name="crypto_skill_output", model=settings.fast_model)
+@trace_generation_call(name="crypto_skill_output", model=settings.bailian_fast_model)
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
@@ -321,7 +321,7 @@ def skill_worker_step_limit(metric_count: int) -> int:
 
 @trace_generation_call(
     name="crypto_metric_decision",
-    model=settings.fast_model,
+    model=settings.bailian_fast_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -404,7 +404,9 @@ def route_cache(state: SkillWorkerGraphState) -> Literal["hit", "miss"]:
     return "hit" if state["cached_memory"] is not None else "miss"
 
 
-def make_calculate_metrics(fast_llm: Any) -> Callable[..., Awaitable[list[Any]]]:
+def make_calculate_metrics(
+    bailian_fast_llm: Any,
+) -> Callable[..., Awaitable[list[Any]]]:
     """创建单轮模型决策及工具执行节点，循环交由子图控制。"""
 
     @timed_node
@@ -416,7 +418,7 @@ def make_calculate_metrics(fast_llm: Any) -> Callable[..., Awaitable[list[Any]]]
                 registry = get_tool_registry()
                 tools = [registry[name] for name in state["skill"].tools]
                 response = await _invoke_metric_decision(
-                    with_tools(fast_llm, tools),
+                    with_tools(bailian_fast_llm, tools),
                     [
                         SystemMessage(content=metric_agent_system_prompt()),
                         *state["messages"],
@@ -484,7 +486,7 @@ def make_check_metrics() -> Callable[
             if settings.skill_execution_capture_enabled:
                 # 拆图后仅保留节点耗时，不为执行候选补造整段指标耗时。
                 append_skill_execution_candidate(
-                    model_name=settings.fast_model,
+                    model_name=settings.bailian_fast_model,
                     skill=skill,
                     scope=state["scope"],
                     evidence=state["evidence"],
@@ -509,7 +511,7 @@ def route_metrics(
 
 
 def make_generate_content(
-    fast_llm: Any, retriever: KBRetriever
+    bailian_fast_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """创建思想检索及指标表格生成节点。"""
 
@@ -536,7 +538,7 @@ def make_generate_content(
                     {state["skill_name"]: state["skill_source"]}
                 )
                 content = await generate_skill(
-                    fast_llm, loader, skill, result, analysis_subject
+                    bailian_fast_llm, loader, skill, result, analysis_subject
                 )
                 return {
                     "skill_result": {
@@ -576,14 +578,16 @@ def make_finalize_skill() -> Callable[
 
 
 def build_crypto_analysis_sub_agent(
-    fast_llm: Any, retriever: KBRetriever
+    bailian_fast_llm: Any, retriever: KBRetriever
 ) -> CompiledStateGraph:
     """组装缓存分支、指标执行循环和技能内容生成子图。"""
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
-    graph.add_node("calculate_metrics", make_calculate_metrics(fast_llm))
+    graph.add_node("calculate_metrics", make_calculate_metrics(bailian_fast_llm))
     graph.add_node("check_metrics", make_check_metrics())
-    graph.add_node("generate_content", make_generate_content(fast_llm, retriever))
+    graph.add_node(
+        "generate_content", make_generate_content(bailian_fast_llm, retriever)
+    )
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(

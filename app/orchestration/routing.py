@@ -70,7 +70,7 @@ async def decide_route(
 
 @trace_generation_call(
     name="routing_decision",
-    model=settings.fast_model,
+    model=settings.bailian_fast_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -166,15 +166,22 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
 
 
 def build_routing_graph(
-    smart: BaseChatModel,
-    fast: BaseChatModel,
+    bailian_smart_llm: BaseChatModel,
+    bailian_fast_llm: BaseChatModel,
     retriever: KBRetriever,
     *,
     checkpointer: BaseCheckpointSaver,
+    glm_smart_llm: BaseChatModel,
+    glm_4_flash_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
-    crypto_agent = build_crypto_analysis_parent_agent(smart, fast, retriever)
-    topic_agent = build_topic_research_agent(smart, fast)
+    crypto_agent = build_crypto_analysis_parent_agent(
+        glm_smart_llm=glm_smart_llm,
+        bailian_fast_llm=bailian_fast_llm,
+        retriever=retriever,
+        glm_4_flash_llm=glm_4_flash_llm,
+    )
+    topic_agent = build_topic_research_agent(glm_smart_llm, glm_4_flash_llm)
 
     @timed_node
     async def rewrite(state: RoutingState) -> dict[str, Any]:
@@ -182,7 +189,7 @@ def build_routing_graph(
         original = state["scope"]["original_question"]
         with trace_span("question_rewriter", question_chars=len(original)) as span:
             question = await rewrite_question(
-                fast, original, state.get("previous_question", "")
+                glm_4_flash_llm, original, state.get("previous_question", "")
             )
             span.metadata["rewritten_chars"] = len(question)
         return {
@@ -193,7 +200,9 @@ def build_routing_graph(
     @timed_node
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
-        decision: RouteDecision = await decide_route(fast, state["resolved_question"])
+        decision: RouteDecision = await decide_route(
+            glm_4_flash_llm, state["resolved_question"]
+        )
         if settings.routing_capture_enabled:
             append_routing_candidate(
                 original_question=state["scope"]["original_question"],

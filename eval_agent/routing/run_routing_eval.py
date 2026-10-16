@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
-from app.llm.model import make_fast_llm, model_session
+from app.llm.model import make_bailian_fast_llm, model_session
 from app.orchestration.routing import (
     RouteCallState,
     RouteDecision,
@@ -84,7 +84,7 @@ async def evaluate_route(
             "system_prompt": routing_prompt(),
             "resolved_question": question.resolved_question,
         },
-        metadata={"model": settings.fast_model},
+        metadata={"model": settings.bailian_fast_model},
     ) as observation:
         try:
             decision = await decide_route(
@@ -282,7 +282,7 @@ def main() -> None:
         "working_tree_sha256": hashlib.sha256(
             (PROJECT_ROOT / "app" / "orchestration" / "routing.py").read_bytes()
         ).hexdigest(),
-        "model": settings.fast_model,
+        "model": settings.bailian_fast_model,
         "repetitions": str(args.repetitions),
         "case_count": str(len(cases)),
         "model_timeout_seconds": "120",
@@ -296,7 +296,7 @@ def main() -> None:
         question = RoutingInput.model_validate(item.input)
         # 使用显式独立连接，关闭时不影响 LangChain 缓存的业务客户端。
         async with model_session() as transport:
-            llm = make_fast_llm(async_client=transport)
+            llm = make_bailian_fast_llm(async_client=transport)
             output = await evaluate_route(llm, client, question)
         rows.append(
             {

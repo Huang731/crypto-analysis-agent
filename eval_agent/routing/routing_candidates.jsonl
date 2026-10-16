@@ -97,3 +97,5 @@
 {"case_id":"a364d7a771ad41b0aaac7628f6133647","original_question":"分析健康","input":{"resolved_question":"分析健康"},"actual_output":{"route":"direct","direct_reply":"“健康”是一个非常广泛的概念。请问您具体想了解哪方面的内容？例如：1. 某种特定疾病的成因与治疗；2. 日常养生、饮食或运动建议；3. 心理健康知识；4. 医疗行业政策或公司研究？请提供更具体的方向，以便我为您提供准确信息。"}}
 {"case_id":"4a8b204756584791bd2dbd8a57cecf3e","original_question":"分析健康的主题","input":{"resolved_question":"分析健康的主题"},"actual_output":{"route":"direct","direct_reply":"\"健康的主题\"范围非常广泛。您是指哪方面的健康？例如：营养饮食、运动健身、心理健康、睡眠管理，还是特定疾病的预防？请提供更具体的方向，以便我为您提供准确的信息或研究支持。"}}
 {"case_id":"0386a52f43b94fac94247eacd232d875","original_question":"分析长沙房价","input":{"resolved_question":"分析长沙房价"},"actual_output":{"route":"topic_research_agent","direct_reply":""}}
+{"case_id":"fd1fa0fddfa942fd94045c827f825700","original_question":"分析狗狗币","input":{"resolved_question":"分析狗狗币"},"actual_output":{"route":"crypto_analysis_agent","direct_reply":""}}
+{"case_id":"6dab3c9ab2c8424699f270e5eb6fbb38","original_question":"分析长沙房价主题","input":{"resolved_question":"分析长沙房价走势和影响因素"},"actual_output":{"route":"direct","direct_reply":"暂时无法处理这次提问，请重试。"}}
