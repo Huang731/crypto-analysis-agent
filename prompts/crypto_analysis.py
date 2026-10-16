@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
 
 def metric_execution_prompt(skill_config: dict[str, Any]) -> str:
     """提供本轮指标清单，工具用法由已注册工具说明提供。"""
@@ -31,9 +33,9 @@ def metric_agent_system_prompt() -> str:
         """
 
 
-def analysis_plan_prompt(skill_descriptions: str, question: str) -> str:
-    """根据用户问题和技能目录选择目标币种与所需 Skill（Flash 模型优化版）。"""
-    return f"""\
+def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseMessage]:
+    """保留规划规则与示例，将系统规则和本轮输入分为两条消息。"""
+    system_prompt = """\
             你是加密货币分析规划员。仅输出一个合法 JSON 对象，包含且仅包含 target_asset、skill_names、refresh 三个字段。严禁输出任何解释、注释或额外文本。
             
             ## 字段决策规则
@@ -64,22 +66,27 @@ def analysis_plan_prompt(skill_descriptions: str, question: str) -> str:
             
             ### 示例 1：上下文追问 + 多领域取并集 (核心示例)
             用户问题：分析以太坊（ETH）的趋势和资金面后，是否减仓？
-            {{"target_asset": "ETH", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}}
+            {"target_asset": "ETH", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}
             
             ### 示例 2：泛问全选 + 伪刷新词拦截
             用户问题：分析BTC的走势，帮我获取最新行情
-            {{"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}}
+            {"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-etf-flows", "analyzing-crypto-sentiment", "analyzing-crypto-trend"], "refresh": false}
             
             ### 示例 3：明确限定 + 显式刷新
             用户问题：只看BTC的均线和资金费率，用最新数据重新算
-            {{"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-trend"], "refresh": true}}
-            
+            {"target_asset": "BTC", "skill_names": ["analyzing-crypto-derivatives", "analyzing-crypto-trend"], "refresh": true}
+            """
+    task_prompt = f"""\
             ## 输入
             技能目录与描述：
             {skill_descriptions}
             
             用户问题：{question}
             """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
 
 
 def thought_retrieval_prompt(
@@ -153,7 +160,7 @@ def skill_output_prompt(
     )
 
 
-def analysis_report_prompt(
+def analysis_report_messages(
     target_asset: str,
     original_question: str,
     content: list[dict[str, Any]],
@@ -161,19 +168,22 @@ def analysis_report_prompt(
     history_summary: str,
     review_feedback: str = "",
     previous_report: str = "",
-) -> str:
-    """结合技能表格与思想原文写报告，重写时依据审核意见修正上一版。"""
+) -> list[BaseMessage]:
+    """分开写作规则与本轮证据，重写时保留原有反馈启用条件。"""
 
-    # 动态构建审稿反馈区块，仅在非空时注入，避免干扰首次生成
+    # 修改规则与具体意见分属系统和用户消息，仅在修改稿中注入。
     feedback_section = ""
+    feedback_input = ""
     if review_feedback and previous_report:
-        feedback_section = f"""
+        feedback_section = """
         ## 审稿反馈与重写指引（本次任务为修改稿）
-        - **上一版报告问题**：{review_feedback}
         - **修改原则**：仅针对上述问题进行定向修正，保留上一版中正确的数据引用、思想论证结构和排版格式。
         - **禁止行为**：不得为满足审稿意见而编造新指标、曲解思想原文或引入外部事实。若意见要求超出当前数据/思想范围，请在报告中如实说明局限。
         """
-    prompt_template = """\
+        feedback_input = f"""
+        - **上一版报告问题**：{review_feedback}
+        """
+    system_template = """\
         你是顶尖加密资产研究机构的资深分析师，请依据提供的技能内容撰写专业投研报告。
         {feedback_section}
         ## 1. 回答目标与风格
@@ -199,6 +209,9 @@ def analysis_report_prompt(
         - **禁止输出**：完整指标表格、JSON 代码块、内部字段名（indicator_id, metadata, 条记录等）、工具调用过程或审稿交互细节。
         
         ---
+        """
+    task_template = """\
+        {feedback_input}
         
         ## 任务上下文
         - **目标资产**：{target_asset}
@@ -213,24 +226,33 @@ def analysis_report_prompt(
         {thought_context_json}
         """
 
-    return prompt_template.format(
-        feedback_section=feedback_section,
-        target_asset=target_asset,
-        original_question=original_question,
-        history_summary=history_summary or "（无历史摘要）",
-        content_json=json.dumps(content, ensure_ascii=False, indent=2),
-        thought_context_json=json.dumps(thought_context, ensure_ascii=False, indent=2),
-    )
+    return [
+        SystemMessage(
+            content=system_template.format(feedback_section=feedback_section)
+        ),
+        HumanMessage(
+            content=task_template.format(
+                feedback_input=feedback_input,
+                target_asset=target_asset,
+                original_question=original_question,
+                history_summary=history_summary or "（无历史摘要）",
+                content_json=json.dumps(content, ensure_ascii=False, indent=2),
+                thought_context_json=json.dumps(
+                    thought_context, ensure_ascii=False, indent=2
+                ),
+            )
+        ),
+    ]
 
 
-def analysis_review_prompt(
+def analysis_review_messages(
     target_asset: str,
     original_question: str,
     report: str,
     skill_results: list[dict[str, Any]],
     history_summary: str,
-) -> str:
-    """根据本轮技能表格和思想原文审核报告，不引入新的取数或分析。"""
+) -> list[BaseMessage]:
+    """将审核规则与本轮报告、证据分开，保留原有核查要求。"""
 
     prompt_template = """\
         你是专业的加密资产投研报告审核员。你的任务是严格核对「待审核报告」与「用户问题」及「本轮证据（技能表格与思想原文）」的一致性。
@@ -261,6 +283,8 @@ def analysis_review_prompt(
         }}
         
         ---
+        """
+    task_template = """\
         ## 任务上下文
         - **目标资产**：{target_asset}
         - **用户问题**：{original_question}
@@ -274,13 +298,20 @@ def analysis_review_prompt(
         {report}
         """
 
-    return prompt_template.format(
-        target_asset=target_asset,
-        original_question=original_question,
-        history_summary=history_summary or "（无历史摘要）",
-        skill_results_json=json.dumps(skill_results, ensure_ascii=False, indent=2),
-        report=report,
-    )
+    return [
+        SystemMessage(content=prompt_template.format()),
+        HumanMessage(
+            content=task_template.format(
+                target_asset=target_asset,
+                original_question=original_question,
+                history_summary=history_summary or "（无历史摘要）",
+                skill_results_json=json.dumps(
+                    skill_results, ensure_ascii=False, indent=2
+                ),
+                report=report,
+            )
+        ),
+    ]
 
 
 def history_summary_prompt(

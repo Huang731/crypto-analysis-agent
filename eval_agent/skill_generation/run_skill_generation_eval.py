@@ -14,6 +14,7 @@ import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
 from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.config.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_sub_agent import generate_skill
@@ -623,6 +624,20 @@ async def evaluate(
                     )
                     started = time.perf_counter()
                     active_stage = "judge"
+
+                    @retry(
+                        stop=stop_after_attempt(2),
+                        wait=wait_random_exponential(min=1, max=2),
+                        reraise=True,
+                    )
+                    async def invoke_judge() -> Judgment:
+                        """只重试裁判请求与结构化校验，保留整体超时。"""
+                        return await ainvoke_structured(
+                            judge.bind(enable_thinking=False),
+                            prompt,
+                            schema=GroundedJudgment,
+                        )
+
                     with client.start_as_current_observation(
                         as_type="generation",
                         name="skill_generation.judge",
@@ -630,11 +645,7 @@ async def evaluate(
                         input=prompt,
                     ) as judge_observation:
                         judgment = await asyncio.wait_for(
-                            ainvoke_structured(
-                                judge.bind(enable_thinking=False),
-                                prompt,
-                                schema=GroundedJudgment,
-                            ),
+                            invoke_judge(),
                             timeout=300,
                         )
                         output["judge_duration_ms"] = (

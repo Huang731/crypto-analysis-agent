@@ -28,11 +28,6 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langchain_core.runnables import RunnableBinding
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field, SecretStr
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_random_exponential,
-)
 
 from app.config.config import settings
 
@@ -104,7 +99,7 @@ def _zhipuai_api_key() -> str:
 def _make_zhipuai_llm(
     model_name: str, *, async_client: httpx.AsyncClient | None = None
 ) -> ChatOpenAI:
-    """主题研究直连智谱，超时与重试沿用统一调用层。"""
+    """主题研究直连智谱，保留请求超时，重试由业务调用方负责。"""
     return ChatOpenAI(
         model=model_name,
         api_key=_zhipuai_api_key,
@@ -129,32 +124,22 @@ def make_glm_4_flash_llm(
     return _make_zhipuai_llm(settings.glm_4_flash_model, async_client=async_client)
 
 
-# 统一调用：重试、超时与结果类型
+# 统一调用：超时与结果类型，重试由业务调用方负责
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
 async def ainvoke_model(
     model: Any,
     messages: LanguageModelInput,
     *,
     timeout: float | None = None,
 ) -> Any:
-    """统一执行模型请求、超时和重试，业务节点不再包装重试。"""
+    """执行单次模型请求并控制超时，重试由业务调用方负责。"""
     return await asyncio.wait_for(
         model.ainvoke(messages),
         timeout,
     )
 
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
 async def ainvoke_structured(
     model: Any,
     messages: LanguageModelInput,
@@ -162,14 +147,11 @@ async def ainvoke_structured(
     schema: type[_Schema],
     timeout: float | None = None,
 ) -> _Schema:
-    """统一通过 Function Calling 返回目标对象，沿用调用重试和超时。"""
+    """单次通过模型默认结构化输出返回目标对象，保留调用超时。"""
     binding = model if isinstance(model, RunnableBinding) else None
     if binding is not None:
         model = binding.bound
-    if isinstance(model, ChatOpenAI):
-        structured = model.with_structured_output(schema, method="function_calling")
-    else:
-        structured = model.with_structured_output(schema)
+    structured = model.with_structured_output(schema)
     if binding is not None:
         structured = structured.bind(**binding.kwargs).with_config(binding.config)
     return await ainvoke_model(

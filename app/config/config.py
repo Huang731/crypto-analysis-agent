@@ -161,10 +161,9 @@ class Settings(BaseSettings):
         PROJECT_ROOT / "eval_agent" / "finalize" / "finalize_candidates.jsonl"
     )
 
-    # 浏览器取证：单页超时单位为秒，域名白名单为空时沿用默认访问规则。
+    # 浏览器取证：单页超时单位为秒。
     browser_page_timeout: int = 15
     browser_headless: bool = True
-    browser_domain_allowlist: str = ""
 
 
 @lru_cache

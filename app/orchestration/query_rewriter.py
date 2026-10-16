@@ -2,6 +2,7 @@
 
 from langchain_core.language_models.chat_models import BaseChatModel  # 标注模型接口。
 from langchain_core.messages import HumanMessage, SystemMessage
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.config.config import settings
 from app.llm.model import ainvoke_model
@@ -13,7 +14,7 @@ _LOG = get_logger("crypto_analysis.query_rewriter")
 
 
 async def rewrite_question(
-    llm: BaseChatModel,
+    glm_4_flash_llm: BaseChatModel,
     question: str,
     previous_question: str,
 ) -> str:
@@ -23,7 +24,7 @@ async def rewrite_question(
         HumanMessage(content=question),
     ]
     try:
-        rewritten = await _rewrite_messages(llm, messages)
+        rewritten = await _rewrite_messages(glm_4_flash_llm, messages)
     except Exception:
         _LOG.warning(
             "query.rewrite.failed",
@@ -37,16 +38,21 @@ async def rewrite_question(
 
 @trace_generation_call(
     name="question_rewriter",
-    model=settings.bailian_fast_model,
+    model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
     kind="generation",
 )
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
 async def _rewrite_messages(
-    llm: BaseChatModel, messages: list[SystemMessage | HumanMessage]
+    glm_4_flash_llm: BaseChatModel, messages: list[SystemMessage | HumanMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    response = await ainvoke_model(llm, messages)
+    response = await ainvoke_model(glm_4_flash_llm, messages)
     rewritten = response.content.strip()
     if not rewritten:
         raise ValueError("问题改写模型返回了空文本")

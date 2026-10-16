@@ -192,6 +192,11 @@ class _ConsoleBackend:
                     f"{prefix}{branch} {tag} {s.name} ({s.duration_ms}ms){extra}",
                     file=sys.stderr,
                 )
+                if s.kind == "generation":
+                    if s.input is not None:
+                        print(f"{child_prefix}输入: {s.input}", file=sys.stderr)
+                    if s.output is not None:
+                        print(f"{child_prefix}输出: {s.output}", file=sys.stderr)
                 if s.children:
                     walk(s.children, child_prefix)
 
@@ -271,8 +276,9 @@ def trace_generation_call(
     generation_arg: str | None = None,
     skip_non_text_output: bool = False,
     unit: str | None = None,
+    record_io: bool = False,
 ) -> Callable[[_TraceFunction], _TraceFunction]:
-    """统一普通流程与模型调用追踪，仅 generation 统计用量和成本。"""
+    """统一追踪与用量估算，模型输入输出按调用方配置记录。"""
     if kind not in {"span", "generation"}:
         raise ValueError(f"不支持的追踪类型：{kind}")
     if kind == "generation" and model is None:
@@ -306,6 +312,8 @@ def trace_generation_call(
             # 主题研究原本只统计文本响应，非文本保持用量未知，由调用方校验。
             if skip_non_text_output and not isinstance(output_value, str):
                 return
+            if record_io and output_format != "none":
+                generation.output = _trace_text(output_value, output_format)
             input_value = arguments.arguments[input_arg]
             input_tokens = (
                 sum(estimate_tokens(doc.page_content) for doc in input_value)
@@ -337,6 +345,16 @@ def trace_generation_call(
                 return
             model_name = model(arguments) if callable(model) else model
             with trace_generation(trace_name, model=cast(str, model_name), **meta) as g:
+                if record_io:
+                    input_value = arguments.arguments[input_arg]
+                    g.input = (
+                        json.dumps(
+                            [doc.page_content for doc in input_value],
+                            ensure_ascii=False,
+                        )
+                        if input_format == "documents"
+                        else _trace_text(input_value, input_format)
+                    )
                 yield g
 
         if iscoroutinefunction(func):

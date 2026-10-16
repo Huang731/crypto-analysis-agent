@@ -334,9 +334,6 @@
           }).format(new Date(data.as_of));
           context.push("分析时间：" + displayTime + "（北京时间）");
         }
-        if (data.kind === "topic_research" && data.verification) {
-          context.push("资料范围：" + data.verification);
-        }
         reportContextEl.textContent = context.join(" · ");
         reportContextEl.hidden = context.length === 0;
       } else if (name === "error") {

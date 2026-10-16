@@ -14,6 +14,7 @@ from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 from pydantic import ValidationError
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.candidate_capture import append_node_candidate
 from app.config.config import settings
@@ -173,6 +174,11 @@ async def generate_skill(
 @trace_generation_call(
     name="crypto_skill_output", model=settings.bailian_fast_model, kind="generation"
 )
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
@@ -229,6 +235,11 @@ def skill_worker_step_limit(metric_count: int) -> int:
     input_format="messages",
     output_format="json",
     kind="generation",
+)
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
 )
 async def _invoke_metric_decision(llm: Any, messages: list[BaseMessage]) -> AIMessage:
     """直接调用指标决策模型，仅对模型调用和返回类型校验进行重试。"""

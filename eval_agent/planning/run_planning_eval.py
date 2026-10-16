@@ -13,6 +13,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import messages_to_dict
 from langfuse import Evaluation, Langfuse, get_client
 from langfuse.api import DatasetItem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -25,7 +26,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
 from app.llm.model import make_glm_4_flash_llm, model_session
-from prompts.crypto_analysis import analysis_plan_prompt
+from prompts.crypto_analysis import analysis_plan_messages
 
 
 class PlanningInput(BaseModel):
@@ -112,8 +113,8 @@ async def evaluate_plan(
         name="planning.invoke",
         input={
             "resolved_question": question.resolved_question,
-            "prompt": analysis_plan_prompt(
-                skill_descriptions, question.resolved_question
+            "messages": messages_to_dict(
+                analysis_plan_messages(skill_descriptions, question.resolved_question)
             ),
         },
         metadata={"model": settings.glm_4_flash_model},
@@ -267,9 +268,13 @@ def main() -> None:
     metadata = {
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "prompt_sha256": hashlib.sha256(
-            analysis_plan_prompt(skill_descriptions, "{resolved_question}").encode(
-                "utf-8"
-            )
+            json.dumps(
+                messages_to_dict(
+                    analysis_plan_messages(skill_descriptions, "{resolved_question}")
+                ),
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
         ).hexdigest(),
         "skill_catalog_sha256": hashlib.sha256(
             skill_descriptions.encode("utf-8")

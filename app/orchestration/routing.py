@@ -8,6 +8,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, model_validator
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 from typing_extensions import Self, TypedDict
 
 from app.candidate_capture import append_node_candidate
@@ -47,32 +48,28 @@ class RouteDecision(BaseModel):
         return self
 
 
-async def decide_route(
-    fast: BaseChatModel,
-    resolved_question: str,
-) -> RouteDecision:
-    """只执行路由，沿用模型工厂的超时和整体最多两次尝试。"""
-    messages = [
-        SystemMessage(content=routing_prompt()),
-        HumanMessage(content=resolved_question),
-    ]
-    return await _invoke_route_decision(fast, messages)
-
-
 @trace_generation_call(
     name="routing_decision",
-    model=settings.bailian_fast_model,
+    model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
     kind="generation",
 )
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
 async def _invoke_route_decision(
-    fast: BaseChatModel,
+    llm: BaseChatModel,
     messages: list[SystemMessage | HumanMessage],
 ) -> RouteDecision:
-    """保留路由追踪，结构化调用与校验统一交给模型层。"""
-    return await ainvoke_structured(fast, messages, schema=RouteDecision)
+    """保留路由追踪，对结构化调用和校验整体重试。"""
+    decision = await ainvoke_structured(llm, messages, schema=RouteDecision)
+    if decision is None:
+        raise ValueError("路由模型返回了空决策")
+    return decision
 
 
 class RoutingState(TypedDict, total=False):
@@ -170,8 +167,13 @@ def build_routing_graph(
     @timed_node
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
-        decision: RouteDecision = await decide_route(
-            glm_4_flash_llm, state["resolved_question"]
+        messages = [
+            SystemMessage(content=routing_prompt()),
+            HumanMessage(content=state["resolved_question"]),
+        ]
+        decision: RouteDecision = await _invoke_route_decision(
+            glm_4_flash_llm,
+            messages,
         )
         if settings.routing_capture_enabled:
             append_node_candidate(

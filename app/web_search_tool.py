@@ -104,7 +104,6 @@ def build_web_search_tools() -> list[BaseTool]:
         result = await search_bocha.ainvoke(
             {"query": query, "freshness": freshness, "max_results": max_results}
         )
-        runtime.context.browser.register_search_results(result["results"])
         return Command(
             update={
                 "search_records": {runtime.tool_call_id: result},

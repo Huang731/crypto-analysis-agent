@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 from langchain.tools import ToolRuntime, tool
@@ -24,13 +24,6 @@ if TYPE_CHECKING:
     from playwright.async_api import Browser, Page, Playwright
 
 _LOG = get_logger("browser_tool")
-DEFAULT_ALLOWED_DOMAINS = {
-    "localhost",
-    "127.0.0.1",
-    "arxiv.org",
-    "github.com",
-    "federalreserve.gov",
-}
 SENSITIVE_PATTERNS = (
     r"\.(exe|dmg|sh)$",
     r"/login",
@@ -42,13 +35,10 @@ SENSITIVE_PATTERNS = (
 )
 
 
-def check_url_allowed(url: str, allowed: set[str]) -> bool:
-    """只接受已授权域名的 HTTP/HTTPS 绝对地址。"""
+def check_url_allowed(url: str) -> bool:
+    """只接受带主机名的 HTTP/HTTPS 绝对地址，不限制域名。"""
     parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    return parsed.scheme in {"http", "https"} and any(
-        host == domain or host.endswith("." + domain) for domain in allowed
-    )
+    return parsed.scheme in {"http", "https"} and bool(parsed.hostname)
 
 
 def is_sensitive_url(url: str) -> bool:
@@ -73,17 +63,6 @@ class BrowserTool:
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
         self._lock = asyncio.Lock()
-        configured = settings.browser_domain_allowlist
-        self._fixed_domains = bool(configured.strip())
-        self._allowed_domains = (
-            {
-                domain.strip().lower()
-                for domain in configured.split(",")
-                if domain.strip()
-            }
-            if self._fixed_domains
-            else DEFAULT_ALLOWED_DOMAINS.copy()
-        )
         self._timeout = settings.browser_page_timeout
         self._headless = settings.browser_headless
 
@@ -93,17 +72,9 @@ class BrowserTool:
     async def __aexit__(self, *args: object) -> None:
         await self.close()
 
-    def register_search_results(self, results: list[dict[str, Any]]) -> None:
-        """没有固定白名单时，允许访问搜索工具实际返回的域名。"""
-        if not self._fixed_domains:
-            for result in results:
-                parsed = urlparse(result["url"])
-                if parsed.scheme in {"http", "https"} and parsed.hostname:
-                    self._allowed_domains.add(parsed.hostname.lower())
-
     def _check_url(self, url: str) -> None:
-        if not check_url_allowed(url, self._allowed_domains):
-            raise ValueError(f"地址不在允许的 HTTP/HTTPS 域名范围：{url}")
+        if not check_url_allowed(url):
+            raise ValueError(f"地址必须是有效的 HTTP/HTTPS 绝对地址：{url}")
         if is_sensitive_url(url):
             raise ValueError("不允许访问登录、支付、提交或程序下载页面")
 

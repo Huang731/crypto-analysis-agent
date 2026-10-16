@@ -79,6 +79,11 @@ def make_split(
 
     @timed_node  # 沿用现有节点耗时和失败日志。
     @trace_generation_call(name="topic.split", kind="span")
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
     async def split(state: AnalysisState) -> dict[str, list[str]]:  # 返回并行研究任务。
         prompt = split_prompt(state["question"])  # 提供原始研究主题。
         response = await _invoke_traced_model(
@@ -105,7 +110,7 @@ def make_split(
 
 
 async def _invoke_model(llm: Any, prompt: str) -> Any:
-    """每次调用保留超时，失败最多尝试两次，耗尽后向上报告。"""
+    """单次调用保留超时，重试由包含结果校验的业务节点负责。"""
     return await ainvoke_model(llm, prompt)
 
 
@@ -119,7 +124,7 @@ async def _invoke_model(llm: Any, prompt: str) -> Any:
 async def _invoke_traced_model(
     llm: Any, prompt: str, trace_name: str, model_name: str
 ) -> Any:
-    """保留整体重试统计与非文本用量未知的处理。"""
+    """记录单次调用统计，保留非文本用量未知的处理。"""
     return await _invoke_model(llm, prompt)
 
 
@@ -268,6 +273,11 @@ def make_summarize(
 
     @timed_node  # 延续原图的节点观测。
     @trace_generation_call(name="topic.summarize", kind="span")
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
         findings = state["findings"]  # 读取 reducer 合并的所有发现。
         if len(findings) != _SUBQUESTION_COUNT:  # 缺少并行结果时停止。
@@ -338,6 +348,11 @@ def make_writer(
 
     @timed_node  # 保留原有写作节点观测。
     @trace_generation_call(name="topic.writer", kind="span")
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
     async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告正文。
         question = _latest_question(state["scope"])
         feedback = state.get("feedback", "")  # 重写时读取审稿意见。
@@ -360,14 +375,8 @@ def make_writer(
             not isinstance(response.content, str) or not response.content.strip()
         ):  # 报告必须有正文。
             raise ValueError("主题研究报告为空")  # 不返回空报告。
-        evidence_count = sum(len(item["evidence"]) for item in state["findings"])
-        covered_count = sum(bool(item["evidence"]) for item in state["findings"])
-        report = (
-            f"资料范围：提取 {evidence_count} 条网页原文，覆盖 {covered_count}/{len(state['findings'])} 个子问题。\n\n"
-            + response.content.strip()
-        )
         return {
-            "report": report,
+            "report": response.content.strip(),
         }  # 保存最终报告。
 
     return writer  # 返回父图写作节点。
@@ -387,6 +396,11 @@ def make_reviewer(
 
     @timed_node  # 保留审稿耗时日志。
     @trace_generation_call(name="topic.reviewer", kind="span")
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_random_exponential(min=1, max=2),
+        reraise=True,
+    )
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。
         count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
         prompt = review_prompt(

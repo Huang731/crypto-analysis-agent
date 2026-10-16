@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import BaseMessage, messages_to_dict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -17,6 +18,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.candidate_capture import append_node_candidate
 from app.config.config import settings
@@ -44,9 +46,9 @@ from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis import (
-    analysis_plan_prompt,
-    analysis_report_prompt,
-    analysis_review_prompt,
+    analysis_plan_messages,
+    analysis_report_messages,
+    analysis_review_messages,
     history_summary_prompt,
 )
 
@@ -56,9 +58,14 @@ _LOG = get_logger("crypto_analysis.dynamic_analysis")
 @trace_generation_call(
     name="crypto_history_summary", model=settings.glm_4_flash_model, kind="generation"
 )
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
-    # 历史摘要使用 GLM-4-Flash，沿用统一调用的重试和超时。
+    # 历史摘要使用 GLM-4-Flash，调用与正文校验整体重试。
     response = await ainvoke_model(llm, prompt)
     summary = response.content.strip()
     if not summary:
@@ -67,16 +74,26 @@ async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
 
 
 @trace_generation_call(
-    name="crypto_analysis_writer", model=settings.glm_smart_model, kind="generation"
+    name="crypto_analysis_writer",
+    model=settings.glm_smart_model,
+    input_arg="messages",
+    input_format="messages",
+    record_io=True,
+    kind="generation",
+)
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
 )
 async def _invoke_report_text(
     llm: Any,
-    prompt: str,
+    messages: list[BaseMessage],
     stream_writer: StreamWriter,
 ) -> str:
     """生成正文前通知开始，完成后校验报告。"""
     stream_writer({"event": "report_start", "node": "writer"})
-    response = await ainvoke_model(llm, prompt)
+    response = await ainvoke_model(llm, messages)
     report = response.content.strip()
     if not report:
         raise ValueError("报告正文不能为空")
@@ -129,23 +146,45 @@ class ReportReview(BaseModel):
 @trace_generation_call(
     name="crypto_report_review",
     model=settings.glm_smart_model,
+    input_arg="messages",
+    input_format="messages",
     output_format="json",
+    record_io=True,
     kind="generation",
 )
-async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
-    """记录审核用量，模型调用与校验统一交给结构化入口。"""
-    return await ainvoke_structured(llm, prompt, schema=ReportReview)
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
+async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> ReportReview:
+    """记录审核用量，对结构化调用和校验整体重试。"""
+    review = await ainvoke_structured(llm, messages, schema=ReportReview)
+    if review is None:
+        raise ValueError("审核模型返回了空结果")
+    return review
 
 
 @trace_generation_call(
     name="crypto_analysis_plan",
     model=settings.glm_4_flash_model,
+    input_arg="messages",
+    input_format="messages",
     output_format="json",
+    record_io=True,
     kind="generation",
 )
-async def _invoke_analysis_plan(llm: Any, prompt: str) -> AnalysisPlan:
-    """记录规划用量，模型调用与校验统一交给结构化入口。"""
-    return await ainvoke_structured(llm, prompt, schema=AnalysisPlan)
+@retry(
+    stop=stop_after_attempt(2),
+    wait=wait_random_exponential(min=1, max=2),
+    reraise=True,
+)
+async def _invoke_analysis_plan(llm: Any, messages: list[BaseMessage]) -> AnalysisPlan:
+    """记录规划用量，对结构化调用和校验整体重试。"""
+    plan = await ainvoke_structured(llm, messages, schema=AnalysisPlan)
+    if plan is None:
+        raise ValueError("规划模型返回了空计划")
+    return plan
 
 
 # 请求规划
@@ -168,8 +207,8 @@ async def create_analysis_plan(
     skill_descriptions: str,
 ) -> dict[str, Any]:
     """LLM 根据任务和技能描述选择资产、研究重点与所需 Skill。"""
-    prompt = analysis_plan_prompt(skill_descriptions, question)
-    plan = await _invoke_analysis_plan(llm, prompt)
+    messages = analysis_plan_messages(skill_descriptions, question)
+    plan = await _invoke_analysis_plan(llm, messages)
     return plan.model_dump()
 
 
@@ -232,48 +271,39 @@ def make_plan(
 
     @timed_node
     async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
-        with trace_span("crypto.plan") as node_span:
-            try:
-                skill_loader = get_skill_loader()
-                question = state["scope"].get("resolved_question")
-                if not isinstance(question, str) or not question.strip():
-                    raise ValueError("技能分析缺少有效用户问题")
-                selection = await create_analysis_plan(
-                    glm_4_flash_llm,
-                    question,
-                    skill_loader.format_skill_descriptions(),
-                )
-                if settings.planning_capture_enabled:
-                    append_node_candidate(
-                        node="plan",
-                        scope=state["scope"],
-                        input={"resolved_question": question},
-                        actual_output=selection,
-                        path=settings.planning_capture_path,
-                    )
-                scope = {
-                    **state["scope"],
-                    "target_asset": selection["target_asset"],
-                }
-                history_summary = state.get("history_summary", "")
-                if not isinstance(history_summary, str):
-                    raise TypeError("历史摘要必须是字符串")
-                return {
-                    "history_summary": history_summary,
-                    "report": "",
-                    # 每轮请求独立计数，上一轮审核意见不能影响新报告。
-                    "review_decision": "pending",
-                    "review_count": 0,
-                    "review_feedback": "",
-                    "skill_sources": skill_loader.snapshot(),
-                    "plan": selection,
-                    "scope": scope,
-                    # 缓存跨轮保留，追加型报告输入每轮从空列表开始。
-                    "skill_results": Overwrite([]),
-                }
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+        skill_loader = get_skill_loader()
+        question = state["scope"].get("resolved_question")
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError("技能分析缺少有效用户问题")
+        selection = await create_analysis_plan(
+            glm_4_flash_llm,
+            question,
+            skill_loader.format_skill_descriptions(),
+        )
+        if settings.planning_capture_enabled:
+            append_node_candidate(
+                node="plan",
+                scope=state["scope"],
+                input={"resolved_question": question},
+                actual_output=selection,
+                path=settings.planning_capture_path,
+            )
+        scope = {
+            **state["scope"],
+            "target_asset": selection["target_asset"],
+        }
+        return {
+            "report": "",
+            # 每轮请求独立计数，上一轮审核意见不能影响新报告。
+            "review_decision": "pending",
+            "review_count": 0,
+            "review_feedback": "",
+            "skill_sources": skill_loader.snapshot(),
+            "plan": selection,
+            "scope": scope,
+            # 缓存跨轮保留，追加型报告输入每轮从空列表开始。
+            "skill_results": Overwrite([]),
+        }
 
     return plan
 
@@ -312,73 +342,53 @@ def make_writer(
     @timed_node
     async def writer(state: DynamicAnalysisState, runtime: Runtime) -> dict[str, Any]:
         """依据技能内容与历史摘要撰写结论，报告只包含结论正文。"""
-        with trace_span("crypto.writer") as node_span:
-            try:
-                if not state["plan"]["skill_names"]:
-                    report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
-                    if settings.writer_capture_enabled:
-                        append_node_candidate(
-                            node="writer",
-                            scope=state["scope"],
-                            input={"plan": state["plan"]},
-                            actual_output={"report": report},
-                            path=settings.writer_capture_path,
-                        )
-                    return {
-                        "report": report,
-                    }
-                ordered = sorted(
-                    state["skill_results"], key=lambda item: item["skill_name"]
-                )
-                # 只采用本轮技能内容，历史摘要不能替代本轮证据。
-                prompt = analysis_report_prompt(
-                    target_asset=state["scope"]["target_asset"],
-                    original_question=state["scope"]["resolved_question"],
-                    content=[
-                        {
-                            "skill_name": item["skill_name"],
-                            "name": item["name"],
-                            "content": item["content"],
-                            "cache_hit": item["cache_hit"],
-                        }
-                        for item in ordered
-                    ],
-                    thought_context={
-                        item["skill_name"]: item["thought_context"] for item in ordered
-                    },
-                    history_summary=state["history_summary"],
-                    review_feedback=state["review_feedback"],
-                    previous_report=state["report"],
-                )
-                # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = glm_smart_llm.bind(
-                    extra_body={
-                        "thinking": {"type": "disabled"},
-                    }
-                )
-                report = await _invoke_report_text(
-                    writer_llm,
-                    prompt,
-                    runtime.stream_writer,
-                )
-                if settings.writer_capture_enabled:
-                    append_node_candidate(
-                        node="writer",
-                        scope=state["scope"],
-                        input={
-                            "prompt": prompt,
-                            "model": settings.glm_smart_model,
-                            "review_count": state["review_count"],
-                        },
-                        actual_output={"report": report},
-                        path=settings.writer_capture_path,
-                    )
-                return {
-                    "report": report,
+        ordered = sorted(state["skill_results"], key=lambda item: item["skill_name"])
+        # 只采用本轮技能内容，历史摘要不能替代本轮证据。
+        messages = analysis_report_messages(
+            target_asset=state["scope"]["target_asset"],
+            original_question=state["scope"]["resolved_question"],
+            content=[
+                {
+                    "skill_name": item["skill_name"],
+                    "name": item["name"],
+                    "content": item["content"],
+                    "cache_hit": item["cache_hit"],
                 }
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+                for item in ordered
+            ],
+            thought_context={
+                item["skill_name"]: item["thought_context"] for item in ordered
+            },
+            history_summary=state.get("history_summary", ""),
+            review_feedback=state["review_feedback"],
+            previous_report=state["report"],
+        )
+        # 仅本节点关闭深度思考，不修改共享模型的配置。
+        writer_llm = glm_smart_llm.bind(
+            extra_body={
+                "thinking": {"type": "disabled"},
+            }
+        )
+        report = await _invoke_report_text(
+            writer_llm,
+            messages,
+            runtime.stream_writer,
+        )
+        if settings.writer_capture_enabled:
+            append_node_candidate(
+                node="writer",
+                scope=state["scope"],
+                input={
+                    "messages": messages_to_dict(messages),
+                    "model": settings.glm_smart_model,
+                    "review_count": state["review_count"],
+                },
+                actual_output={"report": report},
+                path=settings.writer_capture_path,
+            )
+        return {
+            "report": report,
+        }
 
     return writer
 
@@ -389,70 +399,47 @@ def make_reviewer(
     """创建报告审核节点，保留原有审核规则。"""
 
     @timed_node
+    @trace_generation_call(name="crypto.reviewer", kind="span")
     async def reviewer(state: DynamicAnalysisState) -> dict[str, Any]:
-        """审核本轮报告，最多审核五轮，未通过时带意见重写。"""
-        with trace_span("crypto.reviewer") as node_span:
-            try:
-                # 无适用技能时沿用原有说明回复，无需审核投研内容。
-                if not state["plan"]["skill_names"]:
-                    if settings.reviewer_capture_enabled:
-                        append_node_candidate(
-                            node="reviewer",
-                            scope=state["scope"],
-                            input={"plan": state["plan"], "report": state["report"]},
-                            actual_output={"state_update": {"review_decision": "pass"}},
-                            path=settings.reviewer_capture_path,
-                        )
-                    return {"review_decision": "pass"}
-                review_count = state["review_count"] + 1
-                prompt = analysis_review_prompt(
-                    target_asset=state["scope"]["target_asset"],
-                    original_question=state["scope"]["resolved_question"],
-                    report=state["report"],
-                    skill_results=sorted(
-                        state["skill_results"], key=lambda item: item["skill_name"]
-                    ),
-                    history_summary=state["history_summary"],
-                )
-                # 复用结构化调用的流标记，审核内容不进入报告正文。
-                review = await _invoke_report_review(glm_smart_llm, prompt)
-                node_span.output = {
-                    "review_process": review.review_process,
-                    "passed": review.passed,
+        """审核本轮报告，沿用两轮审核上限和不通过时的修改意见。"""
+        review_count = state["review_count"] + 1
+        messages = analysis_review_messages(
+            target_asset=state["scope"]["target_asset"],
+            original_question=state["scope"]["resolved_question"],
+            report=state["report"],
+            skill_results=state["skill_results"],
+            history_summary=state.get("history_summary", ""),
+        )
+        # 复用结构化调用的流标记，审核内容不进入报告正文。
+        review = await _invoke_report_review(glm_smart_llm, messages)
+        if not review.passed and review_count >= 2:
+            update = {
+                "review_decision": "pass",
+                "review_count": review_count,
+                "review_feedback": "已达重写2次上限，强制通过。",
+            }
+        else:
+            update = {
+                "review_decision": "pass" if review.passed else "rework",
+                "review_count": review_count,
+                "review_feedback": "" if review.passed else review.feedback,
+            }
+        if settings.reviewer_capture_enabled:
+            append_node_candidate(
+                node="reviewer",
+                scope=state["scope"],
+                input={
+                    "messages": messages_to_dict(messages),
+                    "model": settings.glm_smart_model,
                     "review_count": review_count,
-                    "feedback": review.feedback,
-                }
-                if not review.passed and review_count >= 2:
-                    update = {
-                        "review_decision": "pass",
-                        "review_count": review_count,
-                        "review_feedback": "已达重写2次上限，强制通过。",
-                    }
-                else:
-                    update = {
-                        "review_decision": "pass" if review.passed else "rework",
-                        "review_count": review_count,
-                        "review_feedback": "" if review.passed else review.feedback,
-                    }
-                if settings.reviewer_capture_enabled:
-                    append_node_candidate(
-                        node="reviewer",
-                        scope=state["scope"],
-                        input={
-                            "prompt": prompt,
-                            "model": settings.glm_smart_model,
-                            "review_count": review_count,
-                        },
-                        actual_output={
-                            "review": review.model_dump(),
-                            "state_update": update,
-                        },
-                        path=settings.reviewer_capture_path,
-                    )
-                return update
-            except Exception:
-                node_span.metadata["status"] = "error"
-                raise
+                },
+                actual_output={
+                    "review": review.model_dump(),
+                    "state_update": update,
+                },
+                path=settings.reviewer_capture_path,
+            )
+        return update
 
     return reviewer
 
