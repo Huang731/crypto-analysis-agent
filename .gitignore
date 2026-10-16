@@ -261,3 +261,6 @@ htmlcov/
 /data/checkpoints.sqlite-*
 
 *.tar.gz
+
+# 本地评测候选数据
+/eval_agent/candidates/
