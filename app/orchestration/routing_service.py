@@ -36,13 +36,12 @@ _NODE_LABELS = {
 
 @dataclass
 class _RoutingStreamState:
-    """每个请求独立收集路由、回复与子图结果，不修改图状态。"""
+    """每个请求独立收集路由与子图结果，不修改图状态。"""
 
     final_state: dict[str, Any] = field(
         default_factory=lambda: {"skill_results": [], "findings": []}
     )
     routed_agent: str | None = None
-    direct_reply: str = ""
     report_released: bool = False
 
     def route(self, agent: str, conflict_reason: str) -> dict[str, str] | None:
@@ -71,14 +70,11 @@ class _RoutingStreamState:
             return
         if is_root and node == "router" and isinstance(delta, dict):
             agent = delta["route"]
-            if agent == "direct":
-                self.direct_reply = delta["direct_reply"]
-            else:
-                if agent not in agents:
-                    raise ValueError(f"路由分派了未知 Agent：{agent}")
-                event = self.route(agent, "一轮请求分派了多个 Agent")
-                if event is not None:
-                    yield event
+            if agent not in agents:
+                raise ValueError(f"路由分派了未知 Agent：{agent}")
+            event = self.route(agent, "一轮请求分派了多个 Agent")
+            if event is not None:
+                yield event
 
         # 根节点的实际执行也需验证，不能只依赖模型返回的路由目标。
         if is_root and node in agents:
@@ -116,7 +112,7 @@ class _RoutingStreamState:
             )
 
     def completion_event(self) -> dict[str, str]:
-        """保持三类完成事件的字段，以及无路由、无回复时的明确失败。"""
+        """保持两类专家完成事件的字段，无路由时明确失败。"""
         state = self.final_state
         if self.routed_agent == "crypto_analysis_agent":
             skills = sorted(state["skill_results"], key=lambda item: item["skill_name"])
@@ -143,20 +139,15 @@ class _RoutingStreamState:
                     ),
                 },
             )
-        if self.direct_reply.strip():
-            return _event(
-                "done", {"kind": "direct", "report": self.direct_reply.strip()}
-            )
         _LOG.error(
             "routing.result.empty",
             extra={
                 "event": "routing.result.empty",
                 "routed_agent": self.routed_agent,
-                "direct_reply": self.direct_reply,
                 "final_state_keys": sorted(state),
             },
         )
-        raise ValueError("路由 未分派研究 Agent 且未给出回复")
+        raise ValueError("路由未分派研究 Agent")
 
 
 class RoutingService:
@@ -195,9 +186,7 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     """把节点 state delta 摘要成前端可读的进度事件。"""
     info = {"node": node, "label": _NODE_LABELS[node]}
     if node == "router":
-        info["status"] = (
-            "直接回复" if delta["route"] == "direct" else _NODE_LABELS[delta["route"]]
-        )
+        info["status"] = _NODE_LABELS[delta["route"]]
     elif node == "finalize":
         info["status"] = "报告整理完成"
     elif node == "topic_research_agent":  # 显示通用研究完成进度。

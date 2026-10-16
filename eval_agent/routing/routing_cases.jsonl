@@ -1,24 +1,24 @@
 {"input":{"resolved_question":"分析 ETH 最近的资金费率"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_001","category":"funding_rate","label_reason":"明确要求分析加密资产的资金费率指标"}}
 {"input":{"resolved_question":"研究比特币挖矿公司的商业模式"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_001","category":"crypto_company","label_reason":"研究公司的商业模式，不是加密行情或仓位决策"}}
-{"input":{"resolved_question":"你能分析哪些类型的问题？"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_001","category":"capability","label_reason":"询问助手能力，应直接回答"}}
+{"input":{"resolved_question":"你能分析哪些类型的问题？"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_001","category":"capability","label_reason":"助手能力问答统一交给主题研究 Agent"}}
 {"input":{"resolved_question":"结合市场数据判断 SOL 是否适合减仓"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_002","category":"position_decision","label_reason":"明确的加密资产仓位决策"}}
 {"input":{"resolved_question":"分析加密监管政策的主要变化"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_002","category":"crypto_policy","label_reason":"政策研究虽涉及加密行业，仍属于主题研究"}}
-{"input":{"resolved_question":"帮我分析一下行情"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_002","category":"missing_asset","label_reason":"没有明确行情对象，需直接澄清，不能默认加密市场"}}
+{"input":{"resolved_question":"帮我分析一下行情"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_002","category":"missing_asset","label_reason":"未明确行情对象，统一交给主题研究 Agent，不能默认加密市场"}}
 {"input":{"resolved_question":"检查 BTC 的 ETF 资金流是否支持当前趋势"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_003","category":"asset_flow","label_reason":"加密资产资金流与行情趋势分析"}}
 {"input":{"resolved_question":"比较以太坊与 Solana 的技术架构"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_003","category":"crypto_technology","label_reason":"区块链技术架构比较，不是投资或行情分析"}}
-{"input":{"resolved_question":"我现在该加仓吗？"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_003","category":"missing_position_asset","label_reason":"没有给出资产对象，不能凭加仓一词默认加密分析"}}
+{"input":{"resolved_question":"我现在该加仓吗？"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_003","category":"missing_position_asset","label_reason":"未给出资产对象，统一交给主题研究 Agent，不能凭加仓一词默认加密分析"}}
 {"input":{"resolved_question":"分析 BTC 的支撑位和阻力位"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_004","category":"price_levels","label_reason":"加密资产行情与价格位置分析"}}
 {"input":{"resolved_question":"分析黄金近期走势"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_004","category":"non_crypto_asset","label_reason":"黄金为非加密资产，按当前职责进入主题研究"}}
-{"input":{"resolved_question":"今天心情不错，想和你聊聊"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_004","category":"daily_chat","label_reason":"日常聊天，没有研究任务"}}
+{"input":{"resolved_question":"今天心情不错，想和你聊聊"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_004","category":"daily_chat","label_reason":"日常聊天统一交给主题研究 Agent"}}
 {"input":{"resolved_question":"只看 ETH 的合约持仓量和资金费率，不看其他维度"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_005","category":"derivatives","label_reason":"明确限定的加密衍生品指标分析"}}
 {"input":{"resolved_question":"研究 Coinbase 的最新财报和收入构成"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_005","category":"crypto_financial_report","label_reason":"加密行业公司的财报研究，不是币价分析"}}
-{"input":{"resolved_question":"你是谁，能帮我做什么？"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_005","category":"identity","label_reason":"身份与能力询问，应直接回答"}}
+{"input":{"resolved_question":"你是谁，能帮我做什么？"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_005","category":"identity","label_reason":"身份与能力问答统一交给主题研究 Agent"}}
 {"input":{"resolved_question":"从稳定币供应量变化分析加密市场流动性"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_006","category":"market_liquidity","label_reason":"明确针对加密市场的资金与指标分析"}}
 {"input":{"resolved_question":"分析美联储政策的形成机制和历史演变"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_006","category":"macro_research","label_reason":"宏观政策研究，未要求分析加密行情或投资决策"}}
-{"input":{"resolved_question":"帮我分析一下这个指标"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_006","category":"missing_indicator","label_reason":"未提供指标或分析对象，需澄清"}}
+{"input":{"resolved_question":"帮我分析一下这个指标"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_006","category":"missing_indicator","label_reason":"未提供指标或分析对象，统一交给主题研究 Agent"}}
 {"input":{"resolved_question":"判断 BTC 近期价格上涨是否得到成交量支持"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_007","category":"price_volume","label_reason":"加密资产价格和成交量的趋势分析"}}
 {"input":{"resolved_question":"研究新能源汽车行业的竞争格局"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_007","category":"industry","label_reason":"非加密行业研究"}}
-{"input":{"resolved_question":"谢谢你的帮助，先到这里"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_007","category":"conversation_end","label_reason":"结束对话，不需要调用专家"}}
+{"input":{"resolved_question":"谢谢你的帮助，先到这里"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_007","category":"conversation_end","label_reason":"结束对话统一交给主题研究 Agent"}}
 {"input":{"resolved_question":"结合恐惧贪婪指数评估加密市场当前的入场风险"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_008","category":"market_risk","label_reason":"明确的加密市场指标与投资风险分析"}}
 {"input":{"resolved_question":"研究 RAG 与微调分别适合哪些业务场景"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_008","category":"technology","label_reason":"通用技术主题研究"}}
-{"input":{"resolved_question":"帮我研究一下"},"expected_output":{"route":"direct"},"metadata":{"case_id":"routing_direct_008","category":"missing_topic","label_reason":"缺少研究主题，需直接提出澄清问题"}}
+{"input":{"resolved_question":"帮我研究一下"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_008","category":"missing_topic","label_reason":"缺少研究主题，统一交给主题研究 Agent"}}

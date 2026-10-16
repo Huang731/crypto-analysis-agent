@@ -6,12 +6,13 @@ from typing import Annotated, Any
 from langchain.agents import AgentState
 from typing_extensions import TypedDict
 
-RESEARCH_EVIDENCE_TARGET = 2  # 每个子问题取得一条网页原文证据后结束取证。
+RESEARCH_EVIDENCE_TARGET = 1  # 每个子问题至少取得一条网页原文证据。
 
 
 class SystemState(TypedDict, total=False):
     scope: dict[str, str]
-    findings: Annotated[list[dict[str, Any]], operator.add]
+    # 外层由 research_team 每轮整体替换，并行结果仍在 AnalysisState 中合并。
+    findings: list[dict[str, Any]]
     research_summary: str
     report: str
     review_decision: str

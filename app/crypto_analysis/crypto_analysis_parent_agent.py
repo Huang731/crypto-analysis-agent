@@ -487,4 +487,4 @@ def build_crypto_analysis_parent_agent(
         {"summarize_history": "summarize_history", "writer": "writer"},
     )
     builder.add_edge("summarize_history", END)
-    return builder.compile(name="crypto_analysis_agent")
+    return builder.compile(checkpointer=True, name="crypto_analysis_agent")

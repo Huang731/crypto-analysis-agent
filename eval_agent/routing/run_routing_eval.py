@@ -20,11 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_bailian_fast_llm, model_session
-from app.orchestration.routing import (
-    RouteDecision,
-    RouteTarget,
-    _invoke_route_decision,
-)
+from app.orchestration.routing import _invoke_route_decision
 from prompts.routing import routing_messages, routing_prompt
 
 
@@ -39,7 +35,7 @@ class RoutingExpected(BaseModel):
     """人工标注的唯一预期分支。"""
 
     model_config = ConfigDict(extra="forbid")
-    route: RouteTarget
+    route: str
 
 
 class CaseMetadata(BaseModel):
@@ -64,7 +60,7 @@ class RoutingOutput(BaseModel):
     """执行失败保留状态，不伪装成有效路由决定。"""
 
     model_config = ConfigDict(extra="forbid")
-    decision: RouteDecision | None = None
+    decision: str | None = None
     execution_status: Literal["success", "error"]
     duration_ms: float = Field(ge=0)
     error_type: str | None = None
@@ -123,11 +119,9 @@ def route_correct(*, output: Any, expected_output: Any, **kwargs: Any) -> Evalua
     correct = (
         actual.execution_status == "success"
         and actual.decision is not None
-        and actual.decision.route == expected.route
+        and actual.decision == expected.route
     )
-    actual_route = (
-        actual.decision.route if actual.decision is not None else "无有效决定"
-    )
+    actual_route = actual.decision if actual.decision is not None else "无有效决定"
     return Evaluation(
         name="route_correct",
         value=int(correct),
@@ -139,12 +133,12 @@ def route_correct(*, output: Any, expected_output: Any, **kwargs: Any) -> Evalua
 
 
 def decision_contract_valid(*, output: Any, **kwargs: Any) -> Evaluation:
-    """检查成功案例的结构化结果和直接回复字段约束。"""
+    """检查成功案例是否返回有效的 Agent 名称。"""
     actual = RoutingOutput.model_validate(output)
     return Evaluation(
         name="decision_contract_valid",
         value=int(actual.execution_status == "success" and actual.decision is not None),
-        comment="检查有效结构化结果及直接回复字段约束",
+        comment="检查有效的 Agent 名称",
     )
 
 
@@ -194,7 +188,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         statuses[actual.execution_status] += 1
         durations.append(actual.duration_ms)
         label = (
-            actual.decision.route
+            actual.decision
             if actual.execution_status == "success" and actual.decision is not None
             else actual.execution_status
         )
@@ -307,7 +301,7 @@ def main() -> None:
             raise RuntimeError("Langfuse 认证失败，请检查密钥和服务地址")
         client.create_dataset(
             name=args.dataset,
-            description="已改写问题的三分支独立路由评测",
+            description="已改写问题的两类 Agent 独立路由评测",
             input_schema=RoutingInput.model_json_schema(),
         )
         items = [

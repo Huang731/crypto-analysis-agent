@@ -14,6 +14,7 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import BaseModel, Field
 from tenacity import (
@@ -261,11 +262,56 @@ async def browse_for_evidence(
     runtime: ToolRuntime[BrowserContext],
     max_pages: int = 1,
 ) -> Command:
-    """每次打开一个候选详情页，保存带证据 ID、来源 URL 和访问时间的原文。"""
-    evidences = await runtime.context.browser.browse_for_evidence(
-        query, urls, min(max_pages, 1)
-    )
-    return _evidence_command(runtime, evidences, urls[0])
+    """读取候选详情页；访问失败时记录原因，交由 Agent 选择其他来源。"""
+    requested_url = urls[0]
+
+    try:
+        evidences = await runtime.context.browser.browse_for_evidence(
+            query, urls, min(max_pages, 1)
+        )
+    except (PageRequestError, PlaywrightError, ValueError) as exc:
+        # 处理网页请求和原文提取错误，其他浏览器异常继续抛出。
+        if isinstance(exc, PlaywrightError) and not (
+            isinstance(exc, PlaywrightTimeoutError) or "net::ERR_" in str(exc)
+        ):
+            raise
+
+        error = {
+            "url": requested_url,
+            "error_type": type(exc).__name__,
+            "message": str(exc),
+        }
+        _LOG.warning(
+            "网页取证失败，跳过地址 %s：%s",
+            requested_url,
+            exc,
+        )
+
+        return Command(
+            update={
+                "visited_urls": [requested_url],
+                "tool_errors": [error],
+                "messages": [
+                    ToolMessage(
+                        content=json.dumps(
+                            {
+                                **error,
+                                "instruction": (
+                                    "该网页访问失败，不得再次访问此地址。"
+                                    "请从搜索结果中选择其他尚未尝试的候选地址；"
+                                    "候选耗尽时结束取证，明确说明证据缺口。"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        tool_call_id=runtime.tool_call_id,
+                        status="error",
+                    )
+                ],
+            }
+        )
+
+    return _evidence_command(runtime, evidences, requested_url)
 
 
 def build_browser_tools() -> list[BaseTool]:

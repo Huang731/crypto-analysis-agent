@@ -39,8 +39,8 @@ def research_messages(
         - 取得一条与当前子问题相关的网页原文证据后，立即停止调用工具并输出结论。
         - 搜索摘要不算网页原文证据；先搜索候选链接，再读取原文。
         - 禁止重复执行工具名称和参数完全相同的调用，也不要重复读取同一网页。
-        - 工具失败后调整参数或更换来源；候选耗尽时结束研究，明确说明证据缺口。
-        - 工具不可用时，取证阶段已经结束；根据已有结果输出结论，证据不足须明确说明，不得编造。
+        - 网页失败后选择其他未尝试地址；候选耗尽且没有原文证据时，更换关键词继续搜索，至少取得一条原文证据后才能结束研究。
+        - 原文证据不足时不得输出最终结论，不得编造证据或使用搜索摘要代替原文。
         
         ## 证据分级与时间校验铁律
         1. **三级证据标签（每条证据必须标注其一）**：
@@ -81,6 +81,31 @@ def research_messages(
         SystemMessage(content=system_prompt),
         HumanMessage(content=task_prompt),
     ]
+
+
+def research_continue_prompt(
+    candidate_urls: list[str],
+    searched_queries: list[str],
+) -> str:
+    """根据剩余候选和已有搜索记录，要求继续取得网页原文。"""
+    if candidate_urls:
+        urls_text = "\n".join(f"- {url}" for url in candidate_urls)
+        return (
+            "当前子问题尚未取得网页原文证据，不能结束研究。"
+            "请调用 browse_for_evidence，读取以下尚未尝试的候选地址，"
+            "每次读取一个，失败后继续选择其他地址：\n"
+            f"{urls_text}"
+        )
+
+    queries_text = "\n".join(f"- {query}" for query in searched_queries)
+    return (
+        "当前子问题尚未取得网页原文证据，现有候选地址已耗尽。"
+        "请围绕当前子问题更换关键词、调整搜索角度，"
+        "调用 search_bocha 重新搜索，再读取候选网页原文。"
+        "不要重复已经执行过的相同搜索条件，不得用搜索摘要代替原文。"
+        "至少取得一条原文证据后才能输出最终结论。\n"
+        f"已经使用过的搜索词：\n{queries_text}"
+    )
 
 
 def summarize_messages(findings_json: str) -> list[BaseMessage]:

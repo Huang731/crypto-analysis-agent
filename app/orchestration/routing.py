@@ -1,48 +1,29 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-from typing import Annotated, Any, Literal
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, model_validator
 from tenacity import retry, stop_after_attempt, wait_random_exponential
-from typing_extensions import Self, TypedDict
+from typing_extensions import TypedDict
 
 from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
-from app.crypto_analysis.skill_memory import merge_skill_memory
-from app.llm.model import ainvoke_structured
+from app.llm.model import ainvoke_model
 from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
-from app.tracing import trace_generation_call, trace_span
+from app.tracing import trace_generation_call
 from prompts.routing import routing_messages
 
 _LOG = get_logger("crypto_analysis.routing")
-RouteTarget = Literal["crypto_analysis_agent", "topic_research_agent", "direct"]
-
-
-class RouteDecision(BaseModel):
-    """路由只选择一个分支，直接回复时必须提供正文。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    route: RouteTarget
-    direct_reply: str = ""
-
-    @model_validator(mode="after")
-    def validate_reply(self) -> Self:
-        """直接回复分支必须提供非空正文。"""
-        if self.route == "direct" and not self.direct_reply.strip():
-            raise ValueError("直接回复分支必须提供非空正文")
-        return self
 
 
 @trace_generation_call(
@@ -50,7 +31,7 @@ class RouteDecision(BaseModel):
     model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
-    output_format="json",
+    output_format="text",
     kind="generation",
 )
 @retry(
@@ -61,14 +42,15 @@ class RouteDecision(BaseModel):
 async def _invoke_route_decision(
     llm: BaseChatModel,
     messages: list[BaseMessage],
-) -> RouteDecision:
-    """保留路由追踪，对结构化调用和校验整体重试。"""
-    decision = await ainvoke_structured(
-        llm, messages, schema=RouteDecision, timeout=120
-    )
-    if decision is None:
-        raise ValueError("路由模型返回了空决策")
-    return decision
+) -> str:
+    """保留路由追踪，对文本调用和 Agent 名称校验整体重试。"""
+    response = await ainvoke_model(llm, messages, timeout=120)
+    if not isinstance(response.content, str):
+        raise ValueError("路由模型未返回文本")
+    route = response.content.strip()
+    if route not in ("crypto_analysis_agent", "topic_research_agent"):
+        raise ValueError(f"路由模型返回了无效 Agent 名称：{route!r}")
+    return route
 
 
 class RoutingState(TypedDict, total=False):
@@ -80,32 +62,24 @@ class RoutingState(TypedDict, total=False):
     resolved_question: str
     # 最近一轮已完成回答的问题，保留补全后的主题供连续追问使用。
     previous_question: str
-    # 同会话各技能的表格与思想原文，以 JSON 字符串按原共享范围和技能名保存。
-    skill_memory: Annotated[dict[str, str], merge_skill_memory]
-    # 承接加密分析子图的累计结论摘要，仅用于分析并跨轮保存。
-    history_summary: str
-    # 承接加密分析子图的计划。
-    plan: dict[str, Any]
-    # 本轮路由目标：加密分析、主题研究或直接回复。
-    route: RouteTarget
-    # 直接回复分支的正文；进入专家分支时为空字符串。
-    direct_reply: str
-    # 本轮最终报告，由专家生成或由直接回复正文写入。
+    # 本轮路由目标：加密分析或主题研究。
+    route: str
+    # 本轮最终报告，由专家生成。
     report: str
 
 
-def select_agent(state: RoutingState) -> RouteTarget:
+def select_agent(state: RoutingState) -> str:
     """根据已校验的路由结果选择唯一分支。"""
     return state["route"]
 
 
 def finalize_report(state: RoutingState) -> dict[str, Any]:
     """统一承接已有报告，校验成功后保存本轮问题供下轮改写。"""
-    report = state["direct_reply"] if state["route"] == "direct" else state["report"]
+    report = state["report"]
     if not isinstance(report, str) or not report.strip():
         raise ValueError("最终报告为空")
     update = {"report": report, "previous_question": state["resolved_question"]}
-    if settings.finalize_capture_enabled and state["route"] != "topic_research_agent":
+    if settings.finalize_capture_enabled:
         append_node_candidate(
             node="finalize",
             scope=state["scope"],
@@ -142,11 +116,9 @@ def build_routing_graph(
     async def rewrite(state: RoutingState) -> dict[str, Any]:
         """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
-        with trace_span("question_rewriter", question_chars=len(original)) as span:
-            question = await rewrite_question(
-                glm_4_flash_llm, original, state.get("previous_question", "")
-            )
-            span.metadata["rewritten_chars"] = len(question)
+        question = await rewrite_question(
+            glm_smart_llm, original, state.get("previous_question", "")
+        )
         if settings.rewrite_capture_enabled:
             append_node_candidate(
                 node="rewrite",
@@ -167,7 +139,7 @@ def build_routing_graph(
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = routing_messages(state["resolved_question"])
-        decision: RouteDecision = await _invoke_route_decision(
+        route = await _invoke_route_decision(
             glm_4_flash_llm,
             messages,
         )
@@ -176,10 +148,10 @@ def build_routing_graph(
                 node="router",
                 scope=state["scope"],
                 input={"resolved_question": state["resolved_question"]},
-                actual_output=decision,
+                actual_output={"route": route},
                 path=settings.routing_capture_path,
             )
-        return decision.model_dump()
+        return {"route": route}
 
     workflow = StateGraph(RoutingState)
     workflow.add_node("rewrite", rewrite)
@@ -195,7 +167,6 @@ def build_routing_graph(
         {
             "crypto_analysis_agent": "crypto_analysis_agent",
             "topic_research_agent": "topic_research_agent",
-            "direct": "finalize",
         },
     )
     workflow.add_edge("crypto_analysis_agent", "finalize")

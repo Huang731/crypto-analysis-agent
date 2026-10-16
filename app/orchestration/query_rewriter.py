@@ -14,28 +14,18 @@ _LOG = get_logger("crypto_analysis.query_rewriter")
 
 
 async def rewrite_question(
-    glm_4_flash_llm: BaseChatModel,
+    glm_smart_llm: BaseChatModel,
     question: str,
     previous_question: str,
 ) -> str:
     """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = query_rewriter_messages(question, previous_question)
-    try:
-        rewritten = await _rewrite_messages(glm_4_flash_llm, messages)
-    except Exception:
-        _LOG.warning(
-            "query.rewrite.failed",
-            extra={"event": "query.rewrite.failed"},
-            exc_info=True,
-        )
-        raise
-
-    return rewritten
+    return await _rewrite_messages(glm_smart_llm, messages)
 
 
 @trace_generation_call(
     name="question_rewriter",
-    model=settings.glm_4_flash_model,
+    model=settings.glm_smart_model,
     input_arg="messages",
     input_format="messages",
     kind="generation",
@@ -46,10 +36,12 @@ async def rewrite_question(
     reraise=True,
 )
 async def _rewrite_messages(
-    glm_4_flash_llm: BaseChatModel, messages: list[BaseMessage]
+    glm_smart_llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    response = await ainvoke_model(glm_4_flash_llm, messages, timeout=120)
+    # 仅问题改写关闭深度思考，不修改共享模型配置。
+    rewrite_llm = glm_smart_llm.bind(extra_body={"thinking": {"type": "disabled"}})
+    response = await ainvoke_model(rewrite_llm, messages, timeout=120)
     rewritten = response.content.strip()
     if not rewritten:
         raise ValueError("问题改写模型返回了空文本")

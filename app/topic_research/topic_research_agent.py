@@ -17,6 +17,7 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import (  # 工具 Agent 的消息交互。
     AIMessage,
     BaseMessage,
+    HumanMessage,
 )
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
@@ -44,6 +45,7 @@ from app.tracing import (  # 记录请求与模型调用。
 )
 from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
+    research_continue_prompt,
     research_messages,
     review_messages,
     split_messages,
@@ -207,16 +209,53 @@ def make_researcher(
         messages = research_messages(
             state["question"], subquestion, as_of=state["scope"]["as_of"]
         )
+        research_state: ResearchAgentState = {
+            "messages": messages,
+            "search_records": {},
+            "research_evidence": {},
+            "visited_urls": [],
+            "tool_errors": [],
+        }
         async with BrowserTool() as browser:
-            result = await research_agent.ainvoke(
-                {
-                    "messages": messages,
-                    "search_records": {},
-                    "research_evidence": {},
-                    "tool_errors": [],
-                },
-                context=BrowserContext(browser=browser),
-            )
+            while True:
+                result = await research_agent.ainvoke(
+                    research_state,
+                    context=BrowserContext(browser=browser),
+                )
+
+                # 每个子问题至少取得一条原文，才允许结束取证。
+                if len(result["research_evidence"]) >= RESEARCH_EVIDENCE_TARGET:
+                    break
+
+                visited_urls = set(result["visited_urls"])
+                search_records = list(result["search_records"].values())
+
+                # 从已有搜索结果中找出尚未尝试的地址，并按 URL 去重。
+                candidate_urls = list(
+                    dict.fromkeys(
+                        item["url"]
+                        for record in search_records
+                        for item in record["results"]
+                        if item["url"] not in visited_urls
+                    )
+                )
+                searched_queries = list(
+                    dict.fromkeys(record["query"] for record in search_records)
+                )
+
+                # 保留已有状态继续研究，不因证据不足抛出异常。
+                research_state = {
+                    **result,
+                    "messages": [
+                        *result["messages"],
+                        HumanMessage(
+                            content=research_continue_prompt(
+                                candidate_urls,
+                                searched_queries,
+                            )
+                        ),
+                    ],
+                }
         response = result["messages"][-1]
         if (
             not isinstance(response, AIMessage)
@@ -336,8 +375,13 @@ def make_research_team(
             {"question": question, "findings": [], "scope": state["scope"]}
         )  # 运行拆题并行汇总子图。
         return {
+            # 专家状态跨轮保存，本轮证据和审核状态仍需独立初始化。
             "findings": result["findings"],
             "research_summary": result["research_summary"],
+            "report": "",
+            "review_decision": "pending",
+            "review_count": 0,
+            "feedback": "",
         }  # 回流父图。
 
     return research_team  # 返回父图节点。
@@ -468,7 +512,7 @@ def build_topic_research_agent(
     builder.add_edge("research_team", "writer")  # 研究完成后写报告。
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。
     builder.add_conditional_edges("reviewer", review_route)  # 通过或重写。
-    return builder.compile(name="topic_research_agent")  # 路由 以此名称分派普通主题。
+    return builder.compile(checkpointer=True, name="topic_research_agent")
 
 
 async def main() -> None:  # 保留原有命令行入口。
