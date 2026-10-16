@@ -31,7 +31,6 @@ faiss-cpu>=1.8
 rank-bm25>=0.2.2,<0.3
 jieba>=0.42.1,<0.43
 httpx>=0.28,<1
-aiohttp>=3.12,<4
 httpx-sse>=0.4,<1
 pandas>=2.2,<3
 

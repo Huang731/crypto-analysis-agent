@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -34,38 +34,11 @@ class Settings(BaseSettings):
 
     # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
-    model_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
-    # 每次模型请求的超时秒数；包含首次调用在内的总尝试次数。
-    model_timeout: float = Field(default=120.0, gt=0)
-    model_max_attempts: int = Field(default=2, ge=1)
-
-    # 百炼模型：保留 smart/fast 职责，并兼容已有环境变量名称。
-    # smart 为百炼高能力模型，当前使用文本接口。
-    bailian_smart_model: str = Field(
-        default="glm-5.1",
-        validation_alias=AliasChoices("BAILIAN_SMART_MODEL", "SMART_MODEL"),
-    )
-    bailian_smart_model_protocol: Literal["text", "multimodal"] = Field(
-        default="text",
-        validation_alias=AliasChoices(
-            "BAILIAN_SMART_MODEL_PROTOCOL", "SMART_MODEL_PROTOCOL"
-        ),
-    )
-    # fast 用于指标工具决策、技能表格和检索改写。
-    bailian_fast_model: str = Field(
-        default="qwen3.7-flash-2026-07-15",
-        validation_alias=AliasChoices("BAILIAN_FAST_MODEL", "FAST_MODEL"),
-    )
-    bailian_fast_model_protocol: Literal["text", "multimodal"] = Field(
-        default="multimodal",
-        validation_alias=AliasChoices(
-            "BAILIAN_FAST_MODEL_PROTOCOL", "FAST_MODEL_PROTOCOL"
-        ),
-    )
+    bailian_smart_model: str = "glm-5.1"
+    bailian_fast_model: str = "qwen3.7-flash-2026-07-15"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
-    zhipuai_api_key: str = Field(default="", repr=False, description="智谱 API Key")
-    zhipuai_base_url: str = "https://open.bigmodel.cn/api/paas/v4/"
+    zhipuai_api_key: str = Field(default="", description="智谱 API Key")
     glm_smart_model: str = "glm-4.5-air"
     glm_4_flash_model: str = "glm-4-flash"
 
@@ -130,6 +103,62 @@ class Settings(BaseSettings):
         / "eval_agent"
         / "skill_generation"
         / "skill_generation_candidates.jsonl"
+    )
+    rewrite_capture_enabled: bool = True
+    rewrite_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "rewrite" / "rewrite_candidates.jsonl"
+    )
+    read_cache_capture_enabled: bool = True
+    read_cache_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "read_cache" / "read_cache_candidates.jsonl"
+    )
+    calculate_metrics_capture_enabled: bool = True
+    calculate_metrics_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "calculate_metrics"
+        / "calculate_metrics_candidates.jsonl"
+    )
+    check_metrics_capture_enabled: bool = True
+    check_metrics_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "check_metrics" / "check_metrics_candidates.jsonl"
+    )
+    generate_content_capture_enabled: bool = True
+    generate_content_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "generate_content"
+        / "generate_content_candidates.jsonl"
+    )
+    finalize_skill_capture_enabled: bool = True
+    finalize_skill_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "finalize_skill"
+        / "finalize_skill_candidates.jsonl"
+    )
+    skill_worker_capture_enabled: bool = True
+    skill_worker_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "skill_worker" / "skill_worker_candidates.jsonl"
+    )
+    writer_capture_enabled: bool = True
+    writer_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "writer" / "writer_candidates.jsonl"
+    )
+    reviewer_capture_enabled: bool = True
+    reviewer_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "reviewer" / "reviewer_candidates.jsonl"
+    )
+    summarize_history_capture_enabled: bool = True
+    summarize_history_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "summarize_history"
+        / "summarize_history_candidates.jsonl"
+    )
+    finalize_capture_enabled: bool = True
+    finalize_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "finalize" / "finalize_candidates.jsonl"
     )
 
     # 浏览器取证：单页超时单位为秒，域名白名单为空时沿用默认访问规则。

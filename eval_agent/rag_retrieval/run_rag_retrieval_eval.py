@@ -366,8 +366,8 @@ def main() -> None:
         "multi_query_model": settings.bailian_fast_model
         if settings.enable_multi_query
         else None,
-        "model_timeout_seconds": settings.model_timeout,
-        "max_attempts": settings.model_max_attempts,
+        "model_timeout_seconds": 120.0,
+        "max_attempts": 2,
         "annotation_scope": "non_exhaustive_positive_chunks",
         "metric_boundary": "召回率仅针对已标注切片；知识缺口不计算命中率，不评测拒答能力",
     }

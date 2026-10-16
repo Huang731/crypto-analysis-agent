@@ -11,7 +11,6 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Annotated
 
-from aiohttp import ClientSession
 from httpx import AsyncClient
 
 if __package__ in (None, ""):
@@ -34,7 +33,6 @@ from app.llm.model import (
     make_glm_4_flash_llm,
     make_glm_smart_llm,
     model_session,
-    zhipuai_model_session,
 )
 from app.observability import (
     bind_request_context,
@@ -62,15 +60,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
         async with (
-            model_session() as bailian_client,
-            zhipuai_model_session() as zhipuai_client,
+            model_session() as model_client,
             AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer,
         ):
             app.state.routing_service = _build_routing_service(
                 retriever=retriever,
                 checkpointer=checkpointer,
-                bailian_client=bailian_client,
-                zhipuai_client=zhipuai_client,
+                model_client=model_client,
             )
             yield
     finally:
@@ -113,14 +109,13 @@ def _build_routing_service(
     *,
     retriever: KBRetriever,
     checkpointer: BaseCheckpointSaver,
-    bailian_client: ClientSession,
-    zhipuai_client: AsyncClient,
+    model_client: AsyncClient,
 ) -> RoutingService:
-    """集中组装两组模型，复用各自连接并显式注入路由图。"""
-    bailian_smart_llm = make_bailian_smart_llm(async_client=bailian_client)
-    bailian_fast_llm = make_bailian_fast_llm(async_client=bailian_client)
-    glm_smart_llm = make_glm_smart_llm(async_client=zhipuai_client)
-    glm_4_flash_llm = make_glm_4_flash_llm(async_client=zhipuai_client)
+    """集中组装两组模型，复用同一连接并显式注入路由图。"""
+    bailian_smart_llm = make_bailian_smart_llm(async_client=model_client)
+    bailian_fast_llm = make_bailian_fast_llm(async_client=model_client)
+    glm_smart_llm = make_glm_smart_llm(async_client=model_client)
+    glm_4_flash_llm = make_glm_4_flash_llm(async_client=model_client)
     graph = build_routing_graph(
         bailian_smart_llm=bailian_smart_llm,
         bailian_fast_llm=bailian_fast_llm,

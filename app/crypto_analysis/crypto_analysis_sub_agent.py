@@ -1,12 +1,9 @@
 """加密资产技能执行子图：缓存、指标循环、内容生成及结果收尾。"""
 
-import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from math import fsum
-from pathlib import Path
 from typing import Any, Literal
-from uuid import uuid4
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
@@ -16,8 +13,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode
 from langgraph.runtime import Runtime
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
     SkillWorkerGraphState,
@@ -31,7 +29,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_model, ainvoke_text, with_tools
+from app.llm.model import ainvoke_model
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
@@ -46,105 +44,6 @@ _LOG = get_logger("crypto_analysis.skill_worker")
 
 
 # 技能结果聚合、内容生成与缓存
-
-
-class SkillExecutionCandidate(BaseModel):
-    """保存执行输入、原始响应和实际结果，预期结果由人工标注。"""
-
-    model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
-    input: dict[str, Any]
-    replay: dict[str, Any]
-    actual_output: dict[str, Any]
-    duration_ms: float | None = Field(default=None, ge=0)
-
-
-class SkillGenerationCandidate(BaseModel):
-    """保存可回放的正文生成输入，保留请求范围及实际模型。"""
-
-    model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
-    input: dict[str, Any]
-    scope: dict[str, str]
-    generator_model: str
-    actual_output: str
-
-
-def _append_skill_candidate(candidate: BaseModel, path: str | Path) -> None:
-    """整条序列化后一次追加，保留中文和已有候选。"""
-    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("a", encoding="utf-8") as output_file:
-        output_file.write(line)
-
-
-def append_skill_execution_candidate(
-    *,
-    model_name: str,
-    skill: LoadedSkill,
-    scope: dict[str, str],
-    evidence: dict[str, dict[str, Any]],
-    result: dict[str, Any],
-    duration_ms: float | None,
-    path: str | Path,
-) -> None:
-    """保存取数响应与原始参数，沿用执行评测的数据源名称。"""
-    source_responses = []
-    for record in evidence.values():
-        data_kind = record["data_kind"]
-        source = "fred_observations" if data_kind in {"m2", "walcl"} else data_kind
-        response = {"source": source, "arguments": record["arguments"]}
-        if record["status"] == "ok":
-            response["raw"] = record["raw"]
-        else:
-            response["error"] = record["reason"]
-        source_responses.append(response)
-    candidate = SkillExecutionCandidate(
-        input={
-            "metric_agent": {"model": model_name},
-            "skill": skill.model_dump(mode="json"),
-            "scope": dict(scope),
-        },
-        replay={"source_responses": source_responses},
-        actual_output=result,
-        duration_ms=duration_ms,
-    )
-    _append_skill_candidate(candidate, path)
-
-
-def append_skill_generation_candidate(
-    *,
-    model_name: str,
-    skill_source: str,
-    skill: LoadedSkill,
-    scope: dict[str, str],
-    analysis_subject: str,
-    result: dict[str, Any],
-    content: str,
-    duration_ms: float,
-    path: str | Path,
-) -> None:
-    """保存固定指标、材料和实际正文，直接对应正文回放评测输入。"""
-    candidate = SkillGenerationCandidate(
-        input={
-            "mode": "response_replay",
-            "skill_source": skill_source,
-            "skill_name": skill.name,
-            "analysis_subject": analysis_subject,
-            "user_input": scope["resolved_question"],
-            "result": {
-                k: v for k, v in result.items() if k not in {"thought_context", "scope"}
-            },
-            "thought_context": result["thought_context"],
-            "fixed_response": content,
-            "source_generation_duration_ms": duration_ms,
-        },
-        scope=dict(scope),
-        generator_model=model_name,
-        actual_output=content,
-    )
-    _append_skill_candidate(candidate, path)
 
 
 def aggregate_skill_results(
@@ -238,7 +137,6 @@ async def generate_skill(
     analysis_subject: str,
 ) -> str:
     """按通用格式生成指标表格，思想原文保留给最终 writer 解读。"""
-    started = time.perf_counter()
     indicators = [
         {**item, "field_labels": metric_field_labels(item["indicator_id"])}
         for item in result["indicators"]
@@ -256,15 +154,17 @@ async def generate_skill(
         # 技能内容本身是 Markdown，直接接收正文，避免外层 JSON 的引号转义问题。
         content = await _invoke_skill_output(llm, prompt)
     if settings.skill_generation_capture_enabled:
-        append_skill_generation_candidate(
-            model_name=llm.model_name,
-            skill_source=skill_loader.load_skill(skill.name),
-            skill=skill,
+        append_node_candidate(
+            node="generate_skill",
             scope=result["scope"],
-            analysis_subject=analysis_subject,
-            result=result,
-            content=content,
-            duration_ms=(time.perf_counter() - started) * 1000,
+            input={
+                "model": llm.model_name,
+                "skill_source": skill_loader.load_skill(skill.name),
+                "skill_name": skill.name,
+                "analysis_subject": analysis_subject,
+                "result": result,
+            },
+            actual_output=content,
             path=settings.skill_generation_capture_path,
         )
     return content
@@ -274,7 +174,8 @@ async def generate_skill(
 async def _invoke_skill_output(llm: Any, prompt: str) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
     # 表格生成使用执行模型，沿用模型工厂的思考配置。
-    content = await ainvoke_text(llm, prompt)
+    response = await ainvoke_model(llm, prompt)
+    content = response.content.strip()
     if not content:
         raise ValueError("技能内容不能为空")
     return content
@@ -370,7 +271,7 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
                             "技能缓存缺少结构化的表格和思想原文，"
                             "请明确要求不用缓存重新分析"
                         ) from exc
-                    return {
+                    update = {
                         "skill": skill,
                         "skill_result": {
                             "skill_name": skill.name,
@@ -382,16 +283,30 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
                             "cache_hit": True,
                         },
                     }
-                return {
-                    "skill": skill,
-                    "messages": [
-                        HumanMessage(
-                            content=metric_execution_prompt(skill.model_dump())
-                        )
-                    ],
-                    "evidence": {},
-                    "indicator_results": {},
-                }
+                else:
+                    update = {
+                        "skill": skill,
+                        "messages": [
+                            HumanMessage(
+                                content=metric_execution_prompt(skill.model_dump())
+                            )
+                        ],
+                        "evidence": {},
+                        "indicator_results": {},
+                    }
+                if settings.read_cache_capture_enabled:
+                    append_node_candidate(
+                        node="read_cache",
+                        scope=state["scope"],
+                        input={
+                            "skill_name": name,
+                            "skill_source": state["skill_source"],
+                            "cached_memory": cached,
+                        },
+                        actual_output=update,
+                        path=settings.read_cache_capture_path,
+                    )
+                return update
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -417,12 +332,13 @@ def make_calculate_metrics(
             try:
                 registry = get_tool_registry()
                 tools = [registry[name] for name in state["skill"].tools]
+                messages = [
+                    SystemMessage(content=metric_agent_system_prompt()),
+                    *state["messages"],
+                ]
                 response = await _invoke_metric_decision(
-                    with_tools(bailian_fast_llm, tools),
-                    [
-                        SystemMessage(content=metric_agent_system_prompt()),
-                        *state["messages"],
-                    ],
+                    bailian_fast_llm.bind_tools(tools),
+                    messages,
                 )
                 updates: list[Any] = [Command(update={"messages": [response]})]
                 if response.tool_calls:
@@ -443,6 +359,19 @@ def make_calculate_metrics(
                         updates.append(tool_updates)
                     else:
                         updates.extend(tool_updates)
+                if settings.calculate_metrics_capture_enabled:
+                    append_node_candidate(
+                        node="calculate_metrics",
+                        scope=state["scope"],
+                        input={
+                            "skill": state["skill"],
+                            "messages": messages,
+                            "indicator_results": state["indicator_results"],
+                            "evidence": state["evidence"],
+                        },
+                        actual_output={"response": response, "updates": updates},
+                        path=settings.calculate_metrics_capture_path,
+                    )
                 return updates
             except Exception:
                 node_span.metadata["status"] = "error"
@@ -475,26 +404,40 @@ def make_check_metrics() -> Callable[
                     for metric in pending["scoring"]["metrics"]
                     if metric["id"] in missing
                 ]
-                return {
+                update = {
                     "messages": [
                         HumanMessage(content=metric_execution_prompt(pending))
                     ],
                 }
-            result = aggregate_skill_results(
-                skill, [records[metric.id] for metric in skill.scoring.metrics]
-            )
-            if settings.skill_execution_capture_enabled:
-                # 拆图后仅保留节点耗时，不为执行候选补造整段指标耗时。
-                append_skill_execution_candidate(
-                    model_name=settings.bailian_fast_model,
-                    skill=skill,
-                    scope=state["scope"],
-                    evidence=state["evidence"],
-                    result=result,
-                    duration_ms=None,
-                    path=settings.skill_execution_capture_path,
+            else:
+                result = aggregate_skill_results(
+                    skill, [records[metric.id] for metric in skill.scoring.metrics]
                 )
-            return {"metric_result": result}
+                if settings.skill_execution_capture_enabled:
+                    append_node_candidate(
+                        node="skill_execution",
+                        scope=state["scope"],
+                        input={
+                            "model": settings.bailian_fast_model,
+                            "skill": skill,
+                            "evidence": state["evidence"],
+                        },
+                        actual_output=result,
+                        path=settings.skill_execution_capture_path,
+                    )
+                update = {"metric_result": result}
+            if settings.check_metrics_capture_enabled:
+                append_node_candidate(
+                    node="check_metrics",
+                    scope=state["scope"],
+                    input={"skill": skill, "indicator_results": records},
+                    actual_output={
+                        "missing_metric_ids": missing,
+                        "state_update": update,
+                    },
+                    path=settings.check_metrics_capture_path,
+                )
+            return update
 
     return check_metrics
 
@@ -540,7 +483,7 @@ def make_generate_content(
                 content = await generate_skill(
                     bailian_fast_llm, loader, skill, result, analysis_subject
                 )
-                return {
+                update = {
                     "skill_result": {
                         "skill_name": skill.name,
                         "name": skill.scoring.name,
@@ -549,6 +492,20 @@ def make_generate_content(
                         "cache_hit": False,
                     }
                 }
+                if settings.generate_content_capture_enabled:
+                    append_node_candidate(
+                        node="generate_content",
+                        scope=state["scope"],
+                        input={
+                            "skill_name": state["skill_name"],
+                            "skill_source": state["skill_source"],
+                            "metric_result": state["metric_result"],
+                            "analysis_subject": analysis_subject,
+                        },
+                        actual_output=update,
+                        path=settings.generate_content_capture_path,
+                    )
+                return update
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -565,14 +522,29 @@ def make_finalize_skill() -> Callable[
     async def finalize_skill(state: SkillWorkerGraphState) -> dict[str, Any]:
         skill = state["skill"]
         if state["cached_memory"] is not None:
-            return {"skill_result": state["skill_result"]}
-        output = state["skill_result"]
-        result = {
-            **state["metric_result"],
-            "thought_context": output["thought_context"],
-        }
-        key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
-        return _build_skill_update(skill, key, result, output["content"])
+            update = {"skill_result": state["skill_result"]}
+        else:
+            output = state["skill_result"]
+            result = {
+                **state["metric_result"],
+                "thought_context": output["thought_context"],
+            }
+            key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
+            update = _build_skill_update(skill, key, result, output["content"])
+        if settings.finalize_skill_capture_enabled:
+            append_node_candidate(
+                node="finalize_skill",
+                scope=state["scope"],
+                input={
+                    "skill": skill,
+                    "cached_memory": state["cached_memory"],
+                    "skill_result": state["skill_result"],
+                    "metric_result": state.get("metric_result"),
+                },
+                actual_output=update,
+                path=settings.finalize_skill_capture_path,
+            )
+        return update
 
     return finalize_skill
 

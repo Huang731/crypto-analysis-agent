@@ -21,7 +21,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.config.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_bailian_fast_llm, model_session
 from app.orchestration.routing import (
-    RouteCallState,
     RouteDecision,
     RouteTarget,
     decide_route,
@@ -66,7 +65,7 @@ class RoutingOutput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     decision: RouteDecision | None = None
-    execution_status: Literal["success", "invalid_model_output", "error"]
+    execution_status: Literal["success", "error"]
     duration_ms: float = Field(ge=0)
     error_type: str | None = None
 
@@ -75,7 +74,6 @@ async def evaluate_route(
     llm: BaseChatModel, client: Langfuse, question: RoutingInput
 ) -> RoutingOutput:
     """记录包含重试的路由操作；未知 Token 与费用不填写。"""
-    call_state = RouteCallState()
     started = time.perf_counter()
     with client.start_as_current_observation(
         as_type="span",
@@ -87,16 +85,10 @@ async def evaluate_route(
         metadata={"model": settings.bailian_fast_model},
     ) as observation:
         try:
-            decision = await decide_route(
-                llm, question.resolved_question, call_state=call_state
-            )
+            decision = await decide_route(llm, question.resolved_question)
             output = RoutingOutput(
                 decision=decision,
-                execution_status=(
-                    "invalid_model_output"
-                    if call_state.invalid_model_output
-                    else "success"
-                ),
+                execution_status="success",
                 duration_ms=(time.perf_counter() - started) * 1000,
             )
         except Exception as exc:  # noqa: BLE001 - 评测需要记录所有单项执行失败，继续其他案例。
@@ -146,7 +138,7 @@ def route_correct(*, output: Any, expected_output: Any, **kwargs: Any) -> Evalua
 
 
 def decision_contract_valid(*, output: Any, **kwargs: Any) -> Evaluation:
-    """RouteDecision 已执行契约校验，无效模型输出不能借原特殊分支通过。"""
+    """检查成功案例的结构化结果和直接回复字段约束。"""
     actual = RoutingOutput.model_validate(output)
     return Evaluation(
         name="decision_contract_valid",

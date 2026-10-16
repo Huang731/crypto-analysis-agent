@@ -1,23 +1,22 @@
 """单次路由到研究专家，完成后统一整理报告。"""
 
-from pathlib import Path
 from typing import Annotated, Any, Literal
-from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, model_validator
 from typing_extensions import Self, TypedDict
 
+from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
 from app.crypto_analysis.skill_memory import merge_skill_memory
-from app.llm.model import ainvoke_model, structured_model
+from app.llm.model import ainvoke_structured
 from app.observability import get_logger, timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
@@ -48,24 +47,16 @@ class RouteDecision(BaseModel):
         return self
 
 
-class RouteCallState(BaseModel):
-    """本次调用显式持有的诊断信息，不进入业务图的会话状态。"""
-
-    invalid_model_output: bool = False
-
-
 async def decide_route(
     fast: BaseChatModel,
     resolved_question: str,
-    *,
-    call_state: RouteCallState | None = None,
 ) -> RouteDecision:
     """只执行路由，沿用模型工厂的超时和整体最多两次尝试。"""
     messages = [
         SystemMessage(content=routing_prompt()),
         HumanMessage(content=resolved_question),
     ]
-    return await _invoke_route_decision(fast, messages, call_state)
+    return await _invoke_route_decision(fast, messages)
 
 
 @trace_generation_call(
@@ -78,55 +69,9 @@ async def decide_route(
 async def _invoke_route_decision(
     fast: BaseChatModel,
     messages: list[SystemMessage | HumanMessage],
-    call_state: RouteCallState | None,
 ) -> RouteDecision:
-    """保留原特殊返回分支及无效模型输出的诊断标记。"""
-
-    decision = await ainvoke_model(structured_model(fast, RouteDecision), messages)
-    if not isinstance(decision, RouteDecision):
-        if call_state is not None:
-            call_state.invalid_model_output = True
-        return RouteDecision(
-            route="direct", direct_reply="暂时无法处理这次提问，请重试。"
-        )
-    return decision
-
-
-class RoutingCandidateInput(BaseModel):
-    """保留路由模型实际收到的问题。"""
-
-    model_config = ConfigDict(extra="forbid")
-    resolved_question: str
-
-
-class RoutingCandidate(BaseModel):
-    """实际输出仅用于候选记录，不自动生成预期答案。"""
-
-    model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
-    original_question: str
-    input: RoutingCandidateInput
-    actual_output: RouteDecision
-
-
-def append_routing_candidate(
-    *,
-    original_question: str,
-    resolved_question: str,
-    decision: RouteDecision,
-    path: str | Path,
-) -> None:
-    """整条序列化后一次追加，保留中文和已有候选记录。"""
-    candidate = RoutingCandidate(
-        original_question=original_question,
-        input=RoutingCandidateInput(resolved_question=resolved_question),
-        actual_output=decision,
-    )
-    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("a", encoding="utf-8") as output_file:
-        output_file.write(line)
+    """保留路由追踪，结构化调用与校验统一交给模型层。"""
+    return await ainvoke_structured(fast, messages, schema=RouteDecision)
 
 
 class RoutingState(TypedDict, total=False):
@@ -162,7 +107,20 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
     report = state["direct_reply"] if state["route"] == "direct" else state["report"]
     if not isinstance(report, str) or not report.strip():
         raise ValueError("最终报告为空")
-    return {"report": report, "previous_question": state["resolved_question"]}
+    update = {"report": report, "previous_question": state["resolved_question"]}
+    if settings.finalize_capture_enabled and state["route"] != "topic_research_agent":
+        append_node_candidate(
+            node="finalize",
+            scope=state["scope"],
+            input={
+                "route": state["route"],
+                "resolved_question": state["resolved_question"],
+                "report": report,
+            },
+            actual_output=update,
+            path=settings.finalize_capture_path,
+        )
+    return update
 
 
 def build_routing_graph(
@@ -192,6 +150,17 @@ def build_routing_graph(
                 glm_4_flash_llm, original, state.get("previous_question", "")
             )
             span.metadata["rewritten_chars"] = len(question)
+        if settings.rewrite_capture_enabled:
+            append_node_candidate(
+                node="rewrite",
+                scope=state["scope"],
+                input={
+                    "question": original,
+                    "previous_question": state.get("previous_question", ""),
+                },
+                actual_output={"resolved_question": question},
+                path=settings.rewrite_capture_path,
+            )
         return {
             "resolved_question": question,
             "scope": {**state["scope"], "resolved_question": question},
@@ -204,10 +173,11 @@ def build_routing_graph(
             glm_4_flash_llm, state["resolved_question"]
         )
         if settings.routing_capture_enabled:
-            append_routing_candidate(
-                original_question=state["scope"]["original_question"],
-                resolved_question=state["resolved_question"],
-                decision=decision,
+            append_node_candidate(
+                node="router",
+                scope=state["scope"],
+                input={"resolved_question": state["resolved_question"]},
+                actual_output=decision,
                 path=settings.routing_capture_path,
             )
         return decision.model_dump()

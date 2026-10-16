@@ -8,33 +8,28 @@ from collections.abc import Awaitable, Callable  # 标注节点工厂返回的�
 from datetime import datetime, timezone
 from typing import Any  # 标注模型和消息集合。
 
-import httpx
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import (
     ModelRequest,
     ModelResponse,
-    ToolCallRequest,
 )
 from langchain_core.messages import (  # 工具 Agent 的消息交互。
     AIMessage,
     HumanMessage,
-    ToolMessage,
 )
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
-from langgraph.types import Command, Send  # 并行分派研究子问题。
-from playwright.async_api import Error as BrowserError
+from langgraph.types import Send  # 并行分派研究子问题。
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
 from app.config.config import settings  # 读取模型配置用于成本估算。
 from app.llm.model import (
-    ainvoke_agent_model,
     ainvoke_model,
     make_glm_4_flash_llm,
     make_glm_smart_llm,
-    with_thinking,
-    zhipuai_model_session,
+    model_session,
 )
 from app.observability import timed_node  # 保留节点耗时观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
@@ -148,11 +143,21 @@ class ResearchModelTrace(AgentMiddleware):
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
+        @retry(
+            stop=stop_after_attempt(2),
+            wait=wait_random_exponential(min=1, max=2),
+            reraise=True,
+        )
+        async def invoke(current_request: ModelRequest) -> ModelResponse:
+            """只重试当前模型请求，不重发工具调用或研究流程。"""
+            return await asyncio.wait_for(handler(current_request), timeout=60)
+
         if len(request.state.get("research_evidence", {})) >= RESEARCH_EVIDENCE_TARGET:
             request = request.override(tools=[], tool_choice="none")
-        response = await ainvoke_agent_model(lambda: handler(request), timeout=60)
-        previous_calls = [
-            call
+        response = await invoke(request)
+        # 按工具名称和完整参数判断重复，调用 ID 不参与比较。
+        seen = [
+            (call["name"], call["args"])
             for message in request.messages
             if isinstance(message, AIMessage)
             for call in message.tool_calls
@@ -161,53 +166,14 @@ class ResearchModelTrace(AgentMiddleware):
             if not isinstance(message, AIMessage):
                 continue
             for call in message.tool_calls:
-                if any(
-                    previous["name"] == call["name"]
-                    and previous["args"] == call["args"]
-                    for previous in previous_calls
-                ):
+                key = (call["name"], call["args"])
+                if key in seen:
                     # 重复调用不写入历史，关闭工具后根据已有结果结束研究。
                     request = request.override(tools=[], tool_choice="none")
-                    return await ainvoke_agent_model(
-                        lambda request=request: handler(request), timeout=60
-                    )
-                previous_calls.append(call)
+                    return await invoke(request)
+                # 同步记录本批新调用，避免同一响应中重复请求相同工具和参数。
+                seen.append(key)
         return response
-
-    async def awrap_tool_call(
-        self,
-        request: ToolCallRequest,
-        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command]],
-    ) -> ToolMessage | Command:
-        with trace_span("topic.research_tool", tool=request.tool_call["name"]) as span:
-            try:
-                return await handler(request)
-            except (
-                BrowserError,
-                httpx.HTTPError,
-                TimeoutError,
-                ValueError,
-                RuntimeError,
-                KeyError,
-                TypeError,
-            ) as exc:
-                span.metadata["status"] = "error"
-                error = {
-                    "tool": request.tool_call["name"],
-                    "error": f"{type(exc).__name__}: {exc}",
-                }
-                return Command(
-                    update={
-                        "tool_errors": [error],
-                        "messages": [
-                            ToolMessage(
-                                content=json.dumps(error, ensure_ascii=False),
-                                tool_call_id=request.tool_call["id"],
-                                status="error",
-                            )
-                        ],
-                    }
-                )
 
 
 def build_research_agent(glm_4_flash_llm: Any) -> CompiledStateGraph:
@@ -301,7 +267,11 @@ def make_summarize(
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    glm_smart_llm = with_thinking(glm_smart_llm, False)
+    glm_smart_llm = glm_smart_llm.bind(
+        extra_body={
+            "thinking": {"type": "disabled"},
+        }
+    )
 
     @timed_node  # 延续原图的节点观测。
     async def summarize(state: AnalysisState) -> dict[str, str]:  # 返回主题摘要。
@@ -395,7 +365,11 @@ def make_writer(
                     json.dumps(state["findings"], ensure_ascii=False),
                 )  # 首轮反馈为空，重写时提供具体意见。
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = with_thinking(glm_smart_llm, False)
+                writer_llm = glm_smart_llm.bind(
+                    extra_body={
+                        "thinking": {"type": "disabled"},
+                    }
+                )
                 response = await _invoke_traced_model(
                     writer_llm, prompt, "topic_writer", settings.glm_smart_model
                 )
@@ -430,7 +404,11 @@ def make_reviewer(
     """审查报告完整性与证据边界，最多要求重写一次。"""
 
     # 仅本节点关闭深度思考，不修改共享模型的配置。
-    glm_smart_llm = with_thinking(glm_smart_llm, False)
+    glm_smart_llm = glm_smart_llm.bind(
+        extra_body={
+            "thinking": {"type": "disabled"},
+        }
+    )
 
     @timed_node  # 保留审稿耗时日志。
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。
@@ -514,7 +492,7 @@ async def main() -> None:  # 保留原有命令行入口。
     question = (
         " ".join(sys.argv[1:]).strip() or "分析人工智能对教育行业的影响"
     )  # 读取用户研究主题。
-    async with zhipuai_model_session() as client:
+    async with model_session() as client:
         agent = build_topic_research_agent(
             make_glm_smart_llm(async_client=client),
             make_glm_4_flash_llm(async_client=client),

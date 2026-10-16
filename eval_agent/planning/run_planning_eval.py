@@ -24,7 +24,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     create_analysis_plan,
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
-from app.llm.model import make_glm_4_flash_llm, zhipuai_model_session
+from app.llm.model import make_glm_4_flash_llm, model_session
 from prompts.crypto_analysis import analysis_plan_prompt
 
 
@@ -300,7 +300,7 @@ def main() -> None:
     async def task(*, item: DatasetItem) -> dict[str, Any]:
         """每次只调用生产规划函数，模型连接由本项独立持有。"""
         question = PlanningInput.model_validate(item.input)
-        async with zhipuai_model_session() as transport:
+        async with model_session() as transport:
             llm = make_glm_4_flash_llm(async_client=transport)
             output = await evaluate_plan(llm, client, question, skill_descriptions)
         rows.append(

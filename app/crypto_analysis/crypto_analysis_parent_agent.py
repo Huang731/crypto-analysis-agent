@@ -2,9 +2,7 @@
 
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.runnables import RunnableConfig
@@ -20,6 +18,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_state import (
     DynamicAnalysisState,
@@ -38,9 +37,8 @@ from app.crypto_analysis.skill_memory import (
     resolve_memory_key,
 )
 from app.llm.model import (
+    ainvoke_model,
     ainvoke_structured,
-    ainvoke_text,
-    with_thinking,
 )
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
@@ -59,40 +57,11 @@ _LOG = get_logger("crypto_analysis.dynamic_analysis")
 async def _invoke_history_summary(llm: BaseChatModel, prompt: str) -> str:
     """直接生成摘要正文，沿用非空、长度校验和有限重试。"""
     # 历史摘要使用 GLM-4-Flash，沿用统一调用的重试和超时。
-    summary = await ainvoke_text(llm, prompt)
+    response = await ainvoke_model(llm, prompt)
+    summary = response.content.strip()
     if not summary:
         raise ValueError("历史摘要不能为空")
     return summary
-
-
-async def _invoke_structured_output(
-    llm: Any,
-    schema: type[BaseModel],
-    prompt: str,
-    trace_name: str,
-    model_name: str,
-) -> BaseModel:
-    """函数调用、解析和类型校验整体重试，保留流标记和用量追踪。"""
-    return await _invoke_structured_model(llm, schema, prompt, trace_name, model_name)
-
-
-@trace_generation_call(
-    name=lambda arguments: arguments.arguments["trace_name"],
-    model=lambda arguments: arguments.arguments["model_name"],
-    output_format="json",
-)
-async def _invoke_structured_model(
-    model: Any,
-    schema: type[BaseModel],
-    prompt: str,
-    trace_name: str,
-    model_name: str,
-) -> BaseModel:
-    """保留模型结果的类型校验，由装饰器记录本次调用用量。"""
-    response = await ainvoke_structured(model, prompt, schema=schema)
-    if not isinstance(response, schema):
-        raise TypeError(f"模型未返回 {schema.__name__} 结构化结果")
-    return response
 
 
 @trace_generation_call(name="crypto_analysis_writer", model=settings.glm_smart_model)
@@ -103,7 +72,8 @@ async def _invoke_report_text(
 ) -> str:
     """生成正文前通知开始，完成后校验报告。"""
     stream_writer({"event": "report_start", "node": "writer"})
-    report = await ainvoke_text(llm, prompt)
+    response = await ainvoke_model(llm, prompt)
+    report = response.content.strip()
     if not report:
         raise ValueError("报告正文不能为空")
     return report
@@ -152,12 +122,20 @@ class ReportReview(BaseModel):
         return self
 
 
+@trace_generation_call(
+    name="crypto_report_review", model=settings.glm_smart_model, output_format="json"
+)
 async def _invoke_report_review(llm: Any, prompt: str) -> ReportReview:
-    """单次审核限定超时，调用、解析或超时异常整体最多尝试两次。"""
-    result = await _invoke_structured_model(
-        llm, ReportReview, prompt, "crypto_report_review", settings.glm_smart_model
-    )
-    return ReportReview.model_validate(result)
+    """记录审核用量，模型调用与校验统一交给结构化入口。"""
+    return await ainvoke_structured(llm, prompt, schema=ReportReview)
+
+
+@trace_generation_call(
+    name="crypto_analysis_plan", model=settings.glm_4_flash_model, output_format="json"
+)
+async def _invoke_analysis_plan(llm: Any, prompt: str) -> AnalysisPlan:
+    """记录规划用量，模型调用与校验统一交给结构化入口。"""
+    return await ainvoke_structured(llm, prompt, schema=AnalysisPlan)
 
 
 # 请求规划
@@ -181,51 +159,8 @@ async def create_analysis_plan(
 ) -> dict[str, Any]:
     """LLM 根据任务和技能描述选择资产、研究重点与所需 Skill。"""
     prompt = analysis_plan_prompt(skill_descriptions, question)
-    plan = await _invoke_structured_output(
-        llm,
-        AnalysisPlan,
-        prompt,
-        "crypto_analysis_plan",
-        settings.glm_4_flash_model,
-    )
+    plan = await _invoke_analysis_plan(llm, prompt)
     return plan.model_dump()
-
-
-class PlanningCandidateInput(BaseModel):
-    """保留规划模型实际收到的问题。"""
-
-    model_config = ConfigDict(extra="forbid")
-    resolved_question: str
-
-
-class PlanningCandidate(BaseModel):
-    """实际计划已经由生产规划函数校验，仅作为候选输出保留。"""
-
-    model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
-    original_question: str
-    input: PlanningCandidateInput
-    actual_output: dict[str, Any]
-
-
-def append_planning_candidate(
-    *,
-    original_question: str,
-    resolved_question: str,
-    decision: dict[str, Any],
-    path: str | Path,
-) -> None:
-    """一次追加完整 JSONL 记录，保留中文和已有候选。"""
-    candidate = PlanningCandidate(
-        original_question=original_question,
-        input=PlanningCandidateInput(resolved_question=resolved_question),
-        actual_output=decision,
-    )
-    line = candidate.model_dump_json(ensure_ascii=False) + "\n"
-    output_path = Path(path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("a", encoding="utf-8") as output_file:
-        output_file.write(line)
 
 
 def make_skill_worker(
@@ -257,6 +192,18 @@ def make_skill_worker(
                 update = {"skill_results": [result["skill_result"]]}
                 if "skill_memory" in result:
                     update["skill_memory"] = result["skill_memory"]
+                if settings.skill_worker_capture_enabled:
+                    append_node_candidate(
+                        node="skill_worker",
+                        scope=state["scope"],
+                        input={
+                            "skill_name": name,
+                            "skill_source": state["skill_source"],
+                            "cached_memory": state["cached_memory"],
+                        },
+                        actual_output=update,
+                        path=settings.skill_worker_capture_path,
+                    )
                 return update
             except Exception:
                 span.metadata["status"] = "error"
@@ -287,10 +234,11 @@ def make_plan(
                     skill_loader.format_skill_descriptions(),
                 )
                 if settings.planning_capture_enabled:
-                    append_planning_candidate(
-                        original_question=state["scope"]["original_question"],
-                        resolved_question=question,
-                        decision=selection,
+                    append_node_candidate(
+                        node="plan",
+                        scope=state["scope"],
+                        input={"resolved_question": question},
+                        actual_output=selection,
                         path=settings.planning_capture_path,
                     )
                 scope = {
@@ -358,6 +306,14 @@ def make_writer(
             try:
                 if not state["plan"]["skill_names"]:
                     report = "当前任务没有适用的分析技能；请说明希望分析的资产或问题。"
+                    if settings.writer_capture_enabled:
+                        append_node_candidate(
+                            node="writer",
+                            scope=state["scope"],
+                            input={"plan": state["plan"]},
+                            actual_output={"report": report},
+                            path=settings.writer_capture_path,
+                        )
                     return {
                         "report": report,
                     }
@@ -385,12 +341,28 @@ def make_writer(
                     previous_report=state["report"],
                 )
                 # 仅本节点关闭深度思考，不修改共享模型的配置。
-                writer_llm = with_thinking(glm_smart_llm, False)
+                writer_llm = glm_smart_llm.bind(
+                    extra_body={
+                        "thinking": {"type": "disabled"},
+                    }
+                )
                 report = await _invoke_report_text(
                     writer_llm,
                     prompt,
                     runtime.stream_writer,
                 )
+                if settings.writer_capture_enabled:
+                    append_node_candidate(
+                        node="writer",
+                        scope=state["scope"],
+                        input={
+                            "prompt": prompt,
+                            "model": settings.glm_smart_model,
+                            "review_count": state["review_count"],
+                        },
+                        actual_output={"report": report},
+                        path=settings.writer_capture_path,
+                    )
                 return {
                     "report": report,
                 }
@@ -413,6 +385,14 @@ def make_reviewer(
             try:
                 # 无适用技能时沿用原有说明回复，无需审核投研内容。
                 if not state["plan"]["skill_names"]:
+                    if settings.reviewer_capture_enabled:
+                        append_node_candidate(
+                            node="reviewer",
+                            scope=state["scope"],
+                            input={"plan": state["plan"], "report": state["report"]},
+                            actual_output={"state_update": {"review_decision": "pass"}},
+                            path=settings.reviewer_capture_path,
+                        )
                     return {"review_decision": "pass"}
                 review_count = state["review_count"] + 1
                 prompt = analysis_review_prompt(
@@ -433,16 +413,33 @@ def make_reviewer(
                     "feedback": review.feedback,
                 }
                 if not review.passed and review_count >= 2:
-                    return {
+                    update = {
                         "review_decision": "pass",
                         "review_count": review_count,
                         "review_feedback": "已达重写2次上限，强制通过。",
                     }
-                return {
-                    "review_decision": "pass" if review.passed else "rework",
-                    "review_count": review_count,
-                    "review_feedback": "" if review.passed else review.feedback,
-                }
+                else:
+                    update = {
+                        "review_decision": "pass" if review.passed else "rework",
+                        "review_count": review_count,
+                        "review_feedback": "" if review.passed else review.feedback,
+                    }
+                if settings.reviewer_capture_enabled:
+                    append_node_candidate(
+                        node="reviewer",
+                        scope=state["scope"],
+                        input={
+                            "prompt": prompt,
+                            "model": settings.glm_smart_model,
+                            "review_count": review_count,
+                        },
+                        actual_output={
+                            "review": review.model_dump(),
+                            "state_update": update,
+                        },
+                        path=settings.reviewer_capture_path,
+                    )
+                return update
             except Exception:
                 node_span.metadata["status"] = "error"
                 raise
@@ -465,14 +462,27 @@ def make_summarize_history(
     @timed_node
     async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
         """在报告生成后更新累计结论摘要，无适用技能时保留已有摘要。"""
-        if not state["plan"]["skill_names"]:
-            return {}
-        prompt = history_summary_prompt(
-            previous_summary=state.get("history_summary", ""),
-            report=state["report"],
-        )
-        summary = await _invoke_history_summary(glm_4_flash_llm, prompt)
-        return {"history_summary": summary}
+        update: dict[str, str] = {}
+        if state["plan"]["skill_names"]:
+            prompt = history_summary_prompt(
+                previous_summary=state.get("history_summary", ""),
+                report=state["report"],
+            )
+            summary = await _invoke_history_summary(glm_4_flash_llm, prompt)
+            update = {"history_summary": summary}
+        if settings.summarize_history_capture_enabled:
+            append_node_candidate(
+                node="summarize_history",
+                scope=state["scope"],
+                input={
+                    "plan": state["plan"],
+                    "previous_summary": state.get("history_summary", ""),
+                    "report": state["report"],
+                },
+                actual_output=update,
+                path=settings.summarize_history_capture_path,
+            )
+        return update
 
     return summarize_history
 

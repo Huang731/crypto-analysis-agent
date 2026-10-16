@@ -23,9 +23,7 @@ from app.llm.model import (
     ainvoke_structured,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
-    model_error_message,
     model_session,
-    with_thinking,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from eval_agent.skill_execution.run_skill_execution_eval import (
@@ -633,7 +631,7 @@ async def evaluate(
                     ) as judge_observation:
                         judgment = await asyncio.wait_for(
                             ainvoke_structured(
-                                with_thinking(judge, False),
+                                judge.bind(enable_thinking=False),
                                 prompt,
                                 schema=GroundedJudgment,
                             ),
@@ -736,7 +734,10 @@ async def evaluate(
             )
         if active_stage == "judge":
             output["judge_raw_response"] = judge_counter.last_response
-        message = model_error_message(exc)
+        message = str(exc)
+        for key in (settings.dashscope_api_key, settings.zhipuai_api_key):
+            if key:
+                message = message.replace(key, "[已隐藏]")
         output["error_message"] = _log_reason(message)[:400]
         print(
             json.dumps(

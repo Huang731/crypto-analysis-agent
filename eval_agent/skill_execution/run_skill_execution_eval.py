@@ -40,10 +40,9 @@ from app.crypto_analysis.crypto_analysis_sub_agent import (
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
 from app.llm.model import (
+    _make_bailian_llm,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
-    make_model,
-    model_error_message,
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -395,7 +394,7 @@ async def evaluate_skill(
             llm = make_bailian_smart_llm(async_client=http_client)
         else:
             # 历史案例继续使用其明确记录的文本模型，不改写案例标签。
-            llm = make_model(
+            llm = _make_bailian_llm(
                 inputs.metric_agent.model, async_client=http_client, protocol="text"
             )
         with ExitStack() as stack:
@@ -465,7 +464,11 @@ async def evaluate_skill(
                     duration_ms = (time.perf_counter() - started) * 1000
                     actual, status, error_type = None, "error", type(exc).__name__
                     error_stage = stage
-                    error_message = _log_reason(model_error_message(exc))[:1000]
+                    message = str(exc)
+                    for key in (settings.dashscope_api_key, settings.zhipuai_api_key):
+                        if key:
+                            message = message.replace(key, "[已隐藏]")
+                    error_message = _log_reason(message)[:1000]
                 _, errors, chain_valid = tool_trajectory(replay.agent_state, skill)
                 configured = Counter(
                     (item.source, json.dumps(item.arguments, sort_keys=True))
