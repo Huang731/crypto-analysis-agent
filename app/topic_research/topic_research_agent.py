@@ -16,7 +16,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import (  # 工具 Agent 的消息交互。
     AIMessage,
-    HumanMessage,
+    BaseMessage,
 )
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
@@ -44,11 +44,11 @@ from app.tracing import (  # 记录请求与模型调用。
 )
 from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
-    research_prompt,
-    review_prompt,
-    split_prompt,
-    summarize_prompt,
-    writer_prompt,
+    research_messages,
+    review_messages,
+    split_messages,
+    summarize_messages,
+    writer_messages,
 )
 
 _NUMBER_PREFIX = re.compile(
@@ -85,9 +85,9 @@ def make_split(
         reraise=True,
     )
     async def split(state: AnalysisState) -> dict[str, list[str]]:  # 返回并行研究任务。
-        prompt = split_prompt(state["question"])  # 提供原始研究主题。
+        messages = split_messages(state["question"])  # 提供原始研究主题。
         response = await _invoke_traced_model(
-            glm_4_flash_llm, prompt, "topic_split", settings.glm_4_flash_model
+            glm_4_flash_llm, messages, "topic_split", settings.glm_4_flash_model
         )
         if not isinstance(response.content, str):  # 消息内容必须是文本。
             raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
@@ -109,23 +109,25 @@ def make_split(
     return split  # 返回可注册到子图的节点。
 
 
-async def _invoke_model(llm: Any, prompt: str) -> Any:
+async def _invoke_model(llm: Any, messages: list[BaseMessage]) -> Any:
     """单次调用保留超时，重试由包含结果校验的业务节点负责。"""
-    return await ainvoke_model(llm, prompt)
+    return await ainvoke_model(llm, messages, timeout=120)
 
 
 @trace_generation_call(
     name=lambda arguments: arguments.arguments["trace_name"],
     model=lambda arguments: arguments.arguments["model_name"],
+    input_arg="messages",
+    input_format="messages",
     output_attr="content",
     skip_non_text_output=True,
     kind="generation",
 )
 async def _invoke_traced_model(
-    llm: Any, prompt: str, trace_name: str, model_name: str
+    llm: Any, messages: list[BaseMessage], trace_name: str, model_name: str
 ) -> Any:
     """记录单次调用统计，保留非文本用量未知的处理。"""
-    return await _invoke_model(llm, prompt)
+    return await _invoke_model(llm, messages)
 
 
 class ResearchModelTrace(AgentMiddleware):
@@ -202,13 +204,13 @@ def make_researcher(
     @trace_generation_call(name="topic.researcher", kind="span")
     async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         subquestion = state["subquestion"]
-        prompt = research_prompt(
+        messages = research_messages(
             state["question"], subquestion, as_of=state["scope"]["as_of"]
         )
         async with BrowserTool() as browser:
             result = await research_agent.ainvoke(
                 {
-                    "messages": [HumanMessage(content=prompt)],
+                    "messages": messages,
                     "search_records": {},
                     "research_evidence": {},
                     "tool_errors": [],
@@ -282,12 +284,12 @@ def make_summarize(
         findings = state["findings"]  # 读取 reducer 合并的所有发现。
         if len(findings) != _SUBQUESTION_COUNT:  # 缺少并行结果时停止。
             raise ValueError("主题研究发现数量不完整")  # 不用部分结果伪装完整研究。
-        prompt = summarize_prompt(
+        messages = summarize_messages(
             json.dumps(findings, ensure_ascii=False)
         )  # 提供全部并行结果。
         response = await _invoke_traced_model(
             glm_smart_llm,
-            prompt,
+            messages,
             "topic_summarize",
             settings.glm_smart_model,
         )
@@ -356,7 +358,7 @@ def make_writer(
     async def writer(state: SystemState) -> dict[str, Any]:  # 返回报告正文。
         question = _latest_question(state["scope"])
         feedback = state.get("feedback", "")  # 重写时读取审稿意见。
-        prompt = writer_prompt(
+        messages = writer_messages(
             question,
             state["research_summary"],
             feedback,
@@ -369,7 +371,7 @@ def make_writer(
             }
         )
         response = await _invoke_traced_model(
-            writer_llm, prompt, "topic_writer", settings.glm_smart_model
+            writer_llm, messages, "topic_writer", settings.glm_smart_model
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()
@@ -403,14 +405,14 @@ def make_reviewer(
     )
     async def reviewer(state: SystemState) -> dict[str, Any]:  # 返回审稿决定和意见。
         count = state.get("review_count", 0) + 1  # 记录当前审稿轮次。
-        prompt = review_prompt(
+        messages = review_messages(
             state["report"],
             _latest_question(state["scope"]),
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 提供实际生成的报告。
         response = await _invoke_traced_model(
             glm_smart_llm,
-            prompt,
+            messages,
             "topic_reviewer",
             settings.glm_smart_model,
         )

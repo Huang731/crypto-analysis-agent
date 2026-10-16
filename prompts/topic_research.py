@@ -1,9 +1,11 @@
 """专题研究的拆题、工具取证、汇总、写作和审稿提示词。"""
 
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-def split_prompt(question: str) -> str:
-    """约束模型只返回研究问题。"""
-    return f"""\
+
+def split_messages(question: str) -> list[BaseMessage]:
+    """分开拆题规则与本轮研究主题。"""
+    system_prompt = """\
         你是专题研究规划员。将用户问题拆分为恰好 3 个互补、可独立并行取证的研究子问题。
         
         ## 拆分原则
@@ -14,19 +16,22 @@ def split_prompt(question: str) -> str:
         ## 输出格式铁律（最高优先级）
         - **恰好 3 行**，每行一个完整问句，以问号结尾。
 
+        """
+    task_prompt = f"""\
         用户问题：{question}
         """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
 
 
-def research_prompt(question: str, subquestion: str, *, as_of: str) -> str:
-    """为工具 Agent 提供主题、子问题和取证要求。"""
-    return f"""\
+def research_messages(
+    question: str, subquestion: str, *, as_of: str
+) -> list[BaseMessage]:
+    """分开取证规则与研究主题、子问题和截止时间。"""
+    system_prompt = """\
         你是专题研究员。围绕原主题完成当前子问题的搜索与取证，严格遵循系统中的工具调用规则。
-        
-        ## 任务目标
-        - 原主题：{question}
-        - 当前子问题：{subquestion}
-        - 研究截止时间：{as_of}
         
         所有取证必须聚焦于回答当前子问题，不得偏离至原主题的其他维度。
 
@@ -43,7 +48,7 @@ def research_prompt(question: str, subquestion: str, *, as_of: str) -> str:
            - `[摘要]`：搜索引擎返回的摘要片段
            - `[推断]`：基于多条证据的逻辑推论（必须注明所依据的证据ID）
         2. **时间红线**：
-           - 核对每条资料的发布日期，超过 `{as_of}` 的资料不得使用
+           - 核对每条资料的发布日期，超过用户消息中研究截止时间的资料不得使用
         
         ## 输出格式模板（严格遵守）
         按以下结构输出，禁止添加任何前言、检索过程描述或总结性段落：
@@ -65,14 +70,22 @@ def research_prompt(question: str, subquestion: str, *, as_of: str) -> str:
         - [摘要] 《无畏契约》国服7月上线后首月流水超5亿，带动端游收入环比增长15% | 来源：https://example.com/valorant | 日期：2024-08-20
         - [推断] 结合来源1和来源2，游戏增速低于预期主因是老产品《王者荣耀》流水同比下滑约5% | 来源：综合https://example.com/tencent-q3,https://example.com/valorant | 日期：2024-11-13
                 
-        用户问题：{question}
-        子问题：{subquestion}
         """
+    task_prompt = f"""\
+        ## 任务目标
+        - 原主题：{question}
+        - 当前子问题：{subquestion}
+        - 研究截止时间：{as_of}
+        """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
 
 
-def summarize_prompt(findings_json: str) -> str:
-    """汇总实际研究发现，保留来源和证据差异。"""
-    return f"""\
+def summarize_messages(findings_json: str) -> list[BaseMessage]:
+    """分开汇总规则与实际研究发现。"""
+    system_prompt = """\
         你是一位资深研究综合分析师。请基于以下结构化研究发现，撰写一份逻辑连贯、证据可溯源的研究摘要。
         
         ## 综合分析要求
@@ -86,17 +99,23 @@ def summarize_prompt(findings_json: str) -> str:
         ### 核心判断
         用 2-4 个连贯的段落概括研究的主要结论。每个段落聚焦一个关键判断，并自然融入支撑该判断的核心证据标识（如“根据[E001][E003]...”）。
         
-        ## 📋 输入数据
+        """
+    task_prompt = f"""\
+        ## 输入数据
         研究发现（JSON格式）：
         {findings_json}
         """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
 
 
-def writer_prompt(
+def writer_messages(
     question: str, research_summary: str, feedback: str, findings_json: str
-) -> str:
-    """报告以实际研究记录为依据，摘要只帮助组织内容。"""
-    return f"""\
+) -> list[BaseMessage]:
+    """分开写作规则与主题、摘要、研究记录及审稿意见。"""
+    system_prompt = """\
         你是一位资深专题研究报告撰写者。请基于实际研究证据，撰写一份直接回应用户问题、逻辑连贯且证据可溯源的中文报告。
         
         ## 资料使用优先级与铁律
@@ -113,17 +132,25 @@ def writer_prompt(
         ### 论证与依据
         围绕核心回应展开详细论述。将相关证据自然融入分析过程，做到“论点-证据-解读”三位一体。
         
-        ## 📋 输入上下文
+        """
+    task_prompt = f"""\
+        ## 输入上下文
         - 用户问题：{question}
         - 研究摘要（仅作结构参考）：{research_summary}
         - 研究记录（事实唯一来源）：{findings_json}
         - 审稿修改意见：{feedback}
         """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
 
 
-def review_prompt(report: str, question: str, findings_json: str) -> str:
-    """对照真实证据检查报告，不把取得原文等同于结论已核实。"""
-    return f"""\
+def review_messages(
+    report: str, question: str, findings_json: str
+) -> list[BaseMessage]:
+    """分开审稿规则与待审报告、问题和研究记录。"""
+    system_prompt = """\
         你是一位严谨的研究报告审稿人。请对照用户问题与实际研究记录，审查报告的证据忠实度与逻辑严密性。
         
         ## 核心审查维度
@@ -146,8 +173,14 @@ def review_prompt(report: str, question: str, findings_json: str) -> str:
         从第二行开始，提供具体、可执行的修改意见。意见需明确指出：问题出在报告的哪个部分、违反了上述哪项审查维度、建议如何修改（如“请弱化第二段的因果推断，因E002仅表明相关性”）。
         禁止直接重写报告，禁止提出无法通过现有研究记录满足的修改要求。
         
+        """
+    task_prompt = f"""\
         ## 审查输入
         - 用户问题：{question}
         - 研究记录（事实唯一基准）：{findings_json}
         - 待审报告：{report}
         """
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=task_prompt),
+    ]
