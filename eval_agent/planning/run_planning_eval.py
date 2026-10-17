@@ -26,7 +26,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
 from app.llm.model import make_glm_4_flash_llm, model_session
-from prompts.crypto_analysis import analysis_plan_messages
+from prompts.crypto_analysis_plan import analysis_plan_messages
 
 
 class PlanningInput(BaseModel):

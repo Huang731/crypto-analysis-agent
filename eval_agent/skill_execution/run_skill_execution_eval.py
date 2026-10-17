@@ -46,7 +46,10 @@ from app.llm.model import (
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
-from prompts.crypto_analysis import metric_agent_system_prompt, metric_execution_prompt
+from prompts.crypto_analysis_calculate_metrics import (
+    metric_agent_system_prompt,
+    metric_execution_prompt,
+)
 
 # 只替换工具模块引用的数据源函数，取数证据处理、计算器与聚合保持原样。
 SOURCE_TARGETS = {

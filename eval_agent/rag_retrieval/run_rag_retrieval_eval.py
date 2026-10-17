@@ -24,7 +24,7 @@ from app.rag.ingest import get_vectorstore
 from app.rag.retriever import KBRetriever, load_corpus
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from eval_agent.skill_execution.run_skill_execution_eval import duration_summary
-from prompts.crypto_analysis import thought_retrieval_prompt
+from prompts.crypto_analysis_skill_content import thought_retrieval_prompt
 
 
 class RetrievalInput(BaseModel):

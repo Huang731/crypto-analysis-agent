@@ -28,13 +28,13 @@ from app.llm.model import (
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
+from eval_agent.prompts.skill_generation_eval import skill_generation_judge_messages
 from eval_agent.skill_execution.run_skill_execution_eval import (
     SkillExecutionResult,
     duration_summary,
     values_equal,
 )
-from prompts.crypto_analysis import skill_output_messages
-from prompts.skill_generation_eval import skill_generation_judge_messages
+from prompts.crypto_analysis_skill_content import skill_output_messages
 
 
 class DocumentEvidence(BaseModel):
@@ -897,7 +897,7 @@ def main() -> None:
         "answer_relevancy_definition": "四个0至2的任务相关性量表之和除以8",
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "generation_prompt_sha256": hashlib.sha256(
-            (PROJECT_ROOT / "prompts/crypto_analysis.py").read_bytes()
+            (PROJECT_ROOT / "prompts/crypto_analysis_skill_content.py").read_bytes()
         ).hexdigest(),
         "judge_prompt_sha256": hashlib.sha256(
             (PROJECT_ROOT / "prompts/skill_generation_eval.py").read_bytes()

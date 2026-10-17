@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
-    bailian_smart_model: str = "glm-5.1"
+    bailian_smart_model: str = "glm-5.2"
     bailian_fast_model: str = "qwen3.7-flash-2026-07-15"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
     # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
     model_price_table: dict[str, dict[str, float]] = {
-        "glm-5.1": {"input": 50.0, "output": 50.0},
-        "qwen3.7-flash-2026-07-15": {"input": 0.0, "output": 0.0},
+        "glm-5.2": {"input": 50.0, "output": 50.0},
+        "qwen3.7-flash-2026-07-15": {"input": 0.5, "output": 0.5},
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
@@ -101,9 +101,9 @@ class Settings(BaseSettings):
         / "candidates"
         / "calculate_metrics_candidates.jsonl"
     )
-    generate_content_capture_enabled: bool = True
-    generate_content_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "generate_content_candidates.jsonl"
+    skill_content_capture_enabled: bool = True
+    skill_content_capture_path: str = str(
+        PROJECT_ROOT / "eval_agent" / "candidates" / "skill_content_candidates.jsonl"
     )
     writer_capture_enabled: bool = True
     writer_capture_path: str = str(

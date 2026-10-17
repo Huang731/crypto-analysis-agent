@@ -37,9 +37,11 @@ from app.llm.model import ainvoke_model
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
-from prompts.crypto_analysis import (
+from prompts.crypto_analysis_calculate_metrics import (
     metric_agent_system_prompt,
     metric_execution_prompt,
+)
+from prompts.crypto_analysis_skill_content import (
     skill_output_messages,
     thought_retrieval_prompt,
 )
@@ -378,13 +380,13 @@ def route_metrics(
     return "complete" if complete else "incomplete"
 
 
-def make_generate_content(
+def make_skill_content(
     bailian_fast_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """创建思想检索及指标表格生成节点。"""
 
     @timed_node
-    async def generate_content(state: SkillWorkerGraphState) -> dict[str, Any]:
+    async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
         skill = state["skill"]
         key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
         analysis_subject = (
@@ -416,16 +418,16 @@ def make_generate_content(
                 "cache_hit": False,
             }
         }
-        if settings.generate_content_capture_enabled:
+        if settings.skill_content_capture_enabled:
             append_node_candidate(
-                node="generate_content",
+                node="skill_content",
                 input=messages_to_dict(messages),
                 actual_output=content,
-                path=settings.generate_content_capture_path,
+                path=settings.skill_content_capture_path,
             )
         return update
 
-    return generate_content
+    return skill_content
 
 
 def make_finalize_skill() -> Callable[
@@ -465,9 +467,7 @@ def build_crypto_analysis_sub_agent(
     graph.add_node("read_cache", make_read_cache())
     graph.add_node("calculate_metrics", make_calculate_metrics(bailian_fast_llm))
     graph.add_node("check_metrics", make_check_metrics())
-    graph.add_node(
-        "generate_content", make_generate_content(bailian_fast_llm, retriever)
-    )
+    graph.add_node("skill_content", make_skill_content(bailian_fast_llm, retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(
@@ -480,8 +480,8 @@ def build_crypto_analysis_sub_agent(
     graph.add_conditional_edges(
         "check_metrics",
         route_metrics,
-        {"incomplete": "calculate_metrics", "complete": "generate_content"},
+        {"incomplete": "calculate_metrics", "complete": "skill_content"},
     )
-    graph.add_edge("generate_content", "finalize_skill")
+    graph.add_edge("skill_content", "finalize_skill")
     graph.add_edge("finalize_skill", END)
     return graph.compile(name="crypto_skill_subgraph")

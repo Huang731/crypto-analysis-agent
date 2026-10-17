@@ -41,12 +41,12 @@ from app.llm.model import (
 from app.observability import get_logger, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call
-from prompts.crypto_analysis import (
-    analysis_plan_messages,
-    analysis_report_messages,
-    analysis_review_messages,
+from prompts.crypto_analysis_plan import analysis_plan_messages
+from prompts.crypto_analysis_reviewer import analysis_review_messages
+from prompts.crypto_analysis_summarize_history import (
     history_summary_messages,
 )
+from prompts.crypto_analysis_writer import analysis_report_messages
 
 _LOG = get_logger("crypto_analysis.dynamic_analysis")
 
