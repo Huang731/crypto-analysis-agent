@@ -3,7 +3,7 @@
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, messages_to_dict
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -79,18 +79,6 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
     if not isinstance(report, str) or not report.strip():
         raise ValueError("最终报告为空")
     update = {"report": report, "previous_question": state["resolved_question"]}
-    if settings.finalize_capture_enabled:
-        append_node_candidate(
-            node="finalize",
-            scope=state["scope"],
-            input={
-                "route": state["route"],
-                "resolved_question": state["resolved_question"],
-                "report": report,
-            },
-            actual_output=update,
-            path=settings.finalize_capture_path,
-        )
     return update
 
 
@@ -119,17 +107,6 @@ def build_routing_graph(
         question = await rewrite_question(
             glm_smart_llm, original, state.get("previous_question", "")
         )
-        if settings.rewrite_capture_enabled:
-            append_node_candidate(
-                node="rewrite",
-                scope=state["scope"],
-                input={
-                    "question": original,
-                    "previous_question": state.get("previous_question", ""),
-                },
-                actual_output={"resolved_question": question},
-                path=settings.rewrite_capture_path,
-            )
         return {
             "resolved_question": question,
             "scope": {**state["scope"], "resolved_question": question},
@@ -146,9 +123,8 @@ def build_routing_graph(
         if settings.routing_capture_enabled:
             append_node_candidate(
                 node="router",
-                scope=state["scope"],
-                input={"resolved_question": state["resolved_question"]},
-                actual_output={"route": route},
+                input=messages_to_dict(messages),
+                actual_output=route,
                 path=settings.routing_capture_path,
             )
         return {"route": route}

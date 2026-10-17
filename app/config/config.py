@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     skills_dir: str = str(PROJECT_ROOT / "skills")
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
 
-    # 评测候选采集：保存实际输入输出供人工标注，不直接作为标准答案。
+    # LLM 候选采集：保存节点名称及模型输入输出，按配置路径写入。
     routing_capture_enabled: bool = True
     routing_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "routing_candidates.jsonl"
@@ -101,10 +101,6 @@ class Settings(BaseSettings):
         / "candidates"
         / "calculate_metrics_candidates.jsonl"
     )
-    check_metrics_capture_enabled: bool = True
-    check_metrics_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "check_metrics_candidates.jsonl"
-    )
     generate_content_capture_enabled: bool = True
     generate_content_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "generate_content_candidates.jsonl"
@@ -123,10 +119,6 @@ class Settings(BaseSettings):
         / "eval_agent"
         / "candidates"
         / "summarize_history_candidates.jsonl"
-    )
-    finalize_capture_enabled: bool = True
-    finalize_capture_path: str = str(
-        PROJECT_ROOT / "eval_agent" / "candidates" / "finalize_candidates.jsonl"
     )
 
     # 浏览器取证：单页超时单位为秒。

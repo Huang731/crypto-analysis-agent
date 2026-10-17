@@ -1,9 +1,10 @@
 """分派前用 LLM 把口语化问题改写为意图明确的完整问题。"""
 
 from langchain_core.language_models.chat_models import BaseChatModel  # 标注模型接口。
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import BaseMessage, messages_to_dict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
+from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.llm.model import ainvoke_model
 from app.observability import get_logger
@@ -20,7 +21,15 @@ async def rewrite_question(
 ) -> str:
     """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = query_rewriter_messages(question, previous_question)
-    return await _rewrite_messages(glm_smart_llm, messages)
+    rewritten = await _rewrite_messages(glm_smart_llm, messages)
+    if settings.rewrite_capture_enabled:
+        append_node_candidate(
+            node="rewrite",
+            input=messages_to_dict(messages),
+            actual_output=rewritten,
+            path=settings.rewrite_capture_path,
+        )
+    return rewritten
 
 
 @trace_generation_call(

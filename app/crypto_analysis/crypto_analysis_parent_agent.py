@@ -213,8 +213,8 @@ async def create_analysis_plan(
     if settings.planning_capture_enabled:
         append_node_candidate(
             node="plan",
-            input={"question": question},
-            actual_output=messages,
+            input=messages_to_dict(messages),
+            actual_output=plan.model_dump(),
             path=settings.planning_capture_path,
         )
     return plan.model_dump()
@@ -355,13 +355,8 @@ def make_writer(
         if settings.writer_capture_enabled:
             append_node_candidate(
                 node="writer",
-                scope=state["scope"],
-                input={
-                    "messages": messages_to_dict(messages),
-                    "model": settings.glm_smart_model,
-                    "review_count": state["review_count"],
-                },
-                actual_output={"report": report},
+                input=messages_to_dict(messages),
+                actual_output=report,
                 path=settings.writer_capture_path,
             )
         return {
@@ -390,6 +385,13 @@ def make_reviewer(
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
         review = await _invoke_report_review(glm_smart_llm, messages)
+        if settings.reviewer_capture_enabled:
+            append_node_candidate(
+                node="reviewer",
+                input=messages_to_dict(messages),
+                actual_output=review.model_dump(),
+                path=settings.reviewer_capture_path,
+            )
         if not review.passed and review_count >= 2:
             update = {
                 "review_decision": "pass",
@@ -402,21 +404,6 @@ def make_reviewer(
                 "review_count": review_count,
                 "review_feedback": "" if review.passed else review.feedback,
             }
-        if settings.reviewer_capture_enabled:
-            append_node_candidate(
-                node="reviewer",
-                scope=state["scope"],
-                input={
-                    "messages": messages_to_dict(messages),
-                    "model": settings.glm_smart_model,
-                    "review_count": review_count,
-                },
-                actual_output={
-                    "review": review.model_dump(),
-                    "state_update": update,
-                },
-                path=settings.reviewer_capture_path,
-            )
         return update
 
     return reviewer
@@ -446,14 +433,8 @@ def make_summarize_history(
         if settings.summarize_history_capture_enabled:
             append_node_candidate(
                 node="summarize_history",
-                scope=state["scope"],
-                input={
-                    "plan": state["plan"],
-                    "previous_summary": state.get("history_summary", ""),
-                    "report": state["report"],
-                    "messages": messages_to_dict(messages),
-                },
-                actual_output=update,
+                input=messages_to_dict(messages),
+                actual_output=summary,
                 path=settings.summarize_history_capture_path,
             )
         return update

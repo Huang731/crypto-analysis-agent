@@ -7,7 +7,13 @@ from typing import Any, Literal
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    messages_to_dict,
+)
+from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -160,6 +166,28 @@ def skill_worker_step_limit(metric_count: int) -> int:
 class MetricModelTrace(AgentMiddleware):
     """保留指标模型的用量追踪、单次超时与有限重试。"""
 
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse:
+        """模型调用成功后采集真实输入输出，不记录工具执行和状态更新。"""
+        response = await self._invoke_model_call(request, handler)
+        if settings.calculate_metrics_capture_enabled:
+            messages = list(request.messages)
+            if request.system_message is not None:
+                messages.insert(0, request.system_message)
+            append_node_candidate(
+                node="calculate_metrics",
+                input={
+                    "messages": messages_to_dict(messages),
+                    "tools": [convert_to_openai_tool(tool) for tool in request.tools],
+                },
+                actual_output=messages_to_dict(response.result),
+                path=settings.calculate_metrics_capture_path,
+            )
+        return response
+
     @trace_generation_call(
         name="crypto_metric_decision",
         model=settings.bailian_fast_model,
@@ -174,7 +202,7 @@ class MetricModelTrace(AgentMiddleware):
         wait=wait_random_exponential(min=1, max=2),
         reraise=True,
     )
-    async def awrap_model_call(
+    async def _invoke_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
@@ -291,25 +319,6 @@ def make_calculate_metrics(
         result = await _invoke_metric_agent(agent, state)
         # 外层状态已有输入历史，只回传本轮新增消息，避免重复合并旧消息。
         new_messages = result["messages"][len(state["messages"]) :]
-        if settings.calculate_metrics_capture_enabled:
-            append_node_candidate(
-                node="calculate_metrics",
-                scope=state["scope"],
-                input={
-                    "skill": state["skill"],
-                    "messages": [
-                        SystemMessage(content=metric_agent_system_prompt()),
-                        *state["messages"],
-                    ],
-                    "indicator_results": state["indicator_results"],
-                    "evidence": state["evidence"],
-                },
-                actual_output={
-                    "response": new_messages[0],
-                    "updates": {**result, "messages": new_messages},
-                },
-                path=settings.calculate_metrics_capture_path,
-            )
         return {
             "messages": new_messages,
             "evidence": result["evidence"],
@@ -353,17 +362,6 @@ def make_check_metrics() -> Callable[
                     skill, [records[metric.id] for metric in skill.scoring.metrics]
                 )
                 update = {"metric_result": result}
-            if settings.check_metrics_capture_enabled:
-                append_node_candidate(
-                    node="check_metrics",
-                    scope=state["scope"],
-                    input={"skill": skill, "indicator_results": records},
-                    actual_output={
-                        "missing_metric_ids": missing,
-                        "state_update": update,
-                    },
-                    path=settings.check_metrics_capture_path,
-                )
             return update
 
     return check_metrics
@@ -421,14 +419,8 @@ def make_generate_content(
         if settings.generate_content_capture_enabled:
             append_node_candidate(
                 node="generate_content",
-                scope=state["scope"],
-                input={
-                    "skill_name": state["skill_name"],
-                    "skill_source": get_skill_loader().load_skill(state["skill_name"]),
-                    "metric_result": state["metric_result"],
-                    "analysis_subject": analysis_subject,
-                },
-                actual_output=update,
+                input=messages_to_dict(messages),
+                actual_output=content,
                 path=settings.generate_content_capture_path,
             )
         return update

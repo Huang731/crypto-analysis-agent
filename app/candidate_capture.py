@@ -1,35 +1,30 @@
-"""节点评测候选采集：只保存实际输入输出，预期答案由人工标注。"""
+"""LLM 评测候选采集：保存节点名称、实际输入和输出。"""
 
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class NodeCandidate(BaseModel):
-    """保留节点名称、请求范围和实际执行结果。"""
+    """保留节点名称、LLM 输入和实际输出。"""
 
     model_config = ConfigDict(extra="forbid")
-    case_id: str = Field(default_factory=lambda: uuid4().hex)
     node: str
-    scope: dict[str, str]
-    input: dict[str, Any]
+    input: Any
     actual_output: Any
 
 
 def append_node_candidate(
     *,
     node: str,
-    scope: dict[str, str],
-    input: dict[str, Any],
+    input: Any,
     actual_output: Any,
     path: str | Path,
 ) -> None:
-    """整条序列化后一次追加，保留中文、模型消息及图更新结构。"""
+    """向指定路径追加节点输入输出，保留中文。"""
     candidate = NodeCandidate(
         node=node,
-        scope=scope,
         input=input,
         actual_output=actual_output,
     )
