@@ -1,16 +1,21 @@
-"""LLM 评测候选采集：保存节点名称、实际输入和输出。"""
+"""LLM 评测候选采集：保存节点名称、采集时间、实际输入和输出。"""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NodeCandidate(BaseModel):
-    """保留节点名称、LLM 输入和实际输出。"""
+    """保留节点名称、北京时间、LLM 输入和实际输出。"""
 
     model_config = ConfigDict(extra="forbid")
     node: str
+    ts: datetime = Field(
+        default_factory=lambda: datetime.now(ZoneInfo("Asia/Shanghai"))
+    )
     input: Any
     actual_output: Any
 
@@ -22,7 +27,7 @@ def append_node_candidate(
     actual_output: Any,
     path: str | Path,
 ) -> None:
-    """向指定路径追加节点输入输出，保留中文。"""
+    """向指定路径追加带采集时间的节点输入输出，保留中文。"""
     candidate = NodeCandidate(
         node=node,
         input=input,

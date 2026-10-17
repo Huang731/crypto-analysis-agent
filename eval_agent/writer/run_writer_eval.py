@@ -1,4 +1,4 @@
-"""读取 writer 候选中的真实输入输出，使用 RAGAS 原生两项指标评测。"""
+"""读取人工维护的 writer 案例，使用 RAGAS 原生两项指标评测。"""
 
 from __future__ import annotations
 
@@ -92,10 +92,11 @@ class WriterMetadata(BaseModel):
 
 
 class WriterCase(BaseModel):
-    """候选行原样保留，行号用于定位真实采集记录。"""
+    """保留案例输入输出和采集时间，自动记录案例文件行号。"""
 
     model_config = ConfigDict(extra="forbid")
     node: Literal["writer"]
+    ts: datetime | None = None
     input: WriterInput
     actual_output: str = Field(min_length=1)
     source_line: int = Field(ge=1)
@@ -199,7 +200,7 @@ def build_evidence(case: WriterCase) -> WriterEvidence:
 
 
 def load_cases(path: Path) -> list[WriterCase]:
-    """直接读取真实候选，不改写输入、不生成或使用人工参考报告。"""
+    """读取人工维护的案例文件，不改写输入或重新生成报告。"""
     cases = [
         WriterCase.model_validate({**json.loads(line), "source_line": number})
         for number, line in enumerate(
@@ -208,7 +209,7 @@ def load_cases(path: Path) -> list[WriterCase]:
         if line.strip()
     ]
     if not cases:
-        raise ValueError("writer 候选文件为空")
+        raise ValueError("writer 案例文件为空，请先添加案例")
     for case in cases:
         build_evidence(case)
     return cases
@@ -301,7 +302,7 @@ def error_message(exc: Exception) -> str:
 async def evaluate(
     client: Langfuse, case: WriterCase, judge_model: str
 ) -> dict[str, Any]:
-    """直接评分采集的报告，不重新调用 writer。"""
+    """直接评分案例中的报告，不重新调用 writer。"""
     evidence = build_evidence(case)
     output: dict[str, Any] = {
         "actual_output": case.actual_output,
@@ -367,13 +368,11 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="真实 writer 候选输入输出的 RAGAS 评测"
-    )
+    parser = argparse.ArgumentParser(description="固定 writer 案例的 RAGAS 评测")
     parser.add_argument(
-        "--candidates",
+        "--cases",
         type=Path,
-        default=PROJECT_ROOT / "eval_agent/candidates/writer_candidates.jsonl",
+        default=PROJECT_ROOT / "eval_agent/writer/writer_cases.jsonl",
     )
     parser.add_argument("--run-name")
     parser.add_argument("--validate-only", action="store_true")
@@ -385,13 +384,13 @@ def main() -> None:
         default=settings.bailian_smart_model,
     )
     args = parser.parse_args()
-    cases = load_cases(args.candidates)
+    cases = load_cases(args.cases)
     if args.limit is not None:
         if args.limit < 1:
             parser.error("案例数量必须大于零")
         cases = cases[: args.limit]
     if args.validate_only:
-        print(f"已校验 {len(cases)} 条真实 writer 候选输入输出及 RAGAS 输入")
+        print(f"已校验 {len(cases)} 个 writer 案例及 RAGAS 输入")
         return
     run_name = args.run_name or datetime.now(timezone.utc).strftime(
         "writer-ragas-%Y%m%dT%H%M%SZ"
@@ -416,7 +415,7 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     metadata = {
-        "data_mode": "captured_writer_input_output",
+        "data_mode": "fixed_writer_input_output",
         "judge_model": args.judge_model,
         "embedding_model": settings.embedding_model,
         "ragas_version": version("ragas"),
@@ -427,14 +426,12 @@ def main() -> None:
         "model_timeout_seconds": 120,
         "metric_timeout_seconds": 600,
         "max_attempts": 2,
-        "candidate_file": str(args.candidates.resolve()),
-        "candidate_file_sha256": hashlib.sha256(
-            args.candidates.read_bytes()
-        ).hexdigest(),
+        "cases_file": str(args.cases.resolve()),
+        "cases_file_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "evaluator_code_sha256": hashlib.sha256(
             Path(__file__).read_bytes()
         ).hexdigest(),
-        "boundary": "评估真实采集的writer输入和actual_output，不重新生成报告",
+        "boundary": "评估人工维护的writer案例input和actual_output，不重新生成报告",
     }
     rows: list[dict[str, Any]] = []
     run_status = "failed"
@@ -449,7 +446,7 @@ def main() -> None:
             }
         )
         print(
-            f"候选第{case.source_line}行：faithfulness={output['faithfulness']}，answer_relevancy={output['answer_relevancy']}",
+            f"案例第{case.source_line}行：faithfulness={output['faithfulness']}，answer_relevancy={output['answer_relevancy']}",
             flush=True,
         )
         return output
@@ -460,7 +457,7 @@ def main() -> None:
         dataset = "crypto-agent-writer"
         client.create_dataset(
             name=dataset,
-            description="真实采集的writer输入与实际报告，使用RAGAS原生两项指标评分",
+            description="人工维护的writer输入与报告，使用RAGAS原生两项指标评分",
             input_schema=WriterCase.model_json_schema(),
             expected_output_schema={},
         )

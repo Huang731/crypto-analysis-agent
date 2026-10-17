@@ -341,7 +341,7 @@ def make_writer(
             previous_report=state["report"],
         )
         report = await _invoke_report_text(
-            glm_smart_llm,
+            glm_smart_llm.bind(temperature=0.1),
             messages,
             runtime.stream_writer,
         )
@@ -374,7 +374,6 @@ def make_reviewer(
             original_question=state["scope"]["resolved_question"],
             report=state["report"],
             skill_results=state["skill_results"],
-            history_summary=state.get("history_summary", ""),
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
         review = await _invoke_report_review(glm_smart_llm, messages)
