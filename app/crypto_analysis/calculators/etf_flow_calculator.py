@@ -64,7 +64,7 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
     twenty = sum(values, Decimal(0))
     five_score = _flow_score(five, 500, 1500)
     twenty_score = _flow_score(twenty, 1500, 5000)
-    return {
+    result = {
         "status": "ok",
         "source": raw["source"],
         "unit": "亿美元",
@@ -87,3 +87,7 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
             2,
         ),
     }
+    # 最新净流量为零时省略该字段，不影响窗口汇总和评分。
+    if result["latest_flow_usd_100m"] == 0.0:
+        del result["latest_flow_usd_100m"]
+    return result

@@ -412,6 +412,7 @@ def run_evaluation(
     metadata = {
         "target_model": settings.glm_smart_model,
         "judge_model": args.judge_model,
+        "writer_thinking": "enabled" if node == "writer" else None,
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "production_code_sha256": hashlib.sha256(
             (
@@ -596,7 +597,7 @@ async def evaluate_case(
                     )
                     if node == "writer":
                         target = target.bind(
-                            extra_body={"thinking": {"type": "disabled"}}
+                            extra_body={"thinking": {"type": "enabled"}}
                         )
                         actual = await asyncio.wait_for(
                             _invoke_report_text(

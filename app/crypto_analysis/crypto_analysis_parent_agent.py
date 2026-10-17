@@ -319,9 +319,9 @@ def make_writer(
 
     @timed_node
     async def writer(state: DynamicAnalysisState, runtime: Runtime) -> dict[str, Any]:
-        """依据技能内容与历史摘要撰写结论，报告只包含结论正文。"""
+        """依据本轮技能证据撰写结论，报告只包含结论正文。"""
         ordered = sorted(state["skill_results"], key=lambda item: item["skill_name"])
-        # 只采用本轮技能内容，历史摘要不能替代本轮证据。
+        # 只传入本轮技能证据和审稿反馈。
         messages = analysis_report_messages(
             target_asset=state["scope"]["target_asset"],
             original_question=state["scope"]["resolved_question"],
@@ -337,18 +337,11 @@ def make_writer(
             thought_context={
                 item["skill_name"]: item["thought_context"] for item in ordered
             },
-            history_summary=state.get("history_summary", ""),
             review_feedback=state["review_feedback"],
             previous_report=state["report"],
         )
-        # 仅本节点关闭深度思考，不修改共享模型的配置。
-        writer_llm = glm_smart_llm.bind(
-            extra_body={
-                "thinking": {"type": "disabled"},
-            }
-        )
         report = await _invoke_report_text(
-            writer_llm,
+            glm_smart_llm,
             messages,
             runtime.stream_writer,
         )

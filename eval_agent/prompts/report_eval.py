@@ -20,6 +20,8 @@ def report_judge_messages(
         "仅依据输入与人工标注，不访问外部知识或行情，不因为回答流畅而给高分。"
         "reference_output是人工参考答案，不要求逐字一致；"
         "人工检查项优先，遇到未标注的实质性错误仍须记录在extra_errors中。"
+        "本项目允许用‘稳定币总市值’指代USDT与USDC合计市值；"
+        "不得仅因这一简称判定统计范围扩大或数据错误，数值和单位仍须核对。"
         "逐项返回criteria：id必须与人工检查项完全一致，不得增删或重复。"
         "每项返回passed、output_quote、evidence_quote和reason。"
         "output_quote必须逐字来自actual_output的文本字段；遗漏或完全没有对应内容时用空字符串。"

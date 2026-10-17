@@ -148,17 +148,6 @@ def _normalize_result(
         return missing_metric(skill_name, metric_id, status, reason)
     raw_fields, calculated_fields, nullable_fields = _METRIC_FIELDS[metric_id]
     metric_field_labels(metric_id)
-    required = [
-        *raw_fields,
-        *calculated_fields,
-        "unit",
-        "observed_at",
-        "source",
-        "score",
-    ]
-    absent = [field for field in required if result.get(field) is None]
-    if absent:
-        raise ValueError(f"{skill_name}.{metric_id} 缺少字段：{', '.join(absent)}")
     score = result["score"]
     if (
         isinstance(score, bool)
@@ -176,8 +165,12 @@ def _normalize_result(
         date.fromisoformat(result["observed_at"])
     except ValueError as exc:
         raise ValueError(f"{skill_name}.{metric_id} 的观测日期格式无效") from exc
-    calculated_values = {field: result[field] for field in calculated_fields}
-    calculated_values.update({field: result[field] for field in nullable_fields})
+    calculated_values = {
+        field: result[field] for field in calculated_fields if field in result
+    }
+    calculated_values.update(
+        {field: result[field] for field in nullable_fields if field in result}
+    )
     # 报告展示数据提供方官网，取数状态中的真实 API 地址保持原样。
     source_host = urlsplit(result["source"]).hostname
     if source_host not in _SOURCE_WEBSITES:
@@ -187,7 +180,7 @@ def _normalize_result(
         "indicator_id": metric_id,
         "status": "ok",
         "reason": None,
-        "raw_values": {field: result[field] for field in raw_fields},
+        "raw_values": {field: result[field] for field in raw_fields if field in result},
         "calculated_values": calculated_values,
         "unit": result["unit"],
         "observed_at": result["observed_at"],
