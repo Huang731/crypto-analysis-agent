@@ -22,3 +22,6 @@
 {"input":{"resolved_question":"结合恐惧贪婪指数评估加密市场当前的入场风险"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_008","category":"market_risk","label_reason":"明确的加密市场指标与投资风险分析"}}
 {"input":{"resolved_question":"研究 RAG 与微调分别适合哪些业务场景"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_topic_008","category":"technology","label_reason":"通用技术主题研究"}}
 {"input":{"resolved_question":"帮我研究一下"},"expected_output":{"route":"topic_research_agent"},"metadata":{"case_id":"routing_direct_008","category":"missing_topic","label_reason":"缺少研究主题，统一交给主题研究 Agent"}}
+{"input":{"resolved_question":"分析比特币（BTC）"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_009","category":"asset_overview","label_reason":"已明确加密资产的综合分析，不属于缺少分析对象"}}
+{"input":{"resolved_question":"比特币（BTC）现在可以加仓吗？"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_010","category":"position_decision","label_reason":"已明确比特币的加仓决策，未提供持仓信息不影响路由"}}
+{"input":{"resolved_question":"比特币现在适合加仓吗？"},"expected_output":{"route":"crypto_analysis_agent"},"metadata":{"case_id":"routing_crypto_011","category":"position_decision","label_reason":"中文币名已明确加密资产，加仓适宜性由加密分析 Agent 处理"}}

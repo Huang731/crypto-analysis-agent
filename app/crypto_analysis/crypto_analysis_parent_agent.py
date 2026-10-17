@@ -210,6 +210,13 @@ async def create_analysis_plan(
     """LLM 根据任务和技能描述选择资产、研究重点与所需 Skill。"""
     messages = analysis_plan_messages(skill_descriptions, question)
     plan = await _invoke_analysis_plan(llm, messages)
+    if settings.planning_capture_enabled:
+        append_node_candidate(
+            node="plan",
+            input={"question": question},
+            actual_output=messages,
+            path=settings.planning_capture_path,
+        )
     return plan.model_dump()
 
 
@@ -261,14 +268,6 @@ def make_plan(
         selection["skill_names"] = [
             name for name in selection["skill_names"] if name in available_names
         ]
-        if settings.planning_capture_enabled:
-            append_node_candidate(
-                node="plan",
-                scope=state["scope"],
-                input={"resolved_question": question},
-                actual_output=selection,
-                path=settings.planning_capture_path,
-            )
         scope = {
             **state["scope"],
             "target_asset": selection["target_asset"],

@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
-from app.llm.model import make_bailian_fast_llm, model_session
+from app.llm.model import make_glm_4_flash_llm, model_session
 from app.orchestration.routing import _invoke_route_decision
 from prompts.routing import routing_messages, routing_prompt
 
@@ -78,7 +78,7 @@ async def evaluate_route(
             "system_prompt": routing_prompt(),
             "resolved_question": question.resolved_question,
         },
-        metadata={"model": settings.bailian_fast_model},
+        metadata={"model": settings.glm_4_flash_model},
     ) as observation:
         try:
             messages = routing_messages(question.resolved_question)
@@ -258,8 +258,8 @@ def main() -> None:
         parser.error("实验名称不能包含路径")
     if output_path.exists():
         parser.error(f"结果文件已存在，请更换实验名称：{output_path}")
-    if not settings.dashscope_api_key.strip():
-        parser.error("未配置 DASHSCOPE_API_KEY")
+    if not settings.zhipuai_api_key.strip():
+        parser.error("未配置 ZHIPUAI_API_KEY")
     metadata = {
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "prompt_sha256": hashlib.sha256(routing_prompt().encode("utf-8")).hexdigest(),
@@ -269,7 +269,7 @@ def main() -> None:
         "working_tree_sha256": hashlib.sha256(
             (PROJECT_ROOT / "app" / "orchestration" / "routing.py").read_bytes()
         ).hexdigest(),
-        "model": settings.bailian_fast_model,
+        "model": settings.glm_4_flash_model,
         "repetitions": str(args.repetitions),
         "case_count": str(len(cases)),
         "model_timeout_seconds": "120",
@@ -283,7 +283,7 @@ def main() -> None:
         question = RoutingInput.model_validate(item.input)
         # 使用显式独立连接，关闭时不影响 LangChain 缓存的业务客户端。
         async with model_session() as transport:
-            llm = make_bailian_fast_llm(async_client=transport)
+            llm = make_glm_4_flash_llm(async_client=transport)
             output = await evaluate_route(llm, client, question)
         rows.append(
             {

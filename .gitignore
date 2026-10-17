@@ -264,3 +264,6 @@ htmlcov/
 
 # 本地评测候选数据
 /eval_agent/candidates/
+
+# 本地运行及评测输出
+/outputs/

@@ -1,11 +1,9 @@
 """通用主题研究 Agent：拆题、并行分析、汇总、写作和审稿。"""
 
-import asyncio  # 运行现有命令行入口。
+import asyncio
 import json  # 将并行发现完整交给汇总模型。
 import re  # 清理拆题结果中的常见编号。
-import sys  # 读取命令行中的研究主题。
 from collections.abc import Awaitable, Callable  # 标注节点工厂返回的可调用对象。
-from datetime import datetime, timezone
 from typing import Any  # 标注模型和消息集合。
 
 from langchain.agents import create_agent
@@ -26,12 +24,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
 from app.config.config import settings  # 读取模型配置用于成本估算。
-from app.llm.model import (
-    ainvoke_model,
-    make_glm_4_flash_llm,
-    make_glm_smart_llm,
-    model_session,
-)
+from app.llm.model import ainvoke_model
 from app.observability import timed_node  # 保留节点耗时观测。
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
     RESEARCH_EVIDENCE_TARGET,
@@ -39,10 +32,7 @@ from app.topic_research.topic_research_state import (  # 使用主题研究专�
     ResearchAgentState,
     SystemState,
 )
-from app.tracing import (  # 记录请求与模型调用。
-    start_trace,
-    trace_generation_call,
-)
+from app.tracing import trace_generation_call
 from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
     research_continue_prompt,
@@ -513,37 +503,3 @@ def build_topic_research_agent(
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。
     builder.add_conditional_edges("reviewer", review_route)  # 通过或重写。
     return builder.compile(checkpointer=True, name="topic_research_agent")
-
-
-async def main() -> None:  # 保留原有命令行入口。
-    """独立运行一次通用主题研究。"""
-    question = (
-        " ".join(sys.argv[1:]).strip() or "分析人工智能对教育行业的影响"
-    )  # 读取用户研究主题。
-    async with model_session() as client:
-        agent = build_topic_research_agent(
-            make_glm_smart_llm(async_client=client),
-            make_glm_4_flash_llm(async_client=client),
-        )  # 创建主题研究图。
-        with start_trace(
-            "topic_research.cli", question_chars=len(question)
-        ) as trace:  # 为命令行运行建立根 trace。
-            result = await agent.ainvoke(
-                {
-                    "scope": {
-                        "original_question": question,
-                        "resolved_question": question,
-                        "as_of": datetime.now(timezone.utc).isoformat(),
-                    },
-                    "findings": [],
-                }
-            )  # 直接运行父图。
-            trace.output = {
-                "status": "done",
-                "report_chars": len(result["report"]),
-            }  # 只记录结果状态和长度。
-            print(result["report"])  # 输出已通过审稿的报告。
-
-
-if __name__ == "__main__":  # 仅在直接运行模块时执行示例。
-    asyncio.run(main())  # 启动异步图。
