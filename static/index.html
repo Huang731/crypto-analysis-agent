@@ -47,10 +47,19 @@
             <p id="report-context" class="report-context" hidden></p>
           </div>
           <div class="report-meta">
-            <span id="report-status" class="report-status" role="status">等待提问</span>
+            <span id="report-status" class="report-status" role="status" aria-atomic="true">
+              <span class="status-icon" aria-hidden="true"></span>
+              <span id="report-status-label">等待提问</span>
+            </span>
             <span id="elapsed-time" class="elapsed-time" hidden></span>
           </div>
         </header>
+        <ol id="report-steps" class="report-steps" aria-label="分析阶段" hidden>
+          <li><span class="step-marker" aria-hidden="true">1</span>理解问题</li>
+          <li><span class="step-marker" aria-hidden="true">2</span>分析资料</li>
+          <li><span class="step-marker" aria-hidden="true">3</span>生成报告</li>
+          <li><span class="step-marker" aria-hidden="true">4</span>完成</li>
+        </ol>
         <p id="report-question" class="report-question" hidden></p>
 
         <details id="progress" class="progress" hidden>
@@ -98,6 +107,8 @@
     const findingsEl = document.getElementById("findings");
     const findingsList = document.getElementById("findings-list");
     const reportStatusEl = document.getElementById("report-status");
+    const reportStatusLabelEl = document.getElementById("report-status-label");
+    const reportStepsEl = document.getElementById("report-steps");
     const elapsedTimeEl = document.getElementById("elapsed-time");
     const reportQuestionEl = document.getElementById("report-question");
     const reportContextEl = document.getElementById("report-context");
@@ -129,14 +140,42 @@
       }
     }
 
-    function setReportStatus(text, kind = "") {
-      reportStatusEl.textContent = text;
+    function setReportStatus(text, kind = "", stage = null) {
+      const changed = reportStatusLabelEl.textContent !== text;
+      reportStatusLabelEl.textContent = text;
       reportStatusEl.className = "report-status" + (kind ? " " + kind : "");
+      reportStepsEl.dataset.kind = kind;
+      if (stage !== null) {
+        reportStepsEl.hidden = false;
+        // 阶段由真实执行事件推进，报告重写时允许回到生成阶段。
+        Array.from(reportStepsEl.children).forEach((step, index) => {
+          step.classList.toggle("done", index < stage || kind === "complete");
+          step.classList.toggle("current", index === stage && kind === "running");
+          if (index === stage && kind === "running") {
+            step.setAttribute("aria-current", "step");
+          } else {
+            step.removeAttribute("aria-current");
+          }
+        });
+      } else if (kind !== "running") {
+        for (const step of reportStepsEl.children) step.removeAttribute("aria-current");
+      }
+      if (changed && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        reportStatusEl.getAnimations().forEach(animation => animation.cancel());
+        reportStatusEl.animate([
+          { opacity: 0.45, transform: "translateY(5px)" },
+          { opacity: 1, transform: "translateY(0)" }
+        ], { duration: 280, easing: "ease-out" });
+      }
     }
 
     function updateElapsedTime(state) {
       const elapsed = (state.endedAt ?? performance.now()) - state.startedAt;
-      elapsedTimeEl.textContent = "耗时 " + (elapsed / 1000).toFixed(1) + " 秒";
+      const seconds = elapsed / 1000;
+      const duration = seconds > 60
+        ? Math.floor(seconds / 60) + "m" + Math.floor(seconds % 60) + "s"
+        : Math.floor(seconds) + "s";
+      elapsedTimeEl.textContent = "耗时 " + duration;
     }
 
     function stopElapsedTime(state) {
@@ -236,13 +275,13 @@
       if (name === "progress") {
         // 节点事件只更新当前阶段，维度和子问题结果保留在折叠详情里。
         if (!data.node && data.detail) {
-          setReportStatus("正在理解问题", "running");
+          setReportStatus("正在理解问题", "running", 0);
         }
         switch (data.node) {
           case "plan":
           case "split":
           case "research_team":
-            setReportStatus("正在分析数据", "running");
+            setReportStatus("正在分析数据", "running", 1);
             break;
           case "skill_worker": {
             const status = data.status.replace("维度 ", "")
@@ -250,22 +289,22 @@
               .replace("：读取记忆", "：已复用历史分析");
             const kind = status.includes("暂无可展示内容") ? "" : "pass";
             addProgress("维度", status, kind);
-            setReportStatus("正在分析数据", "running");
+            setReportStatus("正在分析数据", "running", 1);
             break;
           }
           case "researcher":
             addProgress("子问题", data.status, "pass");
-            setReportStatus("正在分析数据", "running");
+            setReportStatus("正在分析数据", "running", 1);
             break;
           case "writer":
             state.writerComplete = true;
-            setReportStatus("正在检查报告", "running");
+            setReportStatus("正在检查报告", "running", 2);
             break;
           case "reviewer":
             if (data.status === "审稿：rework") {
-              setReportStatus("正在完善报告", "running");
+              setReportStatus("正在完善报告", "running", 2);
             } else if (data.status === "审稿：pass") {
-              setReportStatus("正在整理报告", "running");
+              setReportStatus("正在整理报告", "running", 2);
             }
             break;
           case "summarize":
@@ -273,12 +312,12 @@
           case "crypto_analysis_agent":
           case "topic_research_agent":
           case "finalize":
-            setReportStatus("正在整理报告", "running");
+            setReportStatus("正在整理报告", "running", 2);
             break;
         }
       } else if (name === "route") {
         state.agents.push(data.agent);
-        setReportStatus("正在分析数据", "running");
+        setReportStatus("正在分析数据", "running", 1);
       } else if (name === "report_start") {
         // 每次报告生成尝试都重新展示，避免重试正文与上一次残留拼接。
         clearReport(state);
@@ -286,7 +325,7 @@
         reportEl.classList.add("blink");
         state.outputNode = "writer";
         state.writerComplete = false;
-        setReportStatus("正在整理报告", "running");
+        setReportStatus("正在生成报告", "running", 2);
       } else if (name === "token") {
         if (typeof data.content !== "string" || !data.content) return;
         if (data.source_node === "model") return;
@@ -308,7 +347,8 @@
         stopElapsedTime(state);
         state.finished = true;
         reportEl.classList.remove("blink");
-        setReportStatus(data.kind === "direct" ? "已回复" : "分析完成", "complete");
+        setReportStatus(data.kind === "direct" ? "已回复" : "分析完成", "complete", 3);
+        reportStepsEl.hidden = data.kind === "direct";
         if (typeof data.report === "string" && data.report) {
           reportEl.classList.remove("placeholder");
           state.report = data.report;
@@ -400,7 +440,7 @@
       reportContextEl.textContent = "";
       reportContextEl.hidden = true;
       reportEl.setAttribute("aria-busy", "true");
-      setReportStatus("正在理解问题", "running");
+      setReportStatus("正在理解问题", "running", 0);
       const state = {
         agents: [], finished: false, outputNode: null, writerComplete: false,
         report: "", renderFrame: null,
@@ -436,7 +476,7 @@
         stopElapsedTime(state);
         if (error.name === "AbortError") {
           flushReport(state);
-          setReportStatus("已中断");
+          setReportStatus("已中断", "paused");
         } else {
           clearReport(state);
           setReportStatus("分析失败", "failed");

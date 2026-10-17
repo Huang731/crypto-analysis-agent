@@ -118,10 +118,99 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 }
 .report-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
 .elapsed-time { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.report-status { padding: 6px 10px; border-radius: 6px; background: #f3f5f0; color: var(--muted); font-size: 11px; }
-.report-status.running { color: var(--accent); background: var(--accent-soft); }
-.report-status.complete { color: var(--green); background: var(--accent-soft); }
-.report-status.failed { color: var(--red); background: #fff0ee; }
+.report-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 40px;
+  padding: 9px 15px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f3f5f0;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: background .25s, color .25s, border-color .25s;
+}
+.status-icon { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.report-status.running {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 3px 12px #32634f26;
+}
+.report-status.running .status-icon {
+  width: 15px;
+  height: 15px;
+  border: 2px solid #ffffff55;
+  border-top-color: #fff;
+  background: transparent;
+  animation: status-spin .85s linear infinite;
+}
+.report-status.complete { color: #fff; background: var(--green); border-color: var(--green); }
+.report-status.complete .status-icon {
+  width: 12px;
+  height: 7px;
+  margin-top: -4px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  border-radius: 0;
+  background: transparent;
+  transform: rotate(-45deg);
+}
+.report-status.failed { color: var(--red); background: #fff0ee; border-color: #edc6c0; }
+.report-status.paused { color: var(--amber); background: #fff8e9; border-color: #ebd7ad; }
+@keyframes status-spin { to { transform: rotate(360deg); } }
+.report-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 32px 24px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #f8faf7;
+  list-style: none;
+}
+.report-steps li {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--muted);
+  font-size: 12px;
+  transition: color .25s;
+}
+.report-steps li:not(:last-child)::after {
+  content: "";
+  flex: 1;
+  height: 2px;
+  margin: 0 12px 0 3px;
+  background: var(--border);
+  transition: background .25s;
+}
+.step-marker {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid #d6ded6;
+  border-radius: 50%;
+  background: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.report-steps .done, .report-steps .current { color: var(--accent); font-weight: 600; }
+.report-steps li.done::after { background: #9bb8a7; }
+.report-steps .done .step-marker { color: #fff; border-color: var(--accent); background: var(--accent); }
+.report-steps .current .step-marker { border-color: var(--accent); box-shadow: 0 0 0 4px #32634f18; }
+.report-steps[data-kind="running"] .current .step-marker { animation: stage-pulse 1.6s ease-in-out infinite; }
+.report-steps[data-kind="failed"] .current { color: var(--red); }
+.report-steps[data-kind="failed"] .current .step-marker { border-color: var(--red); box-shadow: 0 0 0 4px #b9483d14; }
+.report-steps[data-kind="paused"] .current { color: var(--amber); }
+.report-steps[data-kind="paused"] .current .step-marker { border-color: var(--amber); box-shadow: none; }
+@keyframes stage-pulse { 50% { box-shadow: 0 0 0 7px #32634f08; } }
 .report-question {
   margin: 0 32px 20px;
   padding-left: 12px;
@@ -286,6 +375,16 @@ summary { cursor: pointer; }
   .input-row button { flex: 1; }
   .report-panel { margin-top: 20px; }
   .report-header { padding: 24px 20px 20px; }
+  .report-status { gap: 7px; padding: 8px 10px; font-size: 12px; }
+  .report-steps { margin: 0 20px 20px; padding: 14px 8px; }
+  .report-steps li { flex-direction: column; gap: 8px; font-size: 10px; }
+  .report-steps li:not(:last-child)::after {
+    position: absolute;
+    top: 12px;
+    left: calc(50% + 18px);
+    width: calc(100% - 36px);
+    margin: 0;
+  }
   .report-question { margin-left: 20px; margin-right: 20px; }
   .report { padding: 8px 20px 24px; font-size: 13px; }
   .progress, .findings { margin-left: 20px; margin-right: 20px; }
