@@ -20,8 +20,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_glm_4_flash_llm, model_session
-from app.orchestration.routing import _invoke_route_decision
-from prompts.routing import routing_messages, routing_prompt
+from app.orchestration.graph import _invoke_route_decision
+from prompts.router import routing_messages, routing_prompt
 
 
 class RoutingInput(BaseModel):
@@ -267,7 +267,7 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
         "working_tree_sha256": hashlib.sha256(
-            (PROJECT_ROOT / "app" / "orchestration" / "routing.py").read_bytes()
+            (PROJECT_ROOT / "app" / "orchestration" / "graph.py").read_bytes()
         ).hexdigest(),
         "model": settings.glm_4_flash_model,
         "repetitions": str(args.repetitions),

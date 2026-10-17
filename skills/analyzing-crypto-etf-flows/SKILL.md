@@ -1,8 +1,6 @@
 ---
 name: analyzing-crypto-etf-flows
-description: >-
-  评估现货 ETF 近 5 日与 20 日净流量，适用于 ETF 资金及机构申购赎回分析；不代表全部市场需求。
-  一次调用完成 ETF 取数与 ETF_Flows 计算。
+description: 适用于现货 ETF 资金面、净流入净流出及机构申购赎回分析。
 tools:
   - analyze_etf_flows
 scoring:

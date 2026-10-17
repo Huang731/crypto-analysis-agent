@@ -45,36 +45,37 @@ def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseM
             - 若未提及任何币种，默认值为 "BTC"。
             
             ### 2. skill_names（数组）
-            按以下优先级确定集合，确定后严格按技能名字母升序排列：
-            
-            | 优先级 | 触发条件 | 动作 |
-            |--------|----------|------|
-            | P1 | 用户明确排除某技能 | 从当前集合中移除该技能。 |
-            | P2 | 用户指定具体指标/细分领域 | 仅选匹配的技能，多领域取并集。 |
-            | P3 | 泛问整体行情/走势/买卖时机/风险，或未指定范围 | 选目录中全部技能。 |
-            
-            关键红线与语义映射：
-            - "走势""行情"等词本身不是限定条件，必须触发 P3 全选。
-            - **多词映射**："资金面" 必须同时映射到 `analyzing-crypto-derivatives` (微观资金) 和 `analyzing-crypto-etf-flows` (宏观资金)。
-            - 技能选择只看 description 中的适用场景，不看 name 中的动词（如 analyzing）。
+            确定分析范围后，按技能名字母升序排列并去重。
+
+            确定分析范围：
+            - 全部范围：用户要求全面、综合或整体分析且未限定只看某些指标或领域，
+              或未指定具体指标或领域（如泛问行情、买卖时机、加减仓、持有或整体风险），选择本轮目录中的全部技能。
+            - 指定范围：用户指定具体指标或细分领域时，根据 Skill 的 description 选择匹配技能，多个领域取并集；
+              即使同时询问买卖或仓位决策，也保留指定范围，不自动扩展。
             
             ### 3. refresh（布尔值）
             仅当用户明确要求重新取数/刷新/不用缓存/获取最新数据时为 true。
+            “获取最新行情”“用最新数据重新算”均属于明确取数要求，为 true。
             其他所有情况一律为 false，包括："再分析一次""重新分析""现在适合买入吗"。
+            “现在”“最近”等时间词本身不代表要求刷新，refresh 与技能选择范围分别判断。
             
             ## 参考示例
             
-            ### 示例 1：上下文追问 + 多领域取并集 (核心示例)
-            用户问题：分析以太坊（ETH）的趋势和资金面后，是否减仓？
-            目标资产为 ETH；技能选择 analyzing-crypto-derivatives、analyzing-crypto-etf-flows、analyzing-crypto-sentiment、analyzing-crypto-trend；不刷新数据。
-            
-            ### 示例 2：泛问全选 + 伪刷新词拦截
-            用户问题：分析BTC的走势，帮我获取最新行情
-            目标资产为 BTC；技能选择 analyzing-crypto-derivatives、analyzing-crypto-etf-flows、analyzing-crypto-sentiment、analyzing-crypto-trend；不刷新数据。
-            
-            ### 示例 3：明确限定 + 显式刷新
-            用户问题：只看BTC的均线和资金费率，用最新数据重新算
-            目标资产为 BTC；技能选择 analyzing-crypto-derivatives、analyzing-crypto-trend；刷新数据。
+            ### 示例 1：全部范围，不刷新
+            用户问题：比特币现在适合加仓吗？
+            目标资产为 BTC；技能选择本轮目录中的全部技能，按技能名字母升序排列；refresh 为 false。
+
+            ### 示例 2：全部范围，刷新
+            用户问题：用最新数据综合分析 BTC
+            目标资产为 BTC；技能选择本轮目录中的全部技能，按技能名字母升序排列；refresh 为 true。
+
+            ### 示例 3：指定范围，不刷新
+            用户问题：分析 BTC 的走势和资金费率
+            目标资产为 BTC；技能选择 analyzing-crypto-derivatives、analyzing-crypto-trend；refresh 为 false。
+
+            ### 示例 4：指定范围，刷新
+            用户问题：刷新数据，只分析 BTC 的 ETF 资金流
+            目标资产为 BTC；技能选择 analyzing-crypto-etf-flows；refresh 为 true。
             """
     task_prompt = f"""\
             ## 输入

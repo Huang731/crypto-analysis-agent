@@ -1,8 +1,6 @@
 ---
 name: analyzing-crypto-trend
-description: >-
-  用 MA50、MA200、ADX 和 DI 评估目标资产的趋势、强度与确认情况，适用于走势及均线分析。
-  一次调用完成日线取数与 Trend 计算。
+description: 适用于价格走势、趋势方向与强度、均线 MA50/MA200、ADX 和 DI 分析。
 tools:
   - analyze_trend
 scoring:

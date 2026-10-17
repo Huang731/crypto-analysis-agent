@@ -40,8 +40,8 @@ from app.observability import (
     new_trace_id,
     reset_request_context,
 )
-from app.orchestration.routing import build_routing_graph
-from app.orchestration.routing_service import RoutingService
+from app.orchestration.graph import build_routing_graph
+from app.orchestration.service import RoutingService
 from app.rag.retriever import KBRetriever
 from app.tracing import start_trace
 

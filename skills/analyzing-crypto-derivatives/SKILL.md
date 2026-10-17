@@ -1,8 +1,6 @@
 ---
 name: analyzing-crypto-derivatives
-description: >-
-  评估 OI 与资金费率，适用于杠杆、持仓量和多空拥挤分析；不判断价格趋势。
-  一次取数并计算 OI、Funding，共用同一份原始证据。
+description: 适用于合约资金面、持仓量（OI）、资金费率、杠杆和多空拥挤分析。
 tools:
   - analyze_derivatives
 scoring:

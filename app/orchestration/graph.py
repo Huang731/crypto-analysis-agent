@@ -21,7 +21,7 @@ from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import trace_generation_call
-from prompts.routing import routing_messages
+from prompts.router import routing_messages
 
 _LOG = get_logger("crypto_analysis.routing")
 

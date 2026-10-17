@@ -1,8 +1,6 @@
 ---
 name: analyzing-crypto-sentiment
-description: >-
-  按恐惧贪婪指数评估全市场情绪，适用于恐慌、贪婪和极端情绪分析；不代表单个币种的价格或资金。
-  一次调用完成情绪指数取数与 Fear_Greed 计算。
+description: 适用于恐惧贪婪指数、市场恐慌、贪婪和极端情绪分析。
 tools:
   - analyze_sentiment
 scoring:

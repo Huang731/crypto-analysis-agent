@@ -1,8 +1,6 @@
 ---
 name: analyzing-crypto-liquidity
-description: >-
-  评估 DXY、USDT+USDC 市值、M2 和 WALCL，适用于美元及加密市场流动性分析；不分析政策利率。
-  一次调用并行取数并计算 DXY_Trend、Stable_MCap、M2_YoY 和 Fed_Balance。
+description: 适用于美元及加密市场流动性分析，包括 DXY、M2、WALCL 和 USDT+USDC 稳定币市值。
 tools:
   - analyze_liquidity
 scoring:
