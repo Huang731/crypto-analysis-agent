@@ -12,18 +12,27 @@ from datetime import datetime, timezone
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 from uuid import NAMESPACE_URL, uuid5
 
+import httpx
 import truststore
-from langchain_core.messages import BaseMessage, messages_from_dict
+from langchain_core.messages import BaseMessage, HumanMessage, messages_from_dict
 from langfuse import Evaluation, Langfuse
-from langfuse.openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.config.config import PROJECT_ROOT, _env_files, settings
-from app.llm.model import model_session
+from app.llm.model import (
+    ainvoke_structured,
+    get_embeddings,
+    make_bailian_fast_llm,
+    make_bailian_smart_llm,
+    model_session,
+)
+
+_Schema = TypeVar("_Schema", bound=BaseModel)
 
 
 class EvalSettings(BaseSettings):
@@ -205,28 +214,78 @@ def load_cases(path: Path) -> list[WriterCase]:
     return cases
 
 
-def create_metrics(api: AsyncOpenAI, judge_model: str) -> dict[str, Any]:
+def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, Any]:
     """仅实际评测时加载 RAGAS，离线案例校验不依赖模型框架。"""
-    from ragas.embeddings.openai_provider import OpenAIEmbeddings
-    from ragas.llms import llm_factory
+    from langfuse.langchain import CallbackHandler
+    from ragas.embeddings.base import BaseRagasEmbedding
+    from ragas.llms.base import InstructorBaseRagasLLM
     from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
-    judge = llm_factory(
-        judge_model,
-        client=api,
-        temperature=0,
-        max_tokens=8192,
-        max_retries=2,
-    )
+    if judge_model == settings.bailian_smart_model:
+        model = make_bailian_smart_llm(async_client=http)
+    elif judge_model == settings.bailian_fast_model:
+        model = make_bailian_fast_llm(async_client=http)
+    else:
+        raise ValueError(f"未配置的百炼裁判模型：{judge_model}")
+    model = model.bind(enable_thinking=False).with_config(callbacks=[CallbackHandler()])
+
+    class BailianJudge(InstructorBaseRagasLLM):
+        """将项目百炼结构化调用接入 RAGAS 原生指标。"""
+
+        def generate(self, prompt: str, response_model: type[_Schema]) -> _Schema:
+            raise NotImplementedError("评测只使用异步 agenerate")
+
+        @retry(
+            stop=stop_after_attempt(2),
+            wait=wait_random_exponential(multiplier=1, max=5),
+            reraise=True,
+        )
+        async def agenerate(
+            self, prompt: str, response_model: type[_Schema]
+        ) -> _Schema:
+            result = await ainvoke_structured(
+                model,
+                [HumanMessage(content=prompt)],
+                schema=response_model,
+                timeout=120,
+            )
+            return response_model.model_validate(result)
+
+    embeddings = get_embeddings()
+
+    class BailianRagasEmbeddings(BaseRagasEmbedding):
+        """将项目向量模型的异步接口接入 RAGAS。"""
+
+        def embed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return embeddings.embed_query(text)
+
+        @retry(
+            stop=stop_after_attempt(2),
+            wait=wait_random_exponential(multiplier=1, max=5),
+            reraise=True,
+        )
+        async def aembed_text(self, text: str, **kwargs: Any) -> list[float]:
+            return await asyncio.wait_for(embeddings.aembed_query(text), timeout=120)
+
+        @retry(
+            stop=stop_after_attempt(2),
+            wait=wait_random_exponential(multiplier=1, max=5),
+            reraise=True,
+        )
+        async def aembed_texts(
+            self, texts: list[str], **kwargs: Any
+        ) -> list[list[float]]:
+            return await asyncio.wait_for(
+                embeddings.aembed_documents(texts), timeout=120
+            )
+
+    judge = BailianJudge()
     return {
         "faithfulness": Faithfulness(llm=judge),
         "answer_relevancy": AnswerRelevancy(
             llm=judge,
-            embeddings=OpenAIEmbeddings(
-                client=api.with_options(max_retries=1),
-                model=settings.embedding_model,
-            ),
-            strictness=3,
+            embeddings=BailianRagasEmbeddings(),
+            strictness=1,
         ),
     }
 
@@ -254,17 +313,8 @@ async def evaluate(
     with client.start_as_current_observation(
         as_type="span", name="writer.evaluate", input=case.model_dump(mode="json")
     ) as observation:
-        async with (
-            model_session() as http,
-            AsyncOpenAI(
-                api_key=settings.dashscope_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                http_client=http,
-                timeout=120,
-                max_retries=0,
-            ) as api,
-        ):
-            for name, metric in create_metrics(api, judge_model).items():
+        async with model_session() as http:
+            for name, metric in create_metrics(judge_model, http=http).items():
                 if name == "faithfulness" and not evidence.retrieved_contexts:
                     continue
                 arguments: dict[str, Any] = {
@@ -373,7 +423,7 @@ def main() -> None:
         "langchain_community_version": version("langchain-community"),
         "scoring_method": "ragas_native",
         "metrics": ["faithfulness", "answer_relevancy"],
-        "answer_relevancy_strictness": 3,
+        "answer_relevancy_strictness": 1,
         "model_timeout_seconds": 120,
         "metric_timeout_seconds": 600,
         "max_attempts": 2,
@@ -433,13 +483,15 @@ def main() -> None:
             data=items,
             task=task,
             evaluators=[score_case],
-            max_concurrency=1,
+            max_concurrency=3,
             metadata=metadata,
         )
-        for row, result in zip(rows, experiment.item_results, strict=True):
+        rows_by_line = {row["source_line"]: row for row in rows}
+        for result in experiment.item_results:
+            row = rows_by_line[result.item.input["source_line"]]
             row["scores"] = [score.__dict__ for score in result.evaluations]
             row["langfuse_trace_id"] = result.trace_id
-        if len(rows) != len(cases):
+        if len(rows) != len(cases) or len(experiment.item_results) != len(rows):
             raise RuntimeError("评测记录不完整")
         run_status = "completed"
         print(experiment.format())

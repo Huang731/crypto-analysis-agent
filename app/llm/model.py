@@ -72,7 +72,7 @@ def make_bailian_smart_llm(
     """创建决策和写作模型，保留模型自身的默认思考配置。"""
     return _make_bailian_llm(
         settings.bailian_smart_model,
-        protocol="text",
+        protocol="multimodal",
         async_client=async_client,
     )
 

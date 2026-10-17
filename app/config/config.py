@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
-    bailian_smart_model: str = "glm-5.3"
+    bailian_smart_model: str = "qwen3.7-plus"
     bailian_fast_model: str = "qwen3.7-flash-2026-07-15"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
     # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
     model_price_table: dict[str, dict[str, float]] = {
-        "glm-5.3": {"input": 50.0, "output": 50.0},
+        "qwen3.7-plus": {"input": 50.0, "output": 50.0},
         "qwen3.7-flash-2026-07-15": {"input": 0.5, "output": 0.5},
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},

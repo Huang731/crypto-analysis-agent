@@ -17,7 +17,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langfuse import Langfuse
-from langfuse.openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.config.config import PROJECT_ROOT, settings
@@ -171,17 +170,8 @@ async def evaluate(
             observation.update(output=output, level="ERROR")
             return output
 
-        async with (
-            model_session() as http,
-            AsyncOpenAI(
-                api_key=settings.dashscope_api_key,
-                base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-                http_client=http,
-                timeout=120,
-                max_retries=0,
-            ) as api,
-        ):
-            for name, metric in create_metrics(api, judge_model).items():
+        async with model_session() as http:
+            for name, metric in create_metrics(judge_model, http=http).items():
                 arguments = {
                     "user_input": evidence["user_input"],
                     "response": review.model_dump_json(),
