@@ -7,11 +7,8 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 from app.candidate_capture import append_node_candidate
 from app.config.config import settings
 from app.llm.model import ainvoke_model
-from app.observability import get_logger
 from app.tracing import trace_generation_call
 from prompts.query_rewriter import query_rewriter_messages
-
-_LOG = get_logger("crypto_analysis.query_rewriter")
 
 
 async def rewrite_question(

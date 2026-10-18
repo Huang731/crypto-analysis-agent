@@ -14,7 +14,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -140,6 +140,11 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+def log_event(logger: logging.Logger, event: str, **fields: Any) -> None:
+    """记录带事件名、trace_id 和 thread_id 的业务日志。"""
+    logger.info(event, extra={"event": event, **fields})
+
+
 def timed_node(
     func: Callable | None = None, *, label: Callable[[Any], str] | None = None
 ) -> Callable:
@@ -215,11 +220,15 @@ def _is_async(func: Callable) -> bool:
 
 def _summarize_result(result: Any) -> str:
     """把节点返回的 state 增量摘要成简短字符串（避免日志爆炸）。"""
+    if isinstance(result, BaseModel):
+        result = result.model_dump()
     if not isinstance(result, dict):
         return f"→ {type(result).__name__}"
-    parts = []
+    parts: list[str] = []
     for k, v in result.items():
-        if isinstance(v, (list, str)):
+        if isinstance(v, BaseModel):
+            v = v.model_dump()
+        if isinstance(v, (list, str, dict)):
             parts.append(f"{k}={len(v)}")
         elif isinstance(v, (int, float)):
             parts.append(f"{k}={v}")

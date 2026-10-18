@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 from math import fsum
+from traceback import format_exc
 from typing import Any, Literal
 
 from langchain.agents import create_agent
@@ -34,7 +35,7 @@ from app.crypto_analysis.skill_memory import (
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
 from app.llm.model import ainvoke_model
-from app.observability import get_logger, timed_node
+from app.observability import get_logger, log_event, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis_calculate_metrics import (
@@ -45,9 +46,6 @@ from prompts.crypto_analysis_skill_content import (
     skill_output_messages,
     thought_retrieval_prompt,
 )
-
-_LOG = get_logger("crypto_analysis.skill_worker")
-
 
 # 技能结果聚合、内容生成与缓存
 
@@ -117,7 +115,12 @@ async def _retrieve_thought_context(
             documents = await retriever.aretrieve(query)
         except Exception:  # noqa: BLE001 - 沿用原检索错误处理，不替换已计算指标。
             span.metadata["status"] = "error"
-            _LOG.exception("思想材料检索失败：%s", skill.name)
+            log_event(
+                get_logger("crypto_analysis.skill_worker"),
+                f"思想材料检索失败：{skill.name}",
+                exception=format_exc(),
+                skill_name=skill.name,
+            )
             return {"query": query, "status": "error", "documents": []}
         # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
         span.output = {"document_count": len(documents)}

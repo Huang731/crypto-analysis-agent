@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Literal
 
+from functools import lru_cache
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -302,7 +303,7 @@ class SkillLoader:
                 parts.append(f"── 技能 {name} ──\n{content}")
         return "\n\n".join(parts)
 
-
+@lru_cache(maxsize=1)
 def get_skill_loader() -> SkillLoader:
     """每个请求独立加载，避免全局缓存跨请求过期。"""
     return SkillLoader(settings.skills_dir)

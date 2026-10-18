@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from traceback import format_exc
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -14,7 +15,6 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.types import Command
-from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from pydantic import BaseModel, Field
 from tenacity import (
@@ -26,12 +26,11 @@ from tenacity import (
 from typing_extensions import Self
 
 from app.config.config import settings
-from app.observability import get_logger
+from app.observability import get_logger, log_event
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Page, Playwright
 
-_LOG = get_logger("browser_tool")
 SENSITIVE_PATTERNS = (
     r"\.(exe|dmg|sh)$",
     r"/login",
@@ -116,7 +115,7 @@ class BrowserTool:
             self._browser = await self._playwright.chromium.launch(
                 headless=self._headless
             )
-            _LOG.info("浏览器已启动")
+            log_event(get_logger("browser_tool"), "浏览器已启动")
 
     async def close(self) -> None:
         """关闭浏览器与 Playwright，释放当前任务的资源。"""
@@ -204,7 +203,9 @@ class BrowserTool:
             selected = list(dict.fromkeys(urls))[:max_pages]
             for url in selected:
                 self._check_url(url)
-            _LOG.info("为研究问题读取 %s 个详情页", len(selected))
+            log_event(
+                get_logger("browser_tool"), f"为研究问题读取 {len(selected)} 个详情页"
+            )
             return [await self.extract_from_page(url) for url in selected]
 
 
@@ -269,22 +270,20 @@ async def browse_for_evidence(
         evidences = await runtime.context.browser.browse_for_evidence(
             query, urls, min(max_pages, 1)
         )
-    except (PageRequestError, PlaywrightError, ValueError) as exc:
-        # 处理网页请求和原文提取错误，其他浏览器异常继续抛出。
-        if isinstance(exc, PlaywrightError) and not (
-            isinstance(exc, PlaywrightTimeoutError) or "net::ERR_" in str(exc)
-        ):
-            raise
-
+    except Exception as exc:  # noqa: BLE001
+        # 网页取证异常统一记录并跳过当前地址，任务取消信号继续向上传播。
         error = {
             "url": requested_url,
             "error_type": type(exc).__name__,
             "message": str(exc),
         }
-        _LOG.warning(
-            "网页取证失败，跳过地址 %s：%s",
-            requested_url,
-            exc,
+        log_event(
+            get_logger("browser_tool"),
+            f"网页取证失败，跳过地址 {requested_url}：{exc}",
+            exception=format_exc(),
+            url=requested_url,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
         )
 
         return Command(

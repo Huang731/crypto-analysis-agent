@@ -9,6 +9,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
+from traceback import format_exc
 from typing import Annotated
 
 from httpx import AsyncClient
@@ -37,6 +38,7 @@ from app.llm.model import (
 from app.observability import (
     bind_request_context,
     get_logger,
+    log_event,
     new_trace_id,
     reset_request_context,
 )
@@ -46,7 +48,6 @@ from app.rag.retriever import KBRetriever
 from app.tracing import start_trace
 
 _INDEX = Path(__file__).resolve().parents[1] / "static" / "index.html"
-_LOG = get_logger("crypto_analysis.api")
 # 请求 ID 会写入日志和 checkpoint 的 thread_id，限制字符集与长度防止注入和超长键。
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
@@ -203,12 +204,11 @@ async def ask(
                 if trace.output is None:
                     trace.output = {"status": "done"}
             except Exception as exc:  # noqa: BLE001 - SSE 已开始推送，任何异常都必须转成 error 事件返回给前端。
-                _LOG.exception(
+                log_event(
+                    get_logger("crypto_analysis.api"),
                     "request.failed",
-                    extra={
-                        "event": "request.failed",
-                        "duration_ms": _elapsed_ms(started),
-                    },
+                    exception=format_exc(),
+                    duration_ms=_elapsed_ms(started),
                 )
                 trace.output = {"status": "error", "error_type": type(exc).__name__}
                 error = {

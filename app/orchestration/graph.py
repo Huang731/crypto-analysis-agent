@@ -16,14 +16,12 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
 from app.llm.model import ainvoke_model
-from app.observability import get_logger, timed_node
+from app.observability import timed_node
 from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
 from app.topic_research.topic_research_agent import build_topic_research_agent
 from app.tracing import trace_generation_call
 from prompts.router import routing_messages
-
-_LOG = get_logger("crypto_analysis.routing")
 
 
 @trace_generation_call(

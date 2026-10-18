@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from api.schemas import AskRequest
-from app.observability import get_logger
+from app.observability import get_logger, log_event
 from app.tracing import trace_span
 
 
@@ -15,7 +15,6 @@ def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[st
     return {"event": name, "data": json.dumps(payload, ensure_ascii=False)}
 
 
-_LOG = get_logger("crypto_analysis.routing")
 _NODE_LABELS = {
     "rewrite": "理解问题",
     "router": "识别研究方向",
@@ -139,13 +138,11 @@ class _RoutingStreamState:
                     ),
                 },
             )
-        _LOG.error(
+        log_event(
+            get_logger("crypto_analysis.routing"),
             "routing.result.empty",
-            extra={
-                "event": "routing.result.empty",
-                "routed_agent": self.routed_agent,
-                "final_state_keys": sorted(state),
-            },
+            routed_agent=self.routed_agent,
+            final_state_keys=sorted(state),
         )
         raise ValueError("路由未分派研究 Agent")
 

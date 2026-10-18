@@ -34,10 +34,8 @@ from app.crypto_analysis.calculators.stablecoin_calculator import (
     STABLECOIN_FIELD_LABELS,
 )
 from app.crypto_analysis.calculators.trend_calculator import TREND_FIELD_LABELS
-from app.observability import get_logger
+from app.observability import get_logger, log_event
 from app.tracing import trace_span
-
-_LOG = get_logger("crypto_analysis.metrics")
 
 
 @dataclass(frozen=True)
@@ -223,20 +221,18 @@ async def _fetch_evidence(
             record.update(status="data_missing", reason=reason)
             span.output = {"evidence_id": evidence_id, **record}
             span.metadata["status"] = "error"
-            _LOG.warning(
+            log_event(
+                get_logger("crypto_analysis.metrics"),
                 "metric.fetch.failed",
-                extra={
-                    "event": "metric.fetch.failed",
-                    "skill_name": runtime.context["skill"].name,
-                    "source_action": source_action,
-                    "data_kind": data_kind,
-                    "evidence_id": evidence_id,
-                    "status": "data_missing",
-                    "error_type": type(exc).__name__,
-                    "error_message": _log_reason(str(exc)),
-                    "reason": _log_reason(reason),
-                    "duration_ms": round((time.perf_counter() - started) * 1000),
-                },
+                skill_name=runtime.context["skill"].name,
+                source_action=source_action,
+                data_kind=data_kind,
+                evidence_id=evidence_id,
+                status="data_missing",
+                error_type=type(exc).__name__,
+                error_message=_log_reason(str(exc)),
+                reason=_log_reason(reason),
+                duration_ms=round((time.perf_counter() - started) * 1000),
             )
         else:
             record.update(status="ok", raw=raw)
@@ -294,7 +290,6 @@ def _compute_metric(
         span.output = {"status": result["status"], "score": result["score"]}
         if result["status"] != "ok":
             fields = {
-                "event": "metric.result.unavailable",
                 "skill_name": skill.name,
                 "indicator_id": metric_id,
                 "evidence_id": evidence_id,
@@ -306,12 +301,18 @@ def _compute_metric(
                 "duration_ms": round((time.perf_counter() - started) * 1000),
             }
             if traceback is not None:
-                _LOG.error(
+                log_event(
+                    get_logger("crypto_analysis.metrics"),
                     "metric.result.unavailable",
-                    extra={**fields, "traceback": traceback},
+                    traceback=traceback,
+                    **fields,
                 )
             else:
-                _LOG.warning("metric.result.unavailable", extra=fields)
+                log_event(
+                    get_logger("crypto_analysis.metrics"),
+                    "metric.result.unavailable",
+                    **fields,
+                )
     return result
 
 
