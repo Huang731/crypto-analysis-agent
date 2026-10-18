@@ -244,7 +244,6 @@ def _select_thought_context(context: dict[str, Any]) -> dict[str, Any]:
 def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """创建技能加载及结构化缓存读取节点。"""
 
-    @timed_node
     async def read_cache(state: SkillWorkerGraphState) -> dict[str, Any]:
         name = state["skill_name"]
         loader = get_skill_loader()
@@ -304,7 +303,7 @@ def make_calculate_metrics(
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["skill_name"])
     async def calculate_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
         registry = get_tool_registry()
         # 工具执行后直接退出本轮 Agent，由外层检查节点决定是否继续。
@@ -338,7 +337,7 @@ def make_check_metrics() -> Callable[
 ]:
     """创建指标完整性检查节点，只依据工具实际写入的结果。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["skill_name"])
     async def check_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
         with trace_span("crypto.skill.check_metrics") as node_span:
             skill = state["skill"]
@@ -388,7 +387,7 @@ def make_skill_content(
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """创建思想检索及指标表格生成节点。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
         skill = state["skill"]
         key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
@@ -438,7 +437,6 @@ def make_finalize_skill() -> Callable[
 ]:
     """创建技能收尾节点，只回传当前技能的结果及缓存增量。"""
 
-    @timed_node
     async def finalize_skill(state: SkillWorkerGraphState) -> dict[str, Any]:
         output = state["skill_result"]
         update: dict[str, Any] = {"skill_result": output}

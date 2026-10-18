@@ -48,6 +48,8 @@ class Settings(BaseSettings):
         "qwen3.7-plus": {"input": 50.0, "output": 50.0},
         "qwen3.7-flash-2026-07-15": {"input": 0.5, "output": 0.5},
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
+        "qwen3.7-text-embedding": {"input": 0.5, "output": 0.0},
+        "qwen3.7-text-embedding-flash": {"input": 0.125, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
         "glm-4-flash": {"input": 0.0, "output": 0.0},
@@ -62,10 +64,12 @@ class Settings(BaseSettings):
     vision_model: str = "qwen3.5-ocr"
 
     # 向量索引：维度必须与模型默认输出一致；更换向量模型后需重新入库。
-    embedding_model: str = "text-embedding-v4"
+    embedding_model: str = "qwen3.7-text-embedding-flash"
     embedding_dimensions: int = Field(default=1024, gt=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
-    faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "text-embedding-v4-1024")
+    faiss_path: str = str(
+        PROJECT_ROOT / "data" / "faiss" / "qwen3.7-text-embedding-flash-1024"
+    )
 
     # 混合检索：先融合 BM25 与向量召回结果，再由重排模型选出最终材料。
     retrieve_k: int = 8

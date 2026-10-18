@@ -145,7 +145,7 @@ def _delete_source(
 
 
 def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
-    """按配置分批入库，百炼 text-embedding-v4 单请求最多 10 条文本。"""
+    """按配置分批入库，控制每次向量请求的文本数量。"""
     step = settings.embed_batch_size
     for i in range(0, len(docs), step):
         batch = docs[i : i + step]

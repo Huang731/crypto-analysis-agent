@@ -223,7 +223,6 @@ def make_skill_worker(
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """沿用父图调用边界，转交技能子图执行。"""
 
-    @timed_node(label=lambda state: state["skill_name"])
     async def skill_worker(state: SkillWorkerGraphState) -> dict[str, Any]:
         name = state["skill_name"]
         skill_loader = get_skill_loader()
@@ -251,7 +250,7 @@ def make_plan(
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建本轮技能规划节点。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["scope"]["resolved_question"])
     async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
         skill_loader = get_skill_loader()
         question = state["scope"].get("resolved_question")
@@ -285,7 +284,7 @@ def make_plan(
     return plan
 
 
-@timed_node
+@timed_node(label=lambda state: state["scope"]["target_asset"])
 def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
     names = state["plan"]["skill_names"]
     if not names:
@@ -315,7 +314,7 @@ def make_writer(
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["scope"]["target_asset"])
     async def writer(state: DynamicAnalysisState, runtime: Runtime) -> dict[str, Any]:
         """依据本轮技能证据撰写结论，报告只包含结论正文。"""
         ordered = sorted(state["skill_results"], key=lambda item: item["skill_name"])
@@ -362,7 +361,7 @@ def make_reviewer(
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建报告审核节点，保留原有审核规则。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["scope"]["target_asset"])
     @trace_generation_call(name="crypto.reviewer", kind="span")
     async def reviewer(state: DynamicAnalysisState) -> dict[str, Any]:
         """审核本轮报告，沿用两轮审核上限和不通过时的修改意见。"""
@@ -411,7 +410,7 @@ def make_summarize_history(
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, str]]]:
     """创建累计历史摘要节点。"""
 
-    @timed_node
+    @timed_node(label=lambda state: state["scope"]["target_asset"])
     async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
         """根据本轮最终报告更新累计结论摘要。"""
         messages = history_summary_messages(

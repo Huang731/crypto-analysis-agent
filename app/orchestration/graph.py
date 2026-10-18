@@ -98,7 +98,7 @@ def build_routing_graph(
     )
     topic_agent = build_topic_research_agent(glm_smart_llm, glm_4_flash_llm)
 
-    @timed_node
+    @timed_node(label=lambda state: state["scope"]["original_question"])
     async def rewrite(state: RoutingState) -> dict[str, Any]:
         """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
@@ -110,7 +110,7 @@ def build_routing_graph(
             "scope": {**state["scope"], "resolved_question": question},
         }
 
-    @timed_node
+    @timed_node(label=lambda state: state["resolved_question"])
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = routing_messages(state["resolved_question"])

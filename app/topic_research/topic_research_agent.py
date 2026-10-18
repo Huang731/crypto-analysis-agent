@@ -69,7 +69,7 @@ def make_split(
 ]:  # 创建研究主题拆解节点。
     """把用户主题拆成三个可独立分析的子问题。"""
 
-    @timed_node  # 沿用现有节点耗时和失败日志。
+    @timed_node(label=lambda state: state["question"])  # 沿用现有节点耗时和失败日志。
     @trace_generation_call(name="topic.split", kind="span")
     @retry(
         stop=stop_after_attempt(2),
@@ -192,7 +192,7 @@ def make_researcher(
     """让研究 Agent 搜索、浏览原文，再根据实际工具证据分析子问题。"""
     research_agent = build_research_agent(glm_4_flash_llm)
 
-    @timed_node
+    @timed_node(label=lambda state: state["subquestion"])
     @trace_generation_call(name="topic.researcher", kind="span")
     async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         subquestion = state["subquestion"]
@@ -275,7 +275,7 @@ def make_researcher(
     return researcher
 
 
-@timed_node
+@timed_node(label=lambda state: state["question"])
 def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全部问题。
     return [  # 每个问题交给同一个研究节点独立执行。
         Send(
@@ -302,7 +302,7 @@ def make_summarize(
         }
     )
 
-    @timed_node  # 延续原图的节点观测。
+    @timed_node(label=lambda state: state["question"])  # 延续原图的节点观测。
     @trace_generation_call(name="topic.summarize", kind="span")
     @retry(
         stop=stop_after_attempt(2),
@@ -357,7 +357,9 @@ def make_research_team(
         """记录子图执行过程，模型用量由子图内部的调用记录。"""
         return await sub_graph.ainvoke(state)
 
-    @timed_node  # 记录并行研究整体耗时。
+    @timed_node(
+        label=lambda state: state["scope"]["resolved_question"]
+    )  # 记录并行研究整体耗时。
     @trace_generation_call(name="topic.research_team", kind="span")
     async def research_team(state: SystemState) -> dict[str, Any]:  # 返回摘要和发现。
         question = _latest_question(state["scope"])
@@ -382,7 +384,9 @@ def make_writer(
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告写作节点。
     """依据研究摘要写报告，并处理审稿意见。"""
 
-    @timed_node  # 保留原有写作节点观测。
+    @timed_node(
+        label=lambda state: state["scope"]["resolved_question"]
+    )  # 保留原有写作节点观测。
     @trace_generation_call(name="topic.writer", kind="span")
     @retry(
         stop=stop_after_attempt(2),
@@ -430,7 +434,9 @@ def make_reviewer(
         }
     )
 
-    @timed_node  # 保留审稿耗时日志。
+    @timed_node(
+        label=lambda state: state["scope"]["resolved_question"]
+    )  # 保留审稿耗时日志。
     @trace_generation_call(name="topic.reviewer", kind="span")
     @retry(
         stop=stop_after_attempt(2),
@@ -480,7 +486,7 @@ def make_reviewer(
     return reviewer  # 返回父图审稿节点。
 
 
-@timed_node
+@timed_node(label=lambda state: state["scope"]["resolved_question"])
 def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有条件边。
     if state["review_decision"] == "pass":  # 审稿通过后结束。
         return END  # 返回报告。

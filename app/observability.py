@@ -151,8 +151,8 @@ def timed_node(
     """节点计时装饰器：记录进出 + 耗时。
 
     用法：
-        @timed_node
-        def researcher(state): ...
+        @timed_node(label=lambda state: state["skill_name"])
+        def skill_worker(state): ...
 
     同时支持 sync 和 async 函数（自动检测）。
     """
