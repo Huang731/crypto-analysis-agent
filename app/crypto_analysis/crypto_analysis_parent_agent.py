@@ -166,7 +166,7 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
 
 @trace_generation_call(
     name="crypto_analysis_plan",
-    model=settings.glm_4_flash_model,
+    model=settings.qwen3_5_4b_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -246,7 +246,7 @@ def make_skill_worker(
 
 
 def make_plan(
-    glm_4_flash_llm: BaseChatModel,
+    qwen3_5_4b_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建本轮技能规划节点。"""
 
@@ -257,7 +257,7 @@ def make_plan(
         if not isinstance(question, str) or not question.strip():
             raise ValueError("技能分析缺少有效用户问题")
         selection = await create_analysis_plan(
-            glm_4_flash_llm,
+            qwen3_5_4b_llm,
             question,
             skill_loader.format_skill_descriptions(),
         )
@@ -432,16 +432,18 @@ def make_summarize_history(
 
 
 def build_crypto_analysis_parent_agent(
-    glm_smart_llm: BaseChatModel,
-    bailian_fast_llm: Any,
+    qwen3_5_4b_llm: BaseChatModel,
     retriever: KBRetriever,
-    *,
     glm_4_flash_llm: BaseChatModel,
+    *,
+    glm_smart_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
-    sub_graph = build_crypto_analysis_sub_agent(bailian_fast_llm, retriever)
+    sub_graph = build_crypto_analysis_sub_agent(
+        qwen3_5_4b_llm, retriever, glm_4_flash_llm=glm_4_flash_llm
+    )
     builder = StateGraph(DynamicAnalysisState)
-    builder.add_node("plan", make_plan(glm_4_flash_llm))
+    builder.add_node("plan", make_plan(qwen3_5_4b_llm))
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
     builder.add_node("writer", make_writer(glm_smart_llm))
     builder.add_node("reviewer", make_reviewer(glm_smart_llm))

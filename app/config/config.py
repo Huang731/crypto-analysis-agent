@@ -32,10 +32,15 @@ class Settings(BaseSettings):
         populate_by_name=True,
     )
 
-    # 百炼连接：聊天、视觉、向量与重排共用；密钥只从环境变量或 .env 读取。
+    # 百炼连接：聊天与视觉共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
     bailian_smart_model: str = "qwen3.7-plus"
     bailian_fast_model: str = "qwen3.7-flash-2026-07-15"
+
+    # 向量、重排与 Qwen 聊天模型共用硅基流动密钥。
+    siliconflow_api_key: str = Field(default="", description="硅基流动 API Key")
+    qwen3_5_4b_model: str = "Qwen/Qwen3.5-4B"
+    qwen3_8b_model: str = "Qwen/Qwen3-8B"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
     zhipuai_api_key: str = Field(default="", description="智谱 API Key")
@@ -48,10 +53,15 @@ class Settings(BaseSettings):
         "qwen3.7-plus": {"input": 50.0, "output": 50.0},
         "qwen3.7-flash-2026-07-15": {"input": 0.5, "output": 0.5},
         "text-embedding-v4": {"input": 0.5, "output": 0.0},
+        "text-embedding-v1": {"input": 0.7, "output": 0.0},
         "qwen3.7-text-embedding": {"input": 0.5, "output": 0.0},
         "qwen3.7-text-embedding-flash": {"input": 0.125, "output": 0.0},
+        "BAAI/bge-m3": {"input": 0.0, "output": 0.0},
+        "BAAI/bge-reranker-v2-m3": {"input": 0.0, "output": 0.0},
+        "Qwen/Qwen3.5-4B": {"input": 0.0, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
+        "glm-5.3-Flash": {"input": 0.8, "output": 2.8},
         "glm-4-flash": {"input": 0.0, "output": 0.0},
     }
 
@@ -64,19 +74,17 @@ class Settings(BaseSettings):
     vision_model: str = "qwen3.5-ocr"
 
     # 向量索引：维度必须与模型默认输出一致；更换向量模型后需重新入库。
-    embedding_model: str = "qwen3.7-text-embedding-flash"
+    embedding_model: str = "BAAI/bge-m3"
     embedding_dimensions: int = Field(default=1024, gt=0)
     embed_batch_size: int = Field(default=10, ge=1, le=10)
-    faiss_path: str = str(
-        PROJECT_ROOT / "data" / "faiss" / "qwen3.7-text-embedding-flash-1024"
-    )
+    faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "bge-m3-1024")
 
     # 混合检索：先融合 BM25 与向量召回结果，再由重排模型选出最终材料。
     retrieve_k: int = 8
     final_k: int = 2
     bm25_weight: float = 0.4
     vector_weight: float = 0.6
-    rerank_model: str = "gte-rerank-v2"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
     # 多查询会增加改写调用；并发上限约束单个共享检索实例的正在执行任务。
     enable_multi_query: bool = False
     retrieval_max_concurrency: int = Field(default=3, ge=1)

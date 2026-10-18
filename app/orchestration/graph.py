@@ -81,29 +81,31 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
 
 
 def build_routing_graph(
-    bailian_smart_llm: BaseChatModel,
-    bailian_fast_llm: BaseChatModel,
+    qwen3_5_4b_llm: BaseChatModel,
     retriever: KBRetriever,
     *,
     checkpointer: BaseCheckpointSaver,
-    glm_smart_llm: BaseChatModel,
     glm_4_flash_llm: BaseChatModel,
+    glm_smart_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
     crypto_agent = build_crypto_analysis_parent_agent(
+        qwen3_5_4b_llm,
+        retriever,
+        glm_4_flash_llm,
         glm_smart_llm=glm_smart_llm,
-        bailian_fast_llm=bailian_fast_llm,
-        retriever=retriever,
-        glm_4_flash_llm=glm_4_flash_llm,
     )
-    topic_agent = build_topic_research_agent(glm_smart_llm, glm_4_flash_llm)
+    topic_agent = build_topic_research_agent(
+        glm_4_flash_llm,
+        glm_smart_llm=glm_smart_llm,
+    )
 
     @timed_node(label=lambda state: state["scope"]["original_question"])
     async def rewrite(state: RoutingState) -> dict[str, Any]:
         """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
         question = await rewrite_question(
-            glm_smart_llm, original, state.get("previous_question", "")
+            qwen3_5_4b_llm, original, state.get("previous_question", "")
         )
         return {
             "resolved_question": question,

@@ -25,7 +25,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     create_analysis_plan,
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
-from app.llm.model import make_glm_4_flash_llm, model_session
+from app.llm.model import make_qwen3_5_4b_llm, model_session
 from prompts.crypto_analysis_plan import analysis_plan_messages
 
 
@@ -117,7 +117,7 @@ async def evaluate_plan(
                 analysis_plan_messages(skill_descriptions, question.resolved_question)
             ),
         },
-        metadata={"model": settings.glm_4_flash_model},
+        metadata={"model": settings.qwen3_5_4b_model},
     ) as observation:
         try:
             result = await create_analysis_plan(
@@ -287,7 +287,7 @@ def main() -> None:
                 PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_parent_agent.py"
             ).read_bytes()
         ).hexdigest(),
-        "model": settings.glm_4_flash_model,
+        "model": settings.qwen3_5_4b_model,
         "repetitions": str(args.repetitions),
         "case_count": str(len(cases)),
         "model_timeout_seconds": "120",
@@ -306,7 +306,7 @@ def main() -> None:
         """每次只调用生产规划函数，模型连接由本项独立持有。"""
         question = PlanningInput.model_validate(item.input)
         async with model_session() as transport:
-            llm = make_glm_4_flash_llm(async_client=transport)
+            llm = make_qwen3_5_4b_llm(async_client=transport)
             output = await evaluate_plan(llm, client, question, skill_descriptions)
         rows.append(
             {

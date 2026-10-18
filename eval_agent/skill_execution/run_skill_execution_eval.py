@@ -43,6 +43,8 @@ from app.llm.model import (
     _make_bailian_llm,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
+    make_glm_4_flash_llm,
+    make_qwen3_5_4b_llm,
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -391,7 +393,11 @@ async def evaluate_skill(
     replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
     async with model_session() as http_client:
-        if inputs.metric_agent.model == settings.bailian_fast_model:
+        if inputs.metric_agent.model == settings.glm_4_flash_model:
+            llm = make_glm_4_flash_llm(async_client=http_client)
+        elif inputs.metric_agent.model == settings.qwen3_5_4b_model:
+            llm = make_qwen3_5_4b_llm(async_client=http_client)
+        elif inputs.metric_agent.model == settings.bailian_fast_model:
             llm = make_bailian_fast_llm(async_client=http_client)
         elif inputs.metric_agent.model == settings.bailian_smart_model:
             llm = make_bailian_smart_llm(async_client=http_client)

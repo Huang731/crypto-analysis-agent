@@ -10,7 +10,7 @@ services:
       - .env
     environment:
       DOCS_DIR: /app/data/docs
-      FAISS_PATH: /app/data/faiss/text-embedding-v4-1024
+      FAISS_PATH: /app/data/faiss/bge-m3-1024
       CHECKPOINT_DB_PATH: /app/data/checkpoints.sqlite
       SKILLS_DIR: /app/skills
       BROWSER_HEADLESS: "true"

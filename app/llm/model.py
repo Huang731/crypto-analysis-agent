@@ -1,4 +1,4 @@
-"""统一模型创建、调用策略与百炼协议适配。"""
+"""统一模型创建、调用策略与服务商协议适配。"""
 
 from __future__ import annotations
 
@@ -15,18 +15,17 @@ import truststore
 from dashscope import (
     Generation,
     MultiModalConversation,
-    TextEmbedding,
-    TextReRank,
 )
 from httpx_sse import aconnect_sse
 from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, merge_message_runs
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableBinding, RunnableConfig
 from langchain_openai import ChatOpenAI
+from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr
 
 from app.config.config import settings
@@ -89,6 +88,44 @@ def make_bailian_fast_llm(
     )
 
 
+def make_qwen3_5_4b_llm(
+    *,
+    async_client: httpx.AsyncClient | None = None,
+    enable_thinking: bool = False,
+) -> ChatOpenAI:
+    """按节点配置 Qwen3.5-4B 的思考开关，温度统一为 0.1。"""
+    return ChatOpenAI(
+        model=settings.qwen3_5_4b_model,
+        api_key=_siliconflow_api_key,
+        base_url="https://api.siliconflow.cn/v1",
+        temperature=0.1,
+        extra_body={"enable_thinking": enable_thinking, "max_tokens": 8192},
+        use_responses_api=False,
+        stream_usage=True,
+        http_async_client=async_client,
+    )
+
+
+def make_qwen3_8b_llm(
+    *,
+    async_client: httpx.AsyncClient | None = None,
+    enable_thinking: bool = False,
+) -> ChatOpenAI:
+    """创建 Qwen3-8B，按节点配置思考开关，温度统一为 0.1。"""
+    return ChatOpenAI(
+        model=settings.qwen3_8b_model,
+        api_key=_siliconflow_api_key,
+        base_url="https://api.siliconflow.cn/v1",
+        temperature=0.1,
+        timeout=120.0,
+        max_retries=1,
+        extra_body={"enable_thinking": enable_thinking, "max_tokens": 8192},
+        use_responses_api=False,
+        stream_usage=True,
+        http_async_client=async_client,
+    )
+
+
 def _zhipuai_api_key() -> str:
     """请求智谱前校验密钥，避免未配置主题研究时阻断其他功能启动。"""
     key = settings.zhipuai_api_key.strip()
@@ -98,7 +135,9 @@ def _zhipuai_api_key() -> str:
 
 
 def _make_zhipuai_llm(
-    model_name: str, *, async_client: httpx.AsyncClient | None = None
+    model_name: str,
+    *,
+    async_client: httpx.AsyncClient | None = None,
 ) -> ChatOpenAI:
     """主题研究直连智谱，保留请求超时，重试由业务调用方负责。"""
     return ChatOpenAI(
@@ -114,7 +153,7 @@ def _make_zhipuai_llm(
 
 
 def make_glm_smart_llm(*, async_client: httpx.AsyncClient | None = None) -> ChatOpenAI:
-    """创建主题研究的汇总、写作和审稿模型，思考配置由节点绑定。"""
+    """创建配置指定的智谱智能模型，沿用模型默认思考配置。"""
     return _make_zhipuai_llm(settings.glm_smart_model, async_client=async_client)
 
 
@@ -158,7 +197,14 @@ async def ainvoke_structured(
     request_messages = messages
     if isinstance(model, ChatOpenAI):
         structured = model.with_structured_output(schema, method="json_mode")
-        request_messages = [structured_output_instruction(schema), *messages]
+        # 硅基要求只有一条开头系统消息，合并格式要求并保留后续原始消息。
+        request_messages = [
+            *merge_message_runs(
+                [structured_output_instruction(schema), *messages[:1]],
+                chunk_separator="\n\n",
+            ),
+            *messages[1:],
+        ]
     else:
         structured = model.with_structured_output(
             schema, method="function_calling", tool_choice="required"
@@ -447,17 +493,25 @@ class LoggedChatTongyi(ChatTongyi):
 # 向量与重排
 
 
-def get_embeddings() -> BailianEmbeddings:
-    """统一向量模型入口，不改变现有 FAISS 维度及索引目录。"""
-    return BailianEmbeddings(
+def _siliconflow_api_key() -> str:
+    """硅基流动请求共用环境密钥，未配置时直接报错。"""
+    key = settings.siliconflow_api_key.strip()
+    if not key:
+        raise ValueError("未配置 SILICONFLOW_API_KEY")
+    return key
+
+
+def get_embeddings() -> SiliconFlowEmbeddings:
+    """创建硅基流动向量适配器，索引维度及目录沿用配置。"""
+    return SiliconFlowEmbeddings(
         model=settings.embedding_model,
-        api_key=SecretStr(_api_key()),
-        base_address="https://dashscope.aliyuncs.com/api/v1",
+        api_key=SecretStr(_siliconflow_api_key()),
+        base_address="https://api.siliconflow.cn/v1",
     )
 
 
-class BailianEmbeddings(BaseModel, Embeddings):
-    """保留向量模型及默认维度，每次显式传入密钥、地址和超时。"""
+class SiliconFlowEmbeddings(BaseModel, Embeddings):
+    """保留分批、排序及数量校验，通过兼容接口获取文本向量。"""
 
     model: str
     api_key: SecretStr = Field(repr=False)
@@ -467,45 +521,50 @@ class BailianEmbeddings(BaseModel, Embeddings):
         vectors: list[list[float]] = []
         for start in range(0, len(texts), settings.embed_batch_size):
             vectors.extend(
-                self._embed(
-                    texts[start : start + settings.embed_batch_size], "document"
-                )
+                self._embed(texts[start : start + settings.embed_batch_size])
             )
         return vectors
 
     def embed_query(self, text: str) -> list[float]:
-        return self._embed([text], "query")[0]
+        return self._embed([text])[0]
 
-    def _embed(self, texts: list[str], text_type: str) -> list[list[float]]:
-        response = _check_response(
-            TextEmbedding.call(
+    def _embed(self, texts: list[str]) -> list[list[float]]:
+        with OpenAI(
+            api_key=self.api_key.get_secret_value(),
+            base_url=self.base_address,
+            timeout=120.0,
+            max_retries=1,
+        ) as client:
+            response = client.embeddings.create(
                 model=self.model,
-                api_key=self.api_key.get_secret_value(),
-                base_address=self.base_address,
-                request_timeout=120.0,
                 input=texts,
-                text_type=text_type,
-            ),
-        )
-        items = sorted(
-            response.output["embeddings"], key=lambda item: item["text_index"]
-        )
+                encoding_format="float",
+            )
+        items = sorted(response.data, key=lambda item: item.index)
         if len(items) != len(texts):
-            raise ValueError("百炼向量返回数量与输入数量不一致")
-        return [item["embedding"] for item in items]
+            raise ValueError("硅基流动向量返回数量与输入数量不一致")
+        vectors = [item.embedding for item in items]
+        if any(len(vector) != settings.embedding_dimensions for vector in vectors):
+            raise ValueError("硅基流动向量返回维度与配置不一致")
+        return vectors
 
 
-def rerank(query: str, documents: list[str]) -> Any:
+def rerank(query: str, documents: list[str]) -> dict[str, Any]:
     """只封装重排模型请求，文档排序与元数据合并由检索层保留。"""
-    return _check_response(
-        TextReRank.call(
-            api_key=_api_key(),
-            base_address="https://dashscope.aliyuncs.com/api/v1",
-            request_timeout=120.0,
-            model=settings.rerank_model,
-            query=query,
-            documents=documents,
-            top_n=len(documents),
-            return_documents=False,
-        ),
-    )
+    with OpenAI(
+        api_key=_siliconflow_api_key(),
+        base_url="https://api.siliconflow.cn/v1",
+        timeout=120.0,
+        max_retries=1,
+    ) as client:
+        return client.post(
+            "/rerank",
+            cast_to=dict[str, Any],
+            body={
+                "model": settings.rerank_model,
+                "query": query,
+                "documents": documents,
+                "top_n": len(documents),
+                "return_documents": False,
+            },
+        )

@@ -160,7 +160,8 @@ async def evaluate(
             async with model_session() as http:
                 review = await asyncio.wait_for(
                     _invoke_report_review(
-                        make_glm_smart_llm(async_client=http), case.input.to_messages()
+                        make_glm_smart_llm(async_client=http),
+                        case.input.to_messages(),
                     ),
                     timeout=250,
                 )

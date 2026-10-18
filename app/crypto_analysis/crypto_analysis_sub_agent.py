@@ -140,7 +140,7 @@ async def _retrieve_thought_context(
 
 @trace_generation_call(
     name="crypto_skill_output",
-    model=settings.bailian_fast_model,
+    model=settings.qwen3_5_4b_model,
     input_arg="messages",
     input_format="messages",
     kind="generation",
@@ -152,7 +152,7 @@ async def _retrieve_thought_context(
 )
 async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> str:
     """沿用技能文本校验与重试，用量统一由装饰器记录。"""
-    # 表格生成使用执行模型，沿用模型工厂的思考配置。
+    # 表格生成使用独立的非思考模型，保留原有超时和内容校验。
     response = await ainvoke_model(llm, messages, timeout=120)
     content = response.content.strip()
     if not content:
@@ -195,7 +195,7 @@ class MetricModelTrace(AgentMiddleware):
 
     @trace_generation_call(
         name="crypto_metric_decision",
-        model=settings.bailian_fast_model,
+        model=lambda arguments: arguments.arguments["request"].model.model_name,
         input_arg="request",
         input_format="model_request",
         output_attr="result",
@@ -299,7 +299,7 @@ async def _invoke_metric_agent(
 
 
 def make_calculate_metrics(
-    bailian_fast_llm: Any,
+    glm_4_flash_llm: Any,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
 
@@ -312,7 +312,7 @@ def make_calculate_metrics(
             for name in state["skill"].tools
         ]
         agent = create_agent(
-            model=bailian_fast_llm,
+            model=glm_4_flash_llm,
             tools=tools,
             system_prompt=metric_agent_system_prompt(),
             state_schema=MetricAgentState,
@@ -383,7 +383,7 @@ def route_metrics(
 
 
 def make_skill_content(
-    bailian_fast_llm: Any, retriever: KBRetriever
+    qwen3_5_4b_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """创建思想检索及指标表格生成节点。"""
 
@@ -410,7 +410,7 @@ def make_skill_content(
             indicators=indicators,
         )
         # 技能内容直接使用 Markdown 正文，避免外层 JSON 转义。
-        content = await _invoke_skill_output(bailian_fast_llm, messages)
+        content = await _invoke_skill_output(qwen3_5_4b_llm, messages)
         update = {
             "skill_result": {
                 "skill_name": skill.name,
@@ -461,14 +461,14 @@ def make_finalize_skill() -> Callable[
 
 
 def build_crypto_analysis_sub_agent(
-    bailian_fast_llm: Any, retriever: KBRetriever
+    qwen3_5_4b_llm: Any, retriever: KBRetriever, *, glm_4_flash_llm: Any
 ) -> CompiledStateGraph:
     """组装缓存分支、指标执行循环和技能内容生成子图。"""
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
-    graph.add_node("calculate_metrics", make_calculate_metrics(bailian_fast_llm))
+    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_flash_llm))
     graph.add_node("check_metrics", make_check_metrics())
-    graph.add_node("skill_content", make_skill_content(bailian_fast_llm, retriever))
+    graph.add_node("skill_content", make_skill_content(qwen3_5_4b_llm, retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(

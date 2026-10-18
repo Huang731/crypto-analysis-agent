@@ -29,10 +29,9 @@ from api.schemas import AskRequest
 from app.config.config import settings
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
 from app.llm.model import (
-    make_bailian_fast_llm,
-    make_bailian_smart_llm,
     make_glm_4_flash_llm,
     make_glm_smart_llm,
+    make_qwen3_5_4b_llm,
     model_session,
 )
 from app.observability import (
@@ -112,17 +111,15 @@ def _build_routing_service(
     checkpointer: BaseCheckpointSaver,
     model_client: AsyncClient,
 ) -> RoutingService:
-    """集中组装两组模型，复用同一连接并显式注入路由图。"""
-    bailian_smart_llm = make_bailian_smart_llm(async_client=model_client)
-    bailian_fast_llm = make_bailian_fast_llm(async_client=model_client)
-    glm_smart_llm = make_glm_smart_llm(async_client=model_client)
+    """集中组装各节点模型，复用同一连接并显式注入路由图。"""
     glm_4_flash_llm = make_glm_4_flash_llm(async_client=model_client)
+    qwen3_5_4b_llm = make_qwen3_5_4b_llm(async_client=model_client)
+    glm_smart_llm = make_glm_smart_llm(async_client=model_client)
     graph = build_routing_graph(
-        bailian_smart_llm=bailian_smart_llm,
-        bailian_fast_llm=bailian_fast_llm,
+        qwen3_5_4b_llm=qwen3_5_4b_llm,
+        glm_smart_llm=glm_smart_llm,
         retriever=retriever,
         checkpointer=checkpointer,
-        glm_smart_llm=glm_smart_llm,
         glm_4_flash_llm=glm_4_flash_llm,
     )
     return RoutingService(graph)

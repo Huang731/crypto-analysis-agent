@@ -12,13 +12,13 @@ from prompts.query_rewriter import query_rewriter_messages
 
 
 async def rewrite_question(
-    glm_smart_llm: BaseChatModel,
+    qwen3_5_4b_llm: BaseChatModel,
     question: str,
     previous_question: str,
 ) -> str:
     """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = query_rewriter_messages(question, previous_question)
-    rewritten = await _rewrite_messages(glm_smart_llm, messages)
+    rewritten = await _rewrite_messages(qwen3_5_4b_llm, messages)
     if settings.rewrite_capture_enabled:
         append_node_candidate(
             node="rewrite",
@@ -31,7 +31,7 @@ async def rewrite_question(
 
 @trace_generation_call(
     name="question_rewriter",
-    model=settings.glm_smart_model,
+    model=settings.qwen3_5_4b_model,
     input_arg="messages",
     input_format="messages",
     kind="generation",
@@ -42,12 +42,11 @@ async def rewrite_question(
     reraise=True,
 )
 async def _rewrite_messages(
-    glm_smart_llm: BaseChatModel, messages: list[BaseMessage]
+    qwen3_5_4b_llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    # 仅问题改写关闭深度思考，不修改共享模型配置。
-    rewrite_llm = glm_smart_llm.bind(extra_body={"thinking": {"type": "disabled"}})
-    response = await ainvoke_model(rewrite_llm, messages, timeout=120)
+    # 使用工厂创建的非思考实例，保留原有超时和文本校验。
+    response = await ainvoke_model(qwen3_5_4b_llm, messages, timeout=120)
     rewritten = response.content.strip()
     if not rewritten:
         raise ValueError("问题改写模型返回了空文本")

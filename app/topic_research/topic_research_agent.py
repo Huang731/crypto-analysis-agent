@@ -291,16 +291,9 @@ def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全
 
 
 def make_summarize(
-    glm_smart_llm: Any,
+    glm_4_flash_llm: Any,
 ) -> Callable[[AnalysisState], Awaitable[dict[str, str]]]:  # 创建全部发现的汇总节点。
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
-
-    # 仅本节点关闭深度思考，不修改共享模型的配置。
-    glm_smart_llm = glm_smart_llm.bind(
-        extra_body={
-            "thinking": {"type": "disabled"},
-        }
-    )
 
     @timed_node(label=lambda state: state["question"])  # 延续原图的节点观测。
     @trace_generation_call(name="topic.summarize", kind="span")
@@ -317,10 +310,10 @@ def make_summarize(
             json.dumps(findings, ensure_ascii=False)
         )  # 提供全部并行结果。
         response = await _invoke_traced_model(
-            glm_smart_llm,
+            glm_4_flash_llm,
             messages,
             "topic_summarize",
-            settings.glm_smart_model,
+            settings.glm_4_flash_model,
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()
@@ -332,12 +325,12 @@ def make_summarize(
 
 
 def build_analysis_sub_graph(
-    glm_smart_llm: Any, glm_4_flash_llm: Any
+    glm_4_flash_llm: Any,
 ) -> CompiledStateGraph:  # 保留原有拆题并行汇总子图。
     graph = StateGraph(AnalysisState)  # 创建研究子图。
     graph.add_node("split", make_split(glm_4_flash_llm))  # 先拆分研究主题。
     graph.add_node("researcher", make_researcher(glm_4_flash_llm))  # 并行分析各子问题。
-    graph.add_node("summarize", make_summarize(glm_smart_llm))  # 汇总全部发现。
+    graph.add_node("summarize", make_summarize(glm_4_flash_llm))  # 汇总全部发现。
     graph.add_edge(START, "split")  # 从拆题进入子图。
     graph.add_conditional_edges("split", send_subquestions)  # 使用 Send 分派三个任务。
     graph.add_edge("researcher", "summarize")  # 等待并行研究结束后汇总。
@@ -402,14 +395,11 @@ def make_writer(
             feedback,
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 首轮反馈为空，重写时提供具体意见。
-        # 仅本节点关闭深度思考，不修改共享模型的配置。
-        writer_llm = glm_smart_llm.bind(
-            extra_body={
-                "thinking": {"type": "disabled"},
-            }
-        )
         response = await _invoke_traced_model(
-            writer_llm, messages, "topic_writer", settings.glm_smart_model
+            glm_smart_llm,
+            messages,
+            "topic_writer",
+            settings.glm_smart_model,
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()
@@ -426,13 +416,6 @@ def make_reviewer(
     glm_smart_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
-
-    # 仅本节点关闭深度思考，不修改共享模型的配置。
-    glm_smart_llm = glm_smart_llm.bind(
-        extra_body={
-            "thinking": {"type": "disabled"},
-        }
-    )
 
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
@@ -494,12 +477,12 @@ def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有�
 
 
 def build_topic_research_agent(
-    glm_smart_llm: Any, glm_4_flash_llm: Any
+    glm_4_flash_llm: Any,
+    *,
+    glm_smart_llm: Any,
 ) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
     """把主题研究子图封装为 路由 可调用的 Agent。"""
-    sub_graph = build_analysis_sub_graph(
-        glm_smart_llm, glm_4_flash_llm
-    )  # 复用拆题并行汇总设计。
+    sub_graph = build_analysis_sub_graph(glm_4_flash_llm)  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
     builder.add_node("writer", make_writer(glm_smart_llm))  # 报告写作节点。

@@ -72,19 +72,21 @@ def build_hybrid_retriever() -> BaseRetriever:
 @trace_generation_call(
     name="rag.rerank",
     model=settings.rerank_model,
-    usage_attr="usage.total_tokens",
+    input_arg="docs",
+    input_format="documents",
+    output_format="none",
     metadata=lambda arguments: {"candidate_count": len(arguments.arguments["docs"])},
     generation_arg="generation",
     kind="generation",
 )
 def _call_rerank(query: str, docs: list[Document], *, generation: Any) -> Any:
-    """保留重排返回值检查，用量直接采用接口返回的总输入 token。"""
+    """保留重排返回值检查，用量按候选文档估算，不依赖可选的计费字段。"""
     try:
         resp = rerank(query, [doc.page_content for doc in docs])
     except Exception:
         generation.metadata["status"] = "error"
         raise
-    generation.output = {"result_count": len(resp.output.results)}
+    generation.output = {"result_count": len(resp["results"])}
     return resp
 
 
@@ -93,7 +95,7 @@ def rerank_documents(
     docs: list[Document],
     top_n: int | None = None,
 ) -> list[Document]:
-    """使用百炼重排候选文档，保留文档 ID 和元数据并附加相关性分数。"""
+    """使用硅基流动重排候选文档，保留文档 ID 和元数据并附加相关性分数。"""
     with trace_span("rag.rerank.documents") as node_span:
         try:
             top_n = settings.final_k if top_n is None else top_n
@@ -104,23 +106,20 @@ def rerank_documents(
             if len(docs) <= 1:
                 return docs[:top_n]
 
-            if not settings.dashscope_api_key:
-                raise ValueError("百炼重排需要配置 DASHSCOPE_API_KEY")
-
             resp = _call_rerank(query, docs)
-            results = resp.output.results
-            ordered = sorted(results, key=lambda r: (-r.relevance_score, r.index))[
-                :top_n
-            ]
+            results = resp["results"]
+            ordered = sorted(
+                results, key=lambda r: (-r["relevance_score"], r["index"])
+            )[:top_n]
 
             # 不可变：不改原 Document，构造新对象带上 rerank_score
             return [
                 Document(
-                    id=docs[r.index].id,
-                    page_content=docs[r.index].page_content,
+                    id=docs[r["index"]].id,
+                    page_content=docs[r["index"]].page_content,
                     metadata={
-                        **docs[r.index].metadata,
-                        "rerank_score": r.relevance_score,
+                        **docs[r["index"]].metadata,
+                        "rerank_score": r["relevance_score"],
                     },
                 )
                 for r in ordered
@@ -133,7 +132,7 @@ def rerank_documents(
 class KBRetriever:
     """检索层门面：建一次索引，答多次问题（BM25 建索引有成本，不能每问重建）。
 
-    rerank —— 混合检索 + 百炼重排。
+    rerank —— 混合检索 + 硅基流动重排。
     """
 
     MODES = ("vector", "hybrid", "rerank")
