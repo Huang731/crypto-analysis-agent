@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     skill_content_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "skill_content_candidates.jsonl"
     )
+    thought_retrieval_capture_enabled: bool = True
+    thought_retrieval_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "candidates"
+        / "thought_retrieval_candidates.jsonl"
+    )
     writer_capture_enabled: bool = True
     writer_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "writer_candidates.jsonl"

@@ -17,6 +17,7 @@ from langchain_core.messages import (
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
+from pydantic import BaseModel, ConfigDict, Field
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.candidate_capture import append_node_candidate
@@ -34,7 +35,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_model
+from app.llm.model import ainvoke_structured
 from app.observability import get_logger, log_event, timed_node
 from app.rag.retriever import KBRetriever
 from app.tracing import trace_generation_call, trace_span
@@ -44,7 +45,6 @@ from prompts.crypto_analysis_calculate_metrics import (
 )
 from prompts.crypto_analysis_skill_content import (
     skill_output_messages,
-    thought_retrieval_prompt,
 )
 
 # 技能结果聚合、内容生成与缓存
@@ -101,41 +101,56 @@ def aggregate_skill_results(
 
 
 async def _retrieve_thought_context(
-    retriever: KBRetriever, skill: LoadedSkill, target_asset: str
+    retriever: KBRetriever, query: str
 ) -> dict[str, Any]:
-    """检索技能理论材料，检索失败仍保留指标并记录明确的失败状态。"""
-    scoring = skill.scoring
-    query = thought_retrieval_prompt(
-        target_asset,
-        scoring.name,
-        [metric.label for metric in scoring.metrics],
-    )
-    with trace_span("analysis.skill.thought_retrieval", skill_name=skill.name) as span:
+    """用生成的检索问题查找理论材料，检索失败仍保留指标与失败状态。"""
+    with trace_span("analysis.skill.thought_retrieval", query=query) as span:
         try:
             documents = await retriever.aretrieve(query)
         except Exception:  # noqa: BLE001 - 沿用原检索错误处理，不替换已计算指标。
             span.metadata["status"] = "error"
             log_event(
                 get_logger("crypto_analysis.skill_worker"),
-                f"思想材料检索失败：{skill.name}",
+                "思想材料检索失败",
                 exception=format_exc(),
-                skill_name=skill.name,
+                query=query,
             )
-            return {"query": query, "status": "error", "documents": []}
-        # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
-        span.output = {"document_count": len(documents)}
-        return {
-            "query": query,
-            "status": "ok" if documents else "no_results",
-            "documents": [
-                {
-                    "id": doc.id,
-                    "content": doc.page_content,
-                    "metadata": doc.metadata,
-                }
-                for doc in documents
-            ],
-        }
+            result = {"query": query, "status": "error", "documents": []}
+        else:
+            # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
+            span.output = {"document_count": len(documents)}
+            result = {
+                "query": query,
+                "status": "ok" if documents else "no_results",
+                "documents": [
+                    {
+                        "id": doc.id,
+                        "content": doc.page_content,
+                        "metadata": doc.metadata,
+                    }
+                    for doc in documents
+                ],
+            }
+        if settings.thought_retrieval_capture_enabled:
+            append_node_candidate(
+                node="thought_retrieval",
+                input=query,
+                actual_output=result,
+                path=settings.thought_retrieval_capture_path,
+            )
+        return result
+
+
+class SkillOutput(BaseModel):
+    """同次调用生成指标表格和对应的理论检索问题。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    content: str = Field(min_length=1, description="完整的中文 Markdown 指标表格")
+    retrieval_query: str = Field(
+        min_length=1,
+        max_length=300,
+        description="依据表格指标状态提炼的一条理论检索问题，不提前给出结论",
+    )
 
 
 @trace_generation_call(
@@ -143,6 +158,7 @@ async def _retrieve_thought_context(
     model=settings.qwen3_5_4b_model,
     input_arg="messages",
     input_format="messages",
+    output_format="json",
     kind="generation",
 )
 @retry(
@@ -150,14 +166,10 @@ async def _retrieve_thought_context(
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
-async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> str:
-    """沿用技能文本校验与重试，用量统一由装饰器记录。"""
+async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> SkillOutput:
+    """结构化解析表格和检索问题，保留超时、校验重试与用量追踪。"""
     # 表格生成使用独立的非思考模型，保留原有超时和内容校验。
-    response = await ainvoke_model(llm, messages, timeout=120)
-    content = response.content.strip()
-    if not content:
-        raise ValueError("技能内容不能为空")
-    return content
+    return await ainvoke_structured(llm, messages, schema=SkillOutput, timeout=120)
 
 
 def skill_worker_step_limit(metric_count: int) -> int:
@@ -385,7 +397,7 @@ def route_metrics(
 def make_skill_content(
     qwen3_5_4b_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
-    """创建思想检索及指标表格生成节点。"""
+    """生成指标表格与检索问题，再检索对应思想材料。"""
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
@@ -395,9 +407,6 @@ def make_skill_content(
             "加密市场"
             if key.asset_scope == "GLOBAL"
             else state["scope"]["target_asset"]
-        )
-        thought_context = _select_thought_context(
-            await _retrieve_thought_context(retriever, skill, analysis_subject)
         )
         indicators = [
             {**item, "field_labels": metric_field_labels(item["indicator_id"])}
@@ -409,13 +418,15 @@ def make_skill_content(
             skill_name=skill.name,
             indicators=indicators,
         )
-        # 技能内容直接使用 Markdown 正文，避免外层 JSON 转义。
-        content = await _invoke_skill_output(qwen3_5_4b_llm, messages)
+        output = await _invoke_skill_output(qwen3_5_4b_llm, messages)
+        thought_context = _select_thought_context(
+            await _retrieve_thought_context(retriever, output.retrieval_query)
+        )
         update = {
             "skill_result": {
                 "skill_name": skill.name,
                 "name": skill.scoring.name,
-                "content": content,
+                "content": output.content,
                 "thought_context": thought_context,
                 "cache_hit": False,
             }
@@ -424,7 +435,7 @@ def make_skill_content(
             append_node_candidate(
                 node="skill_content",
                 input=messages_to_dict(messages),
-                actual_output=content,
+                actual_output=output.model_dump(),
                 path=settings.skill_content_capture_path,
             )
         return update

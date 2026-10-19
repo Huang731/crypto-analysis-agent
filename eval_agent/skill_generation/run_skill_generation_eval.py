@@ -397,6 +397,7 @@ async def evaluate(
     output: dict[str, Any] = {
         "execution_status": "error",
         "response": None,
+        "retrieval_query": None,
         "judgment": None,
         "faithfulness": None,
         "answer_relevancy": None,
@@ -438,7 +439,7 @@ async def evaluate(
                         for item in inputs.result.indicators
                         if item.status == "ok"
                     ]
-                    response = await asyncio.wait_for(
+                    generated = await asyncio.wait_for(
                         _invoke_skill_output(
                             generator.with_config(callbacks=[generation_counter]),
                             skill_output_messages(
@@ -449,6 +450,8 @@ async def evaluate(
                         ),
                         timeout=300,
                     )
+                    response = generated.content
+                    output["retrieval_query"] = generated.retrieval_query
                 else:
                     response = inputs.fixed_response
                 output["generation_duration_ms"] = (

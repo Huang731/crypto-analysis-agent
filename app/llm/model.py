@@ -21,7 +21,7 @@ from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage, merge_message_runs
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableBinding, RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -197,13 +197,10 @@ async def ainvoke_structured(
     request_messages = messages
     if isinstance(model, ChatOpenAI):
         structured = model.with_structured_output(schema, method="json_mode")
-        # 硅基要求只有一条开头系统消息，合并格式要求并保留后续原始消息。
+        # 格式要求放在末尾的用户消息中，保留原始消息且不增加系统消息。
         request_messages = [
-            *merge_message_runs(
-                [structured_output_instruction(schema), *messages[:1]],
-                chunk_separator="\n\n",
-            ),
-            *messages[1:],
+            *messages,
+            HumanMessage(content=structured_output_instruction(schema).content),
         ]
     else:
         structured = model.with_structured_output(
