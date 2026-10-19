@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from api.schemas import AskRequest
-from app.observability import get_logger, log_event
-from app.tracing import trace_span
+from app.core.observability import get_logger, log_event
+from app.core.tracing import trace_span
 
 
 def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, str]:

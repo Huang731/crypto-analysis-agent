@@ -19,7 +19,7 @@ from ragas import Dataset, experiment
 from ragas.backends import InMemoryBackend
 from ragas.metrics.collections import ContextPrecision, ContextRecall
 
-from app.config.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, settings
 from app.llm.model import model_session
 from app.rag.generate import stream_answer
 from app.rag.retriever import KBRetriever
@@ -134,7 +134,7 @@ def run_eval(golden: list[dict[str, Any]]) -> dict[str, Any]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="RAGAS 四指标评测")
     parser.add_argument(
-        "--out", default=str(PROJECT_ROOT / "outputs/rag_eval/results.json")
+        "--out", default=str(PROJECT_ROOT / "eval_agent/outputs/rag_eval/results.json")
     )
     args = parser.parse_args()
 

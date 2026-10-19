@@ -5,16 +5,16 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar, Literal
 
-from functools import lru_cache
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.config.config import settings
+from app.core.config import settings
+from app.core.observability import get_logger
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.observability import get_logger
 
 log = get_logger("skills")
 
@@ -302,6 +302,7 @@ class SkillLoader:
             if content:
                 parts.append(f"── 技能 {name} ──\n{content}")
         return "\n\n".join(parts)
+
 
 @lru_cache(maxsize=1)
 def get_skill_loader() -> SkillLoader:

@@ -264,7 +264,8 @@ htmlcov/
 *.tar.gz
 
 # 本地评测候选数据
-/eval_agent/candidates/
+/eval_agent/candidates/*
+!/eval_agent/candidates/archive/
 
 # 本地运行及评测输出
-/outputs/
+/eval_agent/outputs/

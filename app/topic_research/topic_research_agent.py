@@ -22,18 +22,22 @@ from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图
 from langgraph.types import Send  # 并行分派研究子问题。
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.browser_tool import BrowserContext, BrowserTool, build_browser_tools
-from app.config.config import settings  # 读取模型配置用于成本估算。
+from app.core.config import settings  # 读取模型配置用于成本估算。
+from app.core.observability import timed_node  # 保留节点耗时观测。
+from app.core.tracing import trace_generation_call
 from app.llm.model import ainvoke_model
-from app.observability import timed_node  # 保留节点耗时观测。
+from app.topic_research.tools.browser_tool import (
+    BrowserContext,
+    BrowserTool,
+    build_browser_tools,
+)
+from app.topic_research.tools.web_search_tool import build_web_search_tools
 from app.topic_research.topic_research_state import (  # 使用主题研究专属状态。
     RESEARCH_EVIDENCE_TARGET,
     AnalysisState,
     ResearchAgentState,
     SystemState,
 )
-from app.tracing import trace_generation_call
-from app.web_search_tool import build_web_search_tools
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
     research_continue_prompt,
     research_messages,

@@ -20,8 +20,10 @@ from langgraph.graph.state import CompiledStateGraph
 from pydantic import BaseModel, ConfigDict, Field
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.candidate_capture import append_node_candidate
-from app.config.config import settings
+from app.core.candidate_capture import append_node_candidate
+from app.core.config import settings
+from app.core.observability import get_logger, log_event, timed_node
+from app.core.tracing import trace_generation_call, trace_span
 from app.crypto_analysis.crypto_analysis_state import (
     MetricAgentContext,
     MetricAgentState,
@@ -36,9 +38,7 @@ from app.crypto_analysis.skill_memory import (
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
 from app.llm.model import ainvoke_structured
-from app.observability import get_logger, log_event, timed_node
 from app.rag.retriever import KBRetriever
-from app.tracing import trace_generation_call, trace_span
 from prompts.crypto_analysis_calculate_metrics import (
     metric_agent_system_prompt,
     metric_execution_prompt,

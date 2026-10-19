@@ -29,7 +29,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-from app.config.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
 from app.crypto_analysis.crypto_analysis_sub_agent import (
     make_calculate_metrics,
@@ -818,7 +818,9 @@ def main() -> None:
     parser.add_argument("--system-certificates", action="store_true")
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("outputs/skill_execution_eval")
+        "--output-dir",
+        type=Path,
+        default=Path("eval_agent/outputs/skill_execution_eval"),
     )
     args = parser.parse_args()
     if args.repetitions < 1 or (args.limit is not None and args.limit < 1):

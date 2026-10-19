@@ -20,7 +20,7 @@ from typing import Literal
 
 import pymupdf as fitz  # PyMuPDF
 
-from app.config.config import settings
+from app.core.config import settings
 
 # 元素类型：文本 / 表格 / 图片。后面每课按这个 type 分类路由。
 ElementType = Literal["text", "table", "image"]

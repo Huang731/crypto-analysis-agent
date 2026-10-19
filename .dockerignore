@@ -25,7 +25,7 @@ venv/
 data/
 logs/
 eval_agent/
-outputs/
+eval_agent/outputs/
 *.tar.gz
 docs/
 tests/

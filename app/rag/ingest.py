@@ -30,10 +30,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.documents import Document
 
-from app.config.config import settings
+from app.core.config import settings
+from app.core.tracing import start_trace, trace_generation_call, trace_span
 from app.llm.model import get_embeddings
 from app.rag.loader import file_md5, list_documents, load_and_split
-from app.tracing import start_trace, trace_generation_call, trace_span
 
 
 @contextmanager

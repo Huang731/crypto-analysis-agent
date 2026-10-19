@@ -17,7 +17,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(__file__).resolve().parents[2]
 _trace_id: ContextVar[str] = ContextVar("crypto_trace_id", default="-")
 _thread_id: ContextVar[str] = ContextVar("crypto_thread_id", default="-")
 

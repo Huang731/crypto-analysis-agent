@@ -18,9 +18,9 @@ from langfuse.api import DatasetItem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.config.config import PROJECT_ROOT, _env_files, settings
+from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_glm_4_flash_llm, model_session
-from app.orchestration.graph import _invoke_route_decision
+from app.routing.graph import _invoke_route_decision
 from prompts.router import routing_messages, routing_prompt
 
 
@@ -227,7 +227,9 @@ def main() -> None:
         action="store_true",
         help="使用操作系统证书信任，仅影响当前评测进程，仍然校验 HTTPS 证书",
     )
-    parser.add_argument("--output-dir", type=Path, default=Path("outputs/routing_eval"))
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("eval_agent/outputs/routing_eval")
+    )
     args = parser.parse_args()
     if args.repetitions < 1 or (args.limit is not None and args.limit < 1):
         parser.error("重复次数和案例数量必须大于零")
@@ -267,7 +269,7 @@ def main() -> None:
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),
         "working_tree_sha256": hashlib.sha256(
-            (PROJECT_ROOT / "app" / "orchestration" / "graph.py").read_bytes()
+            (PROJECT_ROOT / "app" / "routing" / "graph.py").read_bytes()
         ).hexdigest(),
         "model": settings.glm_4_flash_model,
         "repetitions": str(args.repetitions),

@@ -10,17 +10,17 @@ from langgraph.graph.state import CompiledStateGraph
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 from typing_extensions import TypedDict
 
-from app.candidate_capture import append_node_candidate
-from app.config.config import settings
+from app.core.candidate_capture import append_node_candidate
+from app.core.config import settings
+from app.core.observability import timed_node
+from app.core.tracing import trace_generation_call
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
 from app.llm.model import ainvoke_model
-from app.observability import timed_node
-from app.orchestration.query_rewriter import rewrite_question
 from app.rag.retriever import KBRetriever
+from app.routing.query_rewriter import rewrite_question
 from app.topic_research.topic_research_agent import build_topic_research_agent
-from app.tracing import trace_generation_call
 from prompts.router import routing_messages
 
 

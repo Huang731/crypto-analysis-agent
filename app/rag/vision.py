@@ -18,7 +18,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from app.config.config import settings
+from app.core.config import settings
 from app.llm.model import invoke_vision
 from prompts.rag_vision import answer_with_image_prompt, describe_image_prompt
 

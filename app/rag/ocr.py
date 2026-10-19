@@ -132,7 +132,7 @@ def ocr_with_vlm(image_bytes: bytes, page: int = 0) -> OcrResult:
     这里先给占位：如果没 API key 就 raise，让调用方走 mock 路径。
     真实场景下 VLM 对复杂版面（印章遮挡、表格线干扰）比本地 OCR 强。
     """
-    from app.config.config import settings
+    from app.core.config import settings
 
     if not settings.dashscope_api_key:
         raise RuntimeError(

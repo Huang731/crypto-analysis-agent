@@ -26,7 +26,15 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from sse_starlette.sse import EventSourceResponse
 
 from api.schemas import AskRequest
-from app.config.config import settings
+from app.core.config import settings
+from app.core.observability import (
+    bind_request_context,
+    get_logger,
+    log_event,
+    new_trace_id,
+    reset_request_context,
+)
+from app.core.tracing import start_trace
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
 from app.llm.model import (
     make_glm_4_flash_llm,
@@ -34,17 +42,9 @@ from app.llm.model import (
     make_qwen3_5_4b_llm,
     model_session,
 )
-from app.observability import (
-    bind_request_context,
-    get_logger,
-    log_event,
-    new_trace_id,
-    reset_request_context,
-)
-from app.orchestration.graph import build_routing_graph
-from app.orchestration.service import RoutingService
 from app.rag.retriever import KBRetriever
-from app.tracing import start_trace
+from app.routing.graph import build_routing_graph
+from app.routing.service import RoutingService
 
 _INDEX = Path(__file__).resolve().parents[1] / "static" / "index.html"
 # 请求 ID 会写入日志和 checkpoint 的 thread_id，限制字符集与长度防止注入和超长键。

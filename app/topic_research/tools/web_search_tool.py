@@ -13,7 +13,7 @@ from langgraph.types import Command
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.browser_tool import BrowserContext
+from app.topic_research.tools.browser_tool import BrowserContext
 
 SearchFreshness = Literal["noLimit", "oneDay", "oneWeek", "oneMonth", "oneYear"]
 
@@ -22,7 +22,7 @@ class BochaSettings(BaseSettings):
     """从环境变量或项目 .env 读取 Bocha 配置。"""
 
     model_config = SettingsConfigDict(
-        env_file=Path(__file__).resolve().parents[1] / ".env",
+        env_file=Path(__file__).resolve().parents[3] / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )

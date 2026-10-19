@@ -25,8 +25,8 @@ from tenacity import (
 )
 from typing_extensions import Self
 
-from app.config.config import settings
-from app.observability import get_logger, log_event
+from app.core.config import settings
+from app.core.observability import get_logger, log_event
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, Page, Playwright

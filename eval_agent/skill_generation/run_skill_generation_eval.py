@@ -17,7 +17,7 @@ from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.config.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_sub_agent import _invoke_skill_output
 from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
@@ -882,7 +882,11 @@ def main() -> None:
         return
     if Path(args.run_name).name != args.run_name or args.run_name in {".", ".."}:
         parser.error("实验名称不能包含路径")
-    path = PROJECT_ROOT / "outputs/skill_generation_eval" / f"{args.run_name}.json"
+    path = (
+        PROJECT_ROOT
+        / "eval_agent/outputs/skill_generation_eval"
+        / f"{args.run_name}.json"
+    )
     if path.exists():
         parser.error("结果文件已存在，请使用新的实验名称")
     if args.system_certificates:

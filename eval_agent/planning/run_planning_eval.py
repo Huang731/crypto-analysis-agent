@@ -19,7 +19,7 @@ from langfuse.api import DatasetItem
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.config.config import PROJECT_ROOT, _env_files, settings
+from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     AnalysisPlan,
     create_analysis_plan,
@@ -232,7 +232,7 @@ def main() -> None:
         help="使用操作系统证书信任，仅影响当前进程，仍然校验 HTTPS 证书",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("outputs/planning_eval")
+        "--output-dir", type=Path, default=Path("eval_agent/outputs/planning_eval")
     )
     args = parser.parse_args()
     if args.repetitions < 1 or (args.limit is not None and args.limit < 1):

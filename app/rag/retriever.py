@@ -11,10 +11,10 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from app.config.config import settings
-from app.llm.model import rerank, make_glm_4_flash_llm
+from app.core.config import settings
+from app.core.tracing import trace_generation_call, trace_span
+from app.llm.model import make_glm_4_flash_llm, rerank
 from app.rag.ingest import get_vectorstore
-from app.tracing import trace_generation_call, trace_span
 
 
 def _tokenize_zh(text: str) -> list[str]:

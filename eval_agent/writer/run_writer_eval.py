@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.config.config import PROJECT_ROOT, _env_files, settings
+from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import (
     ainvoke_structured,
     get_embeddings,
@@ -397,7 +397,7 @@ def main() -> None:
     )
     if Path(run_name).name != run_name or run_name in {".", ".."}:
         parser.error("实验名称不能包含路径")
-    path = PROJECT_ROOT / "outputs/writer_eval" / f"{run_name}.json"
+    path = PROJECT_ROOT / "eval_agent/outputs/writer_eval" / f"{run_name}.json"
     if path.exists():
         parser.error("结果文件已存在，请使用新的实验名称")
     if not settings.dashscope_api_key.strip():

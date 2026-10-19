@@ -4,10 +4,10 @@ from langchain_core.language_models.chat_models import BaseChatModel  # 标注�
 from langchain_core.messages import BaseMessage, messages_to_dict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.candidate_capture import append_node_candidate
-from app.config.config import settings
+from app.core.candidate_capture import append_node_candidate
+from app.core.config import settings
+from app.core.tracing import trace_generation_call
 from app.llm.model import ainvoke_model
-from app.tracing import trace_generation_call
 from prompts.query_rewriter import query_rewriter_messages
 
 

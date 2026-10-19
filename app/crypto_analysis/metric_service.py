@@ -16,6 +16,8 @@ from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
+from app.core.observability import get_logger, log_event
+from app.core.tracing import trace_span
 from app.crypto_analysis.calculators.derivatives_calculator import (
     FUNDING_FIELD_LABELS,
     OI_FIELD_LABELS,
@@ -34,8 +36,6 @@ from app.crypto_analysis.calculators.stablecoin_calculator import (
     STABLECOIN_FIELD_LABELS,
 )
 from app.crypto_analysis.calculators.trend_calculator import TREND_FIELD_LABELS
-from app.observability import get_logger, log_event
-from app.tracing import trace_span
 
 
 @dataclass(frozen=True)

@@ -15,7 +15,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from app.config.config import settings
+from app.core.config import settings
 from app.rag.ingest import ingest_directory
 
 

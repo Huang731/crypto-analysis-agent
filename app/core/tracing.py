@@ -18,7 +18,7 @@ from functools import wraps
 from inspect import BoundArguments, iscoroutinefunction, signature
 from typing import Any, Literal, TypeVar, cast
 
-from app.config.config import settings
+from app.core.config import settings
 
 from .observability import get_logger
 

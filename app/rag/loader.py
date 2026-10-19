@@ -15,8 +15,8 @@ from langchain_text_splitters import (
     RecursiveCharacterTextSplitter,
 )
 
-from app.config.config import settings
-from app.tracing import trace_span
+from app.core.config import settings
+from app.core.tracing import trace_span
 
 SUPPORTED_SUFFIXES = (".md", ".txt", ".pdf")
 

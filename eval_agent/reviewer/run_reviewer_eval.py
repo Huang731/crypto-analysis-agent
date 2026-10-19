@@ -19,7 +19,7 @@ import truststore
 from langfuse import Langfuse
 from pydantic import BaseModel, ConfigDict, model_validator
 
-from app.config.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     ReportReview,
     _invoke_report_review,
@@ -231,7 +231,7 @@ def main() -> None:
     )
     if Path(run_name).name != run_name or run_name in {".", ".."}:
         parser.error("实验名称不能包含路径")
-    path = PROJECT_ROOT / "outputs/reviewer_eval" / f"{run_name}.json"
+    path = PROJECT_ROOT / "eval_agent/outputs/reviewer_eval" / f"{run_name}.json"
     if path.exists():
         parser.error("结果文件已存在，请使用新的实验名称")
     if not settings.dashscope_api_key.strip():

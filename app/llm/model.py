@@ -28,7 +28,7 @@ from langchain_openai import ChatOpenAI
 from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr
 
-from app.config.config import settings
+from app.core.config import settings
 from prompts.structured_output import structured_output_instruction
 
 _Schema = TypeVar("_Schema", bound=BaseModel)
