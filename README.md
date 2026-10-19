@@ -45,7 +45,21 @@
 
 工作台支持输入研究问题、查看执行进度、接收流式报告和查看数据来源。前端保留会话标识，供连续追问使用。
 
-**演示截图待补充：** 计划展示一组加密资产分析结果和一组通用主题研究结果，包含实际提问、执行阶段、报告正文与来源。当前仓库尚未包含这些截图。
+#### 加密资产分析示例
+
+以下为一次 ETH 分析的实际运行截图，展示问题输入、执行阶段、报告正文及数据来源。点击图片可查看原图。
+
+| 提问与执行进度 | 分析报告 | 数据来源与指标 |
+| --- | --- | --- |
+| <a href="docs/images/crypto-analysis-workbench.png"><img src="docs/images/crypto-analysis-workbench.png" alt="ETH 分析工作台：问题输入、执行进度与报告结论" width="240"></a> | <a href="docs/images/crypto-analysis-report.png"><img src="docs/images/crypto-analysis-report.png" alt="ETH 分析报告：资金流、货币政策、流动性、情绪与趋势" width="240"></a> | <a href="docs/images/crypto-analysis-sources.png"><img src="docs/images/crypto-analysis-sources.png" alt="ETH 分析报告：策略说明与 ETF 资金流指标明细" width="240"></a> |
+
+#### 通用主题研究示例
+
+以“分析一下人工智能”为例，展示问题输入、三个研究子问题的执行情况，以及包含来源链接的研究报告。点击图片可查看原图。
+
+| 提问与执行进度 | 子问题与研究汇总 | 报告正文与来源引用 |
+| --- | --- | --- |
+| <a href="docs/images/topic-research-workbench.png"><img src="docs/images/topic-research-workbench.png" alt="主题研究工作台：输入人工智能研究问题，查看执行阶段与报告" width="240"></a> | <a href="docs/images/topic-research-subquestions.png"><img src="docs/images/topic-research-subquestions.png" alt="主题研究执行过程：三个子问题的完成情况与研究报告" width="240"></a> | <a href="docs/images/topic-research-report.png"><img src="docs/images/topic-research-report.png" alt="主题研究报告：伦理风险、治理挑战及来源引用链接" width="240"></a> |
 
 ## 系统架构
 
