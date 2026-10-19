@@ -67,8 +67,8 @@ class Settings(BaseSettings):
 
     # 文档入库：源文档目录、切片长度与重叠字符数。
     docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
-    chunk_size: int = Field(default=1000, gt=0)
-    chunk_overlap: int = Field(default=150, ge=0)
+    chunk_size: int = Field(default=500, gt=0)
+    chunk_overlap: int = Field(default=80, ge=0)
     table_format: Literal["markdown", "html"] = "markdown"
     # 图片描述与图像问答使用多模态原生接口；统一沿用模型超时与重试配置。
     vision_model: str = "qwen3.5-ocr"
@@ -80,10 +80,10 @@ class Settings(BaseSettings):
     faiss_path: str = str(PROJECT_ROOT / "data" / "faiss" / "bge-m3-1024")
 
     # 混合检索：先融合 BM25 与向量召回结果，再由重排模型选出最终材料。
-    retrieve_k: int = 8
-    final_k: int = 2
-    bm25_weight: float = 0.4
-    vector_weight: float = 0.6
+    retrieve_k: int = 20
+    final_k: int = 4
+    bm25_weight: float = 0.3
+    vector_weight: float = 0.7
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     # 多查询会增加改写调用；并发上限约束单个共享检索实例的正在执行任务。
     enable_multi_query: bool = False

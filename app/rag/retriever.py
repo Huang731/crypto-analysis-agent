@@ -56,6 +56,7 @@ def build_hybrid_retriever() -> BaseRetriever:
             hybrid = EnsembleRetriever(
                 retrievers=[bm25, vector],
                 weights=[settings.bm25_weight, settings.vector_weight],
+                id_key="chunk_idx",
             )
 
             if settings.enable_multi_query:
@@ -168,9 +169,54 @@ class KBRetriever:
             with trace_span("rag.retrieve.recall") as recall_span:
                 candidates = self.hybrid.invoke(question)[: settings.retrieve_k]
                 recall_span.output = {"candidate_count": len(candidates)}
+            print(f"\n重排前召回 {len(candidates)} 个候选文档块")
+            for i, candidate in enumerate(candidates, start=1):
+                print(f"\n候选文档块 {i}")
+                print(f"元数据：{candidate.metadata}")
+                print(candidate.page_content)
             documents = rerank_documents(question, candidates, top_n=settings.final_k)
             span.output = {
                 "candidate_count": len(candidates),
                 "document_count": len(documents),
             }
             return documents
+
+
+def main() -> None:
+    """使用候选记录中的六个原始问题，逐题查看检索结果。"""
+    retriever = KBRetriever()
+    questions = [
+        (
+            "为什么一个国家即使所有产业的生产效率都低于贸易伙伴，仍能从国际贸易中获益，而国内某些行业和劳动者却可能受损？"
+        ),
+        # (
+        #     "当价格高于50日及200日均线且两条均线较20日前抬升，"
+        #     "但负向DI高于正向DI时，如何综合判断趋势与动量？"
+        # ),
+        # (
+        #     "如何分析比特币现货ETF的24小时、7日及30日净流入数据以判断资金流向趋势？"
+        #     "当持仓量7日微增但现货价格7日下跌，且资金费率微弱偏多时，"
+        #     "如何分析多空分歧与市场状态？"
+        # ),
+        # (
+        #     "如何分析美联储在三个月内目标利率中点从3.625%升至3.875%、"
+        #     "净变化25个基点的政策调整对加密市场的影响？"
+        # ),
+        # (
+        #     "当美元指数处于上行趋势且高于50日及200日均线，"
+        #     "同时稳定币市值较30日均值下跌但无方向冲突，而M2同比增速连续上升时，"
+        #     "如何分析流动性扩张与资产价格的关系？"
+        # ),
+    ]
+    for question_idx, question in enumerate(questions, start=1):
+        print(f"\n问题 {question_idx}/{len(questions)}：{question}")
+        documents = retriever.retrieve(question)
+        print(f"检索到 {len(documents)} 个文档块")
+        for i, document in enumerate(documents, start=1):
+            print(f"\n文档块 {i}")
+            print(f"元数据：{document.metadata}")
+            print(document.page_content[:100])
+
+
+if __name__ == "__main__":
+    main()

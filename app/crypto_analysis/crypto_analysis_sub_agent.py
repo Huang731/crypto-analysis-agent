@@ -11,7 +11,6 @@ from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResp
 from langchain_core.messages import (
     AIMessage,
     BaseMessage,
-    HumanMessage,
     messages_to_dict,
 )
 from langchain_core.utils.function_calling import convert_to_openai_tool
@@ -40,8 +39,7 @@ from app.crypto_analysis.tools.registry import get_tool_registry
 from app.llm.model import ainvoke_structured
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_calculate_metrics import (
-    metric_agent_system_prompt,
-    metric_execution_prompt,
+    calculate_metrics_messages,
 )
 from prompts.crypto_analysis_skill_content import (
     skill_output_messages,
@@ -279,9 +277,7 @@ def make_read_cache() -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, A
         else:
             update = {
                 "skill": skill,
-                "messages": [
-                    HumanMessage(content=metric_execution_prompt(skill.model_dump()))
-                ],
+                "messages": [],
                 "evidence": {},
                 "indicator_results": {},
             }
@@ -300,9 +296,21 @@ async def _invoke_metric_agent(
     agent: CompiledStateGraph, state: SkillWorkerGraphState
 ) -> MetricAgentState:
     """追踪指标 Agent 整体执行，模型用量由内部中间件统计。"""
+    pending = state["skill"].model_dump()
+    # 复用原任务模板，仅将任务清单限定为缺失项，不新增提示词。
+    pending["scoring"]["metrics"] = [
+        metric
+        for metric in pending["scoring"]["metrics"]
+        if metric["id"] not in state["indicator_results"]
+    ]
+    system_message, task_message = calculate_metrics_messages(pending)
+    messages = list(state["messages"])
+    if not messages:
+        messages.append(system_message)
+    messages.append(task_message)
     return await agent.ainvoke(
         {
-            "messages": state["messages"],
+            "messages": messages,
             "evidence": state["evidence"],
             "indicator_results": state["indicator_results"],
         },
@@ -326,7 +334,6 @@ def make_calculate_metrics(
         agent = create_agent(
             model=glm_4_flash_llm,
             tools=tools,
-            system_prompt=metric_agent_system_prompt(),
             state_schema=MetricAgentState,
             context_schema=MetricAgentContext,
             middleware=[MetricModelTrace()],
@@ -351,34 +358,19 @@ def make_check_metrics() -> Callable[
 
     @timed_node(label=lambda state: state["skill_name"])
     async def check_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
-        with trace_span("crypto.skill.check_metrics") as node_span:
-            skill = state["skill"]
-            records = state["indicator_results"]
-            missing = [
-                metric.id
-                for metric in skill.scoring.metrics
-                if metric.id not in records
-            ]
-            node_span.output = {"missing_metric_ids": missing}
-            if missing:
-                # 复用原任务模板，仅将任务清单限定为缺失项，不新增提示词。
-                pending = skill.model_dump()
-                pending["scoring"]["metrics"] = [
-                    metric
-                    for metric in pending["scoring"]["metrics"]
-                    if metric["id"] in missing
-                ]
-                update = {
-                    "messages": [
-                        HumanMessage(content=metric_execution_prompt(pending))
-                    ],
-                }
-            else:
-                result = aggregate_skill_results(
-                    skill, [records[metric.id] for metric in skill.scoring.metrics]
-                )
-                update = {"metric_result": result}
-            return update
+        skill = state["skill"]
+        records = state["indicator_results"]
+        missing = [
+            metric.id for metric in skill.scoring.metrics if metric.id not in records
+        ]
+        if missing:
+            update = {}
+        else:
+            result = aggregate_skill_results(
+                skill, [records[metric.id] for metric in skill.scoring.metrics]
+            )
+            update = {"metric_result": result}
+        return update
 
     return check_metrics
 

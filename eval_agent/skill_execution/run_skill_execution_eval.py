@@ -21,7 +21,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.messages import HumanMessage
 from langchain_core.outputs import LLMResult
 from langfuse import Evaluation, Langfuse, get_client
 from langfuse.api import DatasetItem
@@ -49,8 +48,8 @@ from app.llm.model import (
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from prompts.crypto_analysis_calculate_metrics import (
-    metric_agent_system_prompt,
-    metric_execution_prompt,
+    CalculateMetricsPrompt,
+    calculate_metrics_messages,
 )
 
 # 只替换工具模块引用的数据源函数，取数证据处理、计算器与聚合保持原样。
@@ -439,13 +438,7 @@ async def evaluate_skill(
                             {
                                 "skill": skill,
                                 "scope": inputs.scope.model_dump(),
-                                "messages": [
-                                    HumanMessage(
-                                        content=metric_execution_prompt(
-                                            skill.model_dump()
-                                        )
-                                    )
-                                ],
+                                "messages": [],
                                 "evidence": {},
                                 "indicator_results": {},
                             },
@@ -861,10 +854,10 @@ def main() -> None:
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
         "prompt_sha256": hashlib.sha256(
             (
-                metric_agent_system_prompt()
+                CalculateMetricsPrompt.system_prompt
                 + "\n"
                 + "\n".join(
-                    metric_execution_prompt(case.input.skill.model_dump())
+                    calculate_metrics_messages(case.input.skill.model_dump())[1].content
                     for case in cases
                 )
             ).encode("utf-8")

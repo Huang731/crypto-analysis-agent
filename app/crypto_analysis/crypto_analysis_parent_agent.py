@@ -14,7 +14,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    field_validator,
     model_validator,
 )
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -41,7 +40,7 @@ from app.llm.model import (
     ainvoke_structured,
 )
 from app.rag.retriever import KBRetriever
-from prompts.crypto_analysis_plan import analysis_plan_messages
+from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
 from prompts.crypto_analysis_reviewer import analysis_review_messages
 from prompts.crypto_analysis_summarize_history import (
     history_summary_messages,
@@ -102,24 +101,6 @@ async def _invoke_report_text(
 
 
 # 请求规划模型
-
-
-class AnalysisPlan(BaseModel):
-    """一轮分析的目标币种和所需技能，不指定具体工具。"""
-
-    model_config = ConfigDict(extra="forbid")
-    target_asset: str = Field(pattern=r"^[A-Z0-9]+$", strict=True)
-    skill_names: list[str]
-    refresh: bool = Field(
-        strict=True,
-        description="用户是否明确要求重新获取数据，跳过已有技能缓存",
-    )
-
-    @field_validator("skill_names")
-    @classmethod
-    def unique_skill_names(cls, names: list[str]) -> list[str]:
-        """按首次出现顺序去重，避免并行派发同一技能多次。"""
-        return list(dict.fromkeys(names))
 
 
 class ReportReview(BaseModel):

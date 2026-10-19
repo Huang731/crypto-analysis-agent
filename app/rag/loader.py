@@ -94,7 +94,7 @@ def load_and_split(path: Path, *, src_hash: str | None = None) -> list[Document]
                         "source": path.name,
                         "section": _breadcrumb(c.metadata),
                         "src_hash": fhash,
-                        "chunk_idx": i,
+                        "chunk_idx": f"{fhash}:{i}",
                     },
                 )
                 for i, c in enumerate(chunks)
