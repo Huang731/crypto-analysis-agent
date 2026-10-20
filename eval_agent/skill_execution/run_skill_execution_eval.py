@@ -47,7 +47,7 @@ from app.llm.model import (
     make_glm_4_flash_llm,
     model_session,
 )
-from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
+from eval_agent.routing.run_routing_eval import CaseMetadata, EvalSettings
 from prompts.crypto_analysis_calculate_metrics import (
     CalculateMetricsPrompt,
     calculate_metrics_messages,
