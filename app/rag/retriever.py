@@ -171,11 +171,6 @@ class KBRetriever:
             with trace_span("rag.retrieve.recall") as recall_span:
                 candidates = self.hybrid.invoke(question)[: settings.retrieve_k]
                 recall_span.output = {"candidate_count": len(candidates)}
-            print(f"\n重排前召回 {len(candidates)} 个候选文档块")
-            for i, candidate in enumerate(candidates, start=1):
-                print(f"\n候选文档块 {i}")
-                print(f"元数据：{candidate.metadata}")
-                print(candidate.page_content)
             documents = rerank_documents(question, candidates, top_n=settings.final_k)
             span.output = {
                 "candidate_count": len(candidates),

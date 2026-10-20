@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 
 from langchain_core.documents import Document
 
-from app.llm.model import make_bailian_smart_llm
+from app.llm.model import make_glm_4_5_air_llm
 from prompts.rag_generate import rag_generate_messages
 
 
@@ -24,7 +24,7 @@ async def stream_answer(
     """流式生成回答，逐 token yield。"""
     messages = rag_generate_messages(build_context(docs), question)
 
-    llm = make_bailian_smart_llm()
+    llm = make_glm_4_5_air_llm()
     async for chunk in llm.astream(messages):
         if chunk.content:
             yield str(chunk.content)

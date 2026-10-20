@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     zhipuai_5_api_key: str = Field(default="", description="智谱 5 系列 API Key")
     glm_smart_model: str = "glm-4.5-air"
     glm_4_flash_model: str = "glm-4-flash"
+    glm_5_3_flash_model: str = "glm-5.3-flash"
 
     # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
     # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。

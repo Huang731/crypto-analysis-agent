@@ -151,19 +151,17 @@ def compare_plan(actual: PlanningOutput, expected: AnalysisPlan) -> dict[str, bo
         actual.plan.skill_names = list(dict.fromkeys(actual.plan.skill_names))
     success = actual.execution_status == "success" and actual.plan is not None
     scores = {
-        "execution_success": success,
         "target_asset_correct": success
         and actual.plan.target_asset == expected.target_asset,
         "skill_selection_correct": success
         and actual.plan.skill_names == expected.skill_names,
         "refresh_correct": success and actual.plan.refresh == expected.refresh,
     }
-    scores["plan_correct"] = all(scores.values())
     return scores
 
 
 def score_plan(*, output: Any, expected_output: Any, **kwargs: Any) -> list[Evaluation]:
-    """一次生成五项确定性评分，不调用裁判模型。"""
+    """一次生成三项确定性评分，不调用裁判模型。"""
     actual = PlanningOutput.model_validate(output)
     if actual.plan is not None:
         actual.plan.skill_names = list(dict.fromkeys(actual.plan.skill_names))
@@ -189,10 +187,9 @@ def score_plan(*, output: Any, expected_output: Any, **kwargs: Any) -> list[Eval
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """整体正确率包含失败项，同时保留字段表现和分类结果。"""
+    """汇总三项字段正确率，失败项计入分母，并保留执行统计。"""
     scores: Counter[str] = Counter()
     statuses: Counter[str] = Counter()
-    categories: dict[str, Counter[str]] = {}
     durations: list[float] = []
     for row in rows:
         actual = PlanningOutput.model_validate(row["output"])
@@ -203,25 +200,12 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         comparison = compare_plan(actual, expected)
         scores.update({name: int(correct) for name, correct in comparison.items()})
         statuses[actual.execution_status] += 1
-        counts = categories.setdefault(row["metadata"]["category"], Counter())
-        counts["runs"] += 1
-        counts["correct"] += int(comparison["plan_correct"])
         durations.append(actual.duration_ms)
     total = len(rows)
-    successful = statuses["success"]
     return {
         "planned_runs": total,
-        "correct_runs": scores["plan_correct"],
-        "overall_success_rate": scores["plan_correct"] / total,
         "accuracy_by_metric": {name: count / total for name, count in scores.items()},
         "execution_status_counts": dict(statuses),
-        "valid_plan_accuracy": (
-            scores["plan_correct"] / successful if successful else None
-        ),
-        "accuracy_by_category": {
-            category: counts["correct"] / counts["runs"]
-            for category, counts in categories.items()
-        },
         "mean_duration_ms": sum(durations) / total,
         "token_usage": None,
         "cost": None,
@@ -365,14 +349,14 @@ def main() -> None:
             for row, item_result in zip(
                 rows[row_start:], result.item_results, strict=True
             ):
-                if len(item_result.evaluations) != 5:
+                if len(item_result.evaluations) != 3:
                     raise RuntimeError("评分记录不完整，不能输出完整实验结果")
                 row["repetition"] = repetition
                 row["scores"] = [score.__dict__ for score in item_result.evaluations]
                 row["langfuse_trace_id"] = item_result.trace_id
             print(result.format())
         if len(rows) != len(items) * args.repetitions:
-            raise RuntimeError("执行记录不完整，不能输出完整成功率")
+            raise RuntimeError("执行记录不完整，不能输出完整正确率")
         report = {
             "run_name": run_name,
             "metadata": metadata,

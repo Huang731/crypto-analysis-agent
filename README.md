@@ -269,6 +269,21 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同用例、模型、提示词版本与运行配置一起解读；本地用例校验不能代替真实服务评分。
 
+### RAGAS 评测结果
+
+以下为一次 10 道题的 RAG 评测结果，检索、回答生成与裁判评分全流程耗时约 115 秒。分数与本地结果文件 `eval_agent/outputs/rag_eval/results.json` 一致，反映本次用例与运行配置下的表现。
+
+| 指标 | 含义 | 分数 |
+| --- | --- | --- |
+| `faithfulness` | 回答忠实度 | 0.9587 |
+| `answer_relevancy` | 回答相关性 | 0.9151 |
+| `context_precision` | 上下文精确率 | 0.9472 |
+| `context_recall` | 上下文召回率 | 0.9333 |
+
+![RAGAS 评测运行截图：10 道题的四项指标与运行耗时](docs/images/rag-evaluation-results.png)
+
+### 评测数据管理
+
 数据与结果的职责分布：
 
 ```text

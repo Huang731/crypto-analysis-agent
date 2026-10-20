@@ -154,6 +154,13 @@ def make_glm_4_flash_llm(
     return _make_zhipuai_llm(settings.glm_4_flash_model, async_client=async_client)
 
 
+def make_glm_5_3_flash_llm(
+    *, async_client: httpx.AsyncClient | None = None
+) -> ChatOpenAI:
+    """创建 RAG 评测裁判模型，沿用智谱 5 系列密钥与统一调用配置。"""
+    return _make_zhipuai_llm(settings.glm_5_3_flash_model, async_client=async_client)
+
+
 # 统一调用：超时与结果类型，重试由业务调用方负责
 
 
