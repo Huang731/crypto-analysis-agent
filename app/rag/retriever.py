@@ -13,7 +13,7 @@ from langchain_core.retrievers import BaseRetriever
 
 from app.core.config import settings
 from app.core.tracing import trace_generation_call, trace_span
-from app.llm.model import make_glm_4_flash_llm, rerank
+from app.llm.model import make_glm_4_5_air_llm, rerank
 from app.rag.ingest import get_vectorstore
 
 
@@ -62,7 +62,9 @@ def build_hybrid_retriever() -> BaseRetriever:
             if settings.enable_multi_query:
                 return MultiQueryRetriever.from_llm(
                     retriever=hybrid,
-                    llm=make_glm_4_flash_llm(),
+                    llm=make_glm_4_5_air_llm().bind(
+                        extra_body={"thinking": {"type": "disabled"}}
+                    ),
                 )
             return hybrid
         except Exception:

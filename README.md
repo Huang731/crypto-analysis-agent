@@ -124,11 +124,12 @@ Markdown 文档按标题结构与长度分块，保留文件名、章节路径�
 
 | 节点职责 | 模型配置项 | 当前代码默认值 |
 | --- | --- | --- |
-| 问题改写、分析规划、Skill 正文 | `QWEN3_5_4B_MODEL` | `Qwen/Qwen3.5-4B` |
-| 路由、指标工具执行、主题拆题与研究汇总、历史摘要 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
-| 加密分析与主题研究的报告写作、报告审核 | `GLM_SMART_MODEL` | `glm-4.5-air` |
+| 主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
+| 问题改写、路由、加密分析全部模型节点、检索多查询改写、主题研究的报告写作与审核 | `GLM_SMART_MODEL` | `glm-4.5-air` |
 | 文档向量 | `EMBEDDING_MODEL` | `BAAI/bge-m3` |
 | 检索重排 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` |
+
+Air 模型仅在报告写作和审核节点保留默认思考配置，其余调用显式关闭深度思考。
 
 百炼模型另外用于独立 RAG 回答、部分图文处理和评测裁判。上述模型分工是代码中的节点配置，费用与延迟效果需通过具体运行记录验证。
 
@@ -177,7 +178,8 @@ cp .env.example .env
 | 环境变量 | 用途 | 使用条件 |
 | --- | --- | --- |
 | `SILICONFLOW_API_KEY` | Qwen 聊天、向量、重排 | 当前服务与知识入库需要 |
-| `ZHIPUAI_API_KEY` | GLM 路由、工具执行、写作与审核 | 当前服务需要 |
+| `ZHIPUAI_4_API_KEY` | GLM 4 系列：主题研究、报告写作与审核 | 当前服务需要 |
+| `ZHIPUAI_5_API_KEY` | GLM 5 系列模型 | 使用 5 系列模型时需要 |
 | `BOCHA_API_KEY` | 网页搜索 | 通用主题研究需要 |
 | `FRED_API_KEY` | 美联储政策及宏观序列 | 相关分析维度需要 |
 | `CMC_PRO_API_KEY` | 稳定币市值与恐惧贪婪指数 | 相关分析维度需要 |

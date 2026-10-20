@@ -37,9 +37,8 @@ from app.core.observability import (
 from app.core.tracing import start_trace
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
 from app.llm.model import (
+    make_glm_4_5_air_llm,
     make_glm_4_flash_llm,
-    make_glm_smart_llm,
-    make_qwen3_5_4b_llm,
     model_session,
 )
 from app.rag.retriever import KBRetriever
@@ -113,11 +112,9 @@ def _build_routing_service(
 ) -> RoutingService:
     """集中组装各节点模型，复用同一连接并显式注入路由图。"""
     glm_4_flash_llm = make_glm_4_flash_llm(async_client=model_client)
-    qwen3_5_4b_llm = make_qwen3_5_4b_llm(async_client=model_client)
-    glm_smart_llm = make_glm_smart_llm(async_client=model_client)
+    glm_4_5_air_llm = make_glm_4_5_air_llm(async_client=model_client)
     graph = build_routing_graph(
-        qwen3_5_4b_llm=qwen3_5_4b_llm,
-        glm_smart_llm=glm_smart_llm,
+        glm_4_5_air_llm=glm_4_5_air_llm,
         retriever=retriever,
         checkpointer=checkpointer,
         glm_4_flash_llm=glm_4_flash_llm,

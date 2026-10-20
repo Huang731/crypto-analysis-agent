@@ -24,7 +24,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     ReportReview,
     _invoke_report_review,
 )
-from app.llm.model import make_glm_smart_llm, model_session
+from app.llm.model import make_glm_4_5_air_llm, model_session
 from eval_agent.prompts.report_eval import (
     reviewer_evaluation_messages,
     reviewer_target_messages,
@@ -160,7 +160,7 @@ async def evaluate(
             async with model_session() as http:
                 review = await asyncio.wait_for(
                     _invoke_report_review(
-                        make_glm_smart_llm(async_client=http),
+                        make_glm_4_5_air_llm(async_client=http),
                         reviewer_target_messages(case.input.to_messages()),
                     ),
                     timeout=250,

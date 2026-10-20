@@ -125,11 +125,18 @@ def make_qwen3_8b_llm(
     )
 
 
-def _zhipuai_api_key() -> str:
-    """请求智谱前校验密钥，避免未配置主题研究时阻断其他功能启动。"""
-    key = settings.zhipuai_api_key.strip()
+def _zhipuai_api_key(model_name: str) -> str:
+    """请求智谱前按模型系列选择并校验对应密钥。"""
+    if model_name.lower().startswith("glm-4"):
+        key = settings.zhipuai_4_api_key.strip()
+        variable_name = "ZHIPUAI_4_API_KEY"
+    elif model_name.lower().startswith("glm-5"):
+        key = settings.zhipuai_5_api_key.strip()
+        variable_name = "ZHIPUAI_5_API_KEY"
+    else:
+        raise ValueError(f"不支持的智谱模型系列：{model_name}")
     if not key or key.startswith("xxxx"):
-        raise ValueError("未配置 ZHIPUAI_API_KEY")
+        raise ValueError(f"未配置 {variable_name}")
     return key
 
 
@@ -141,7 +148,7 @@ def _make_zhipuai_llm(
     """主题研究直连智谱，保留请求超时，重试由业务调用方负责。"""
     return ChatOpenAI(
         model=model_name,
-        api_key=_zhipuai_api_key,
+        api_key=lambda: _zhipuai_api_key(model_name),
         base_url="https://open.bigmodel.cn/api/paas/v4/",
         timeout=120.0,
         max_retries=0,
@@ -151,8 +158,10 @@ def _make_zhipuai_llm(
     )
 
 
-def make_glm_smart_llm(*, async_client: httpx.AsyncClient | None = None) -> ChatOpenAI:
-    """创建配置指定的智谱智能模型，沿用模型默认思考配置。"""
+def make_glm_4_5_air_llm(
+    *, async_client: httpx.AsyncClient | None = None
+) -> ChatOpenAI:
+    """创建配置指定的智谱 Air 模型，思考开关由调用节点设置。"""
     return _make_zhipuai_llm(settings.glm_smart_model, async_client=async_client)
 
 

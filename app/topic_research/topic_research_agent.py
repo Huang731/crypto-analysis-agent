@@ -374,7 +374,7 @@ def make_research_team(
 
 
 def make_writer(
-    glm_smart_llm: Any,
+    glm_4_5_air_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告写作节点。
     """依据研究摘要写报告，并处理审稿意见。"""
 
@@ -397,7 +397,7 @@ def make_writer(
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 首轮反馈为空，重写时提供具体意见。
         response = await _invoke_traced_model(
-            glm_smart_llm,
+            glm_4_5_air_llm,
             messages,
             "topic_writer",
             settings.glm_smart_model,
@@ -414,7 +414,7 @@ def make_writer(
 
 
 def make_reviewer(
-    glm_smart_llm: Any,
+    glm_4_5_air_llm: Any,
 ) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
 
@@ -435,7 +435,7 @@ def make_reviewer(
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 提供实际生成的报告。
         response = await _invoke_traced_model(
-            glm_smart_llm,
+            glm_4_5_air_llm,
             messages,
             "topic_reviewer",
             settings.glm_smart_model,
@@ -480,14 +480,14 @@ def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有�
 def build_topic_research_agent(
     glm_4_flash_llm: Any,
     *,
-    glm_smart_llm: Any,
+    glm_4_5_air_llm: Any,
 ) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
     """把主题研究子图封装为 路由 可调用的 Agent。"""
     sub_graph = build_analysis_sub_graph(glm_4_flash_llm)  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
-    builder.add_node("writer", make_writer(glm_smart_llm))  # 报告写作节点。
-    builder.add_node("reviewer", make_reviewer(glm_smart_llm))  # 有界审稿节点。
+    builder.add_node("writer", make_writer(glm_4_5_air_llm))  # 报告写作节点。
+    builder.add_node("reviewer", make_reviewer(glm_4_5_air_llm))  # 有界审稿节点。
     builder.add_edge(START, "research_team")  # 从用户问题开始研究。
     builder.add_edge("research_team", "writer")  # 研究完成后写报告。
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。

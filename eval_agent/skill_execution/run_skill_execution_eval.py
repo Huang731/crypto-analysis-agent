@@ -43,6 +43,7 @@ from app.llm.model import (
     _make_bailian_llm,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
+    make_glm_4_5_air_llm,
     make_glm_4_flash_llm,
     make_qwen3_5_4b_llm,
     model_session,
@@ -429,7 +430,9 @@ async def evaluate_skill(
     replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
     async with model_session() as http_client:
-        if inputs.metric_agent.model == settings.glm_4_flash_model:
+        if inputs.metric_agent.model == settings.glm_smart_model:
+            llm = make_glm_4_5_air_llm(async_client=http_client)
+        elif inputs.metric_agent.model == settings.glm_4_flash_model:
             llm = make_glm_4_flash_llm(async_client=http_client)
         elif inputs.metric_agent.model == settings.qwen3_5_4b_model:
             llm = make_qwen3_5_4b_llm(async_client=http_client)
@@ -504,7 +507,11 @@ async def evaluate_skill(
                     actual, status, error_type = None, "error", type(exc).__name__
                     error_stage = stage
                     message = str(exc)
-                    for key in (settings.dashscope_api_key, settings.zhipuai_api_key):
+                    for key in (
+                        settings.dashscope_api_key,
+                        settings.zhipuai_4_api_key,
+                        settings.zhipuai_5_api_key,
+                    ):
                         if key:
                             message = message.replace(key, "[已隐藏]")
                     error_message = _log_reason(message)[:1000]

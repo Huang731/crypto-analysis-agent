@@ -43,7 +43,8 @@ class Settings(BaseSettings):
     qwen3_8b_model: str = "Qwen/Qwen3-8B"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
-    zhipuai_api_key: str = Field(default="", description="智谱 API Key")
+    zhipuai_4_api_key: str = Field(default="", description="智谱 4 系列 API Key")
+    zhipuai_5_api_key: str = Field(default="", description="智谱 5 系列 API Key")
     glm_smart_model: str = "glm-4.5-air"
     glm_4_flash_model: str = "glm-4-flash"
 
@@ -61,6 +62,7 @@ class Settings(BaseSettings):
         "Qwen/Qwen3.5-4B": {"input": 0.0, "output": 0.0},
         "gte-rerank-v2": {"input": 0.5, "output": 0.0},
         "glm-4.5-air": {"input": 50.0, "output": 50.0},
+        "glm-4.7-flash": {"input": 0.0, "output": 0.0},
         "glm-5.3-Flash": {"input": 0.8, "output": 2.8},
         "glm-4-flash": {"input": 0.0, "output": 0.0},
     }

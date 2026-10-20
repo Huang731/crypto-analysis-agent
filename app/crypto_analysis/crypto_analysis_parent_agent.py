@@ -44,7 +44,7 @@ from prompts.crypto_analysis_writer import analysis_report_messages
 
 @trace_generation_call(
     name="crypto_history_summary",
-    model=settings.glm_4_flash_model,
+    model=settings.glm_smart_model,
     input_arg="messages",
     input_format="messages",
     record_io=True,
@@ -59,8 +59,12 @@ async def _invoke_history_summary(
     llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """直接生成摘要正文，保留正文非空校验与有限重试。"""
-    # 历史摘要使用 GLM-4-Flash，调用与正文校验整体重试。
-    response = await ainvoke_model(llm, messages)
+    # 历史摘要沿用智能模型，调用与正文校验整体重试。
+    response = await ainvoke_model(
+        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        messages,
+        timeout=120,
+    )
     summary = response.content.strip()
     if not summary:
         raise ValueError("历史摘要不能为空")
@@ -123,7 +127,7 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
 
 @trace_generation_call(
     name="crypto_analysis_plan",
-    model=settings.qwen3_5_4b_model,
+    model=settings.glm_smart_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -137,7 +141,11 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
 )
 async def _invoke_analysis_plan(llm: Any, messages: list[BaseMessage]) -> AnalysisPlan:
     """记录规划用量，对结构化调用和校验整体重试。"""
-    plan = await ainvoke_structured(llm, messages, schema=AnalysisPlan)
+    plan = await ainvoke_structured(
+        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        messages,
+        schema=AnalysisPlan,
+    )
     if plan is None:
         raise ValueError("规划模型返回了空计划")
     # 按首次出现顺序去重，避免并行派发同一技能多次。
@@ -205,7 +213,7 @@ def make_skill_worker(
 
 
 def make_plan(
-    qwen3_5_4b_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建本轮技能规划节点。"""
 
@@ -216,7 +224,7 @@ def make_plan(
         if not isinstance(question, str) or not question.strip():
             raise ValueError("技能分析缺少有效用户问题")
         selection = await create_analysis_plan(
-            qwen3_5_4b_llm,
+            glm_4_5_air_llm,
             question,
             skill_loader.format_skill_descriptions(),
         )
@@ -269,7 +277,7 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
 
 
 def make_writer(
-    glm_smart_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
@@ -297,7 +305,7 @@ def make_writer(
             previous_report=state["report"],
         )
         report = await _invoke_report_text(
-            glm_smart_llm.bind(temperature=0.1),
+            glm_4_5_air_llm.bind(temperature=0.1),
             messages,
             runtime.stream_writer,
         )
@@ -316,7 +324,7 @@ def make_writer(
 
 
 def make_reviewer(
-    glm_smart_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建报告审核节点，保留原有审核规则。"""
 
@@ -332,7 +340,7 @@ def make_reviewer(
             skill_results=state["skill_results"],
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
-        review = await _invoke_report_review(glm_smart_llm, messages)
+        review = await _invoke_report_review(glm_4_5_air_llm, messages)
         if settings.reviewer_capture_enabled:
             append_node_candidate(
                 node="reviewer",
@@ -365,7 +373,7 @@ def route_after_review(state: DynamicAnalysisState) -> str:
 
 
 def make_summarize_history(
-    glm_4_flash_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, str]]]:
     """创建累计历史摘要节点。"""
 
@@ -376,7 +384,7 @@ def make_summarize_history(
             previous_summary=state.get("history_summary", ""),
             report=state["report"],
         )
-        summary = await _invoke_history_summary(glm_4_flash_llm, messages)
+        summary = await _invoke_history_summary(glm_4_5_air_llm, messages)
         update = {"history_summary": summary}
         if settings.summarize_history_capture_enabled:
             append_node_candidate(
@@ -391,22 +399,18 @@ def make_summarize_history(
 
 
 def build_crypto_analysis_parent_agent(
-    qwen3_5_4b_llm: BaseChatModel,
     retriever: KBRetriever,
-    glm_4_flash_llm: BaseChatModel,
     *,
-    glm_smart_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
-    sub_graph = build_crypto_analysis_sub_agent(
-        qwen3_5_4b_llm, retriever, glm_4_flash_llm=glm_4_flash_llm
-    )
+    sub_graph = build_crypto_analysis_sub_agent(glm_4_5_air_llm, retriever)
     builder = StateGraph(DynamicAnalysisState)
-    builder.add_node("plan", make_plan(qwen3_5_4b_llm))
+    builder.add_node("plan", make_plan(glm_4_5_air_llm))
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
-    builder.add_node("writer", make_writer(glm_smart_llm))
-    builder.add_node("reviewer", make_reviewer(glm_smart_llm))
-    builder.add_node("summarize_history", make_summarize_history(glm_4_flash_llm))
+    builder.add_node("writer", make_writer(glm_4_5_air_llm))
+    builder.add_node("reviewer", make_reviewer(glm_4_5_air_llm))
+    builder.add_node("summarize_history", make_summarize_history(glm_4_5_air_llm))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")

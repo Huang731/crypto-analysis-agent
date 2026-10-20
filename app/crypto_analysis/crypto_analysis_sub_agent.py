@@ -141,7 +141,7 @@ async def _retrieve_thought_context(
 
 @trace_generation_call(
     name="crypto_skill_output",
-    model=settings.qwen3_5_4b_model,
+    model=settings.glm_smart_model,
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -154,8 +154,13 @@ async def _retrieve_thought_context(
 )
 async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> SkillOutput:
     """结构化解析表格和检索问题，保留超时、校验重试与用量追踪。"""
-    # 表格生成使用独立的非思考模型，保留原有超时和内容校验。
-    return await ainvoke_structured(llm, messages, schema=SkillOutput, timeout=120)
+    # 表格生成沿用智能模型，保留原有超时和内容校验。
+    return await ainvoke_structured(
+        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        messages,
+        schema=SkillOutput,
+        timeout=120,
+    )
 
 
 def skill_worker_step_limit(metric_count: int) -> int:
@@ -175,6 +180,16 @@ class MetricModelTrace(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """模型调用成功后采集真实输入输出，不记录工具执行和状态更新。"""
+        if request.model.model_name == settings.glm_smart_model:
+            request = request.override(
+                model_settings={
+                    **request.model_settings,
+                    "extra_body": {
+                        **request.model_settings.get("extra_body", {}),
+                        "thinking": {"type": "disabled"},
+                    },
+                }
+            )
         response = await self._invoke_model_call(request, handler)
         if settings.calculate_metrics_capture_enabled:
             messages = list(request.messages)
@@ -307,7 +322,7 @@ async def _invoke_metric_agent(
 
 
 def make_calculate_metrics(
-    glm_4_flash_llm: Any,
+    glm_4_5_air_llm: Any,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
 
@@ -320,7 +335,7 @@ def make_calculate_metrics(
             for name in state["skill"].tools
         ]
         agent = create_agent(
-            model=glm_4_flash_llm,
+            model=glm_4_5_air_llm,
             tools=tools,
             state_schema=MetricAgentState,
             context_schema=MetricAgentContext,
@@ -375,7 +390,7 @@ def route_metrics(
 
 
 def make_skill_content(
-    qwen3_5_4b_llm: Any, retriever: KBRetriever
+    glm_4_5_air_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """生成指标表格与检索问题，再检索对应思想材料。"""
 
@@ -398,7 +413,7 @@ def make_skill_content(
             skill_name=skill.name,
             indicators=indicators,
         )
-        output = await _invoke_skill_output(qwen3_5_4b_llm, messages)
+        output = await _invoke_skill_output(glm_4_5_air_llm, messages)
         thought_context = _select_thought_context(
             await _retrieve_thought_context(retriever, output.retrieval_query)
         )
@@ -452,14 +467,14 @@ def make_finalize_skill() -> Callable[
 
 
 def build_crypto_analysis_sub_agent(
-    qwen3_5_4b_llm: Any, retriever: KBRetriever, *, glm_4_flash_llm: Any
+    glm_4_5_air_llm: Any, retriever: KBRetriever
 ) -> CompiledStateGraph:
     """组装缓存分支、指标执行循环和技能内容生成子图。"""
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
-    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_flash_llm))
+    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_5_air_llm))
     graph.add_node("check_metrics", make_check_metrics())
-    graph.add_node("skill_content", make_skill_content(qwen3_5_4b_llm, retriever))
+    graph.add_node("skill_content", make_skill_content(glm_4_5_air_llm, retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(

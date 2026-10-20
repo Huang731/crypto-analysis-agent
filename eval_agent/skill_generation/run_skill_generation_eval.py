@@ -25,7 +25,7 @@ from app.llm.model import (
     ainvoke_structured,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
-    make_qwen3_5_4b_llm,
+    make_glm_4_5_air_llm,
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -437,7 +437,7 @@ async def evaluate(
         async with AsyncExitStack() as stack:
             generation_http = await stack.enter_async_context(model_session())
             judge_http = await stack.enter_async_context(model_session())
-            generator = make_qwen3_5_4b_llm(async_client=generation_http)
+            generator = make_glm_4_5_air_llm(async_client=generation_http)
             judge_factory = (
                 make_bailian_fast_llm
                 if judge_model == settings.bailian_fast_model
@@ -782,7 +782,11 @@ async def evaluate(
         if active_stage == "judge":
             output["judge_raw_response"] = judge_counter.last_response
         message = str(exc)
-        for key in (settings.dashscope_api_key, settings.zhipuai_api_key):
+        for key in (
+            settings.dashscope_api_key,
+            settings.zhipuai_4_api_key,
+            settings.zhipuai_5_api_key,
+        ):
             if key:
                 message = message.replace(key, "[已隐藏]")
         output["error_message"] = _log_reason(message)[:400]
@@ -927,7 +931,7 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     metadata = {
-        "generator_model": settings.qwen3_5_4b_model,
+        "generator_model": settings.glm_smart_model,
         "judge_model": args.judge_model,
         "scoring_method": "project_llm_judge_v2",
         "faithfulness_definition": "正确表格字段与有证据支持的正文句子占全部待评字段及句子的比例；句内全部事实须有依据",

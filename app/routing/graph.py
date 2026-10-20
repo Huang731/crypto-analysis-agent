@@ -26,7 +26,7 @@ from prompts.router import routing_messages
 
 @trace_generation_call(
     name="routing_decision",
-    model=settings.glm_4_flash_model,
+    model=settings.glm_smart_model,
     input_arg="messages",
     input_format="messages",
     output_format="text",
@@ -42,7 +42,11 @@ async def _invoke_route_decision(
     messages: list[BaseMessage],
 ) -> str:
     """保留路由追踪，对文本调用和 Agent 名称校验整体重试。"""
-    response = await ainvoke_model(llm, messages, timeout=120)
+    response = await ainvoke_model(
+        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        messages,
+        timeout=120,
+    )
     if not isinstance(response.content, str):
         raise ValueError("路由模型未返回文本")
     route = response.content.strip()
@@ -81,23 +85,20 @@ def finalize_report(state: RoutingState) -> dict[str, Any]:
 
 
 def build_routing_graph(
-    qwen3_5_4b_llm: BaseChatModel,
+    glm_4_5_air_llm: BaseChatModel,
     retriever: KBRetriever,
     *,
     checkpointer: BaseCheckpointSaver,
     glm_4_flash_llm: BaseChatModel,
-    glm_smart_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
     crypto_agent = build_crypto_analysis_parent_agent(
-        qwen3_5_4b_llm,
         retriever,
-        glm_4_flash_llm,
-        glm_smart_llm=glm_smart_llm,
+        glm_4_5_air_llm=glm_4_5_air_llm,
     )
     topic_agent = build_topic_research_agent(
         glm_4_flash_llm,
-        glm_smart_llm=glm_smart_llm,
+        glm_4_5_air_llm=glm_4_5_air_llm,
     )
 
     @timed_node(label=lambda state: state["scope"]["original_question"])
@@ -105,7 +106,7 @@ def build_routing_graph(
         """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
         question = await rewrite_question(
-            qwen3_5_4b_llm, original, state.get("previous_question", "")
+            glm_4_5_air_llm, original, state.get("previous_question", "")
         )
         return {
             "resolved_question": question,
@@ -117,7 +118,7 @@ def build_routing_graph(
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = routing_messages(state["resolved_question"])
         route = await _invoke_route_decision(
-            glm_4_flash_llm,
+            glm_4_5_air_llm,
             messages,
         )
         if settings.routing_capture_enabled:
