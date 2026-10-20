@@ -2,25 +2,28 @@
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
+from prompts.common import build_system_prompt
 
-def query_rewriter_messages(question: str, previous_question: str) -> list[BaseMessage]:
-    """分开改写规则与上一轮问题、本轮原话。"""
-    system_prompt = """
-       你是问题改写员，负责将用户的本轮原话规范为下游路由和分析模块可直接使用的问题。你的核心任务是**精准还原并补全用户意图**，而非回答用户问题。
-        
-        ## 1. 上下文继承规则
-        - **本轮优先**：本轮明确指定的对象、场景、范围和要求具有最高优先级。
-        - **按需补全**：仅当本轮表达缺失关键要素（如对象、场景），且该要素与上一轮主题强相关时，才从 `previous_question` 中补全。
-        - **主题切换阻断**：当本轮明确要求通用解释或切换全新主题时，禁止带入上一轮对象。
-        - **原样返回**：当表达及任务上下文均已完整时，直接原样返回，不做多余改写。
-        
-        ## 2. 输出格式
-        - **只返回改写后的用户问题本身**。
-        - 不回答问题，不添加任何解释、前缀、后缀或澄清回复。
-        - 不把内部的改写任务当成用户需求输出。
-        
-        ## 3. Few-Shot Examples
-        
+
+class QueryRewriterPrompt:
+    instruction = """\
+你是问题改写员，负责将用户的本轮原话规范为下游路由和分析模块可直接使用的问题。你的核心任务是**精准还原并补全用户意图**，而非回答用户问题。
+
+ ## 1. 上下文继承规则
+ - **本轮优先**：本轮明确指定的对象、场景、范围和要求具有最高优先级。
+ - **按需补全**：仅当本轮表达缺失关键要素（如对象、场景），且该要素与上一轮主题强相关时，才从 `previous_question` 中补全。
+ - **主题切换阻断**：当本轮明确要求通用解释或切换全新主题时，禁止带入上一轮对象。
+ - **原样返回**：当表达及任务上下文均已完整时，直接原样返回，不做多余改写。
+
+ ## 2. 输出格式
+ - **只返回改写后的用户问题本身**。
+ - 不回答问题，不添加任何解释、前缀、后缀或澄清回复。
+ - 不把内部的改写任务当成用户需求输出。
+"""
+
+    example = """\
+## 3. Few-Shot Examples
+
         | previous_question | 用户本轮原话 | 改写后输出 | 改写依据 |
         | :--- | :--- | :--- | :--- |
         | (无) | 大饼还能上车不 | 比特币（BTC）现在还适合买入吗？ | 口语规范化 + 术语补全 |
@@ -34,14 +37,24 @@ def query_rewriter_messages(question: str, previous_question: str) -> list[BaseM
         | ETH 目前应该加仓还是减仓？ | 为什么 | 解释上一轮 ETH 加仓或减仓判断的依据 | 补全判断主题，不猜测结论 |
         | ETH 目前应该加仓还是减仓？ | 只讲分批建仓的通用原理 | 解释分批建仓的通用原理 | 明确要求通用解释，阻断上轮对象 |
         | 研究腾讯财报 | 继续 | 继续展开腾讯财报的研究 | 继承上轮任务+对象 |
-        
 """
-    task_prompt = f"""\
-        ## Input
-        previous_question: {previous_question}
-        用户本轮原话：{question}
+
+    user_prompt = """\
+## Input
+previous_question: {previous_question}
+用户本轮原话：{question}
 """
+
+    system_prompt = build_system_prompt(instruction, example)
+
+
+def query_rewriter_messages(question: str, previous_question: str) -> list[BaseMessage]:
+    """分开改写规则与上一轮问题、本轮原话。"""
     return [
-        SystemMessage(content=system_prompt),
-        HumanMessage(content=task_prompt),
+        SystemMessage(content=QueryRewriterPrompt.system_prompt),
+        HumanMessage(
+            content=QueryRewriterPrompt.user_prompt.format(
+                previous_question=previous_question, question=question
+            )
+        ),
     ]

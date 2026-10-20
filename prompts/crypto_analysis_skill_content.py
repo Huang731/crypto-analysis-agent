@@ -4,17 +4,54 @@ import json
 from typing import Any
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from pydantic import BaseModel, ConfigDict, Field
+
+from prompts.common import build_system_prompt
 
 
-def skill_output_messages(
-    analysis_subject: str,
-    skill_name: str,
-    indicators: list[dict[str, Any]],
-) -> list[BaseMessage]:
-    """分开表格和检索问题的生成规则与本轮成功指标数据。"""
+class SkillOutput(BaseModel):
+    """同次调用生成指标表格和对应的理论检索问题。"""
 
-    example_output = {
-        "content": """### 趋势
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    content: str = Field(min_length=1, description="完整的中文 Markdown 指标表格")
+    retrieval_query: str = Field(
+        min_length=1,
+        max_length=300,
+        description="依据表格指标状态提炼的一条理论检索问题，不提前给出结论",
+    )
+
+
+class SkillOutputPrompt:
+    instruction = """\
+根据成功指标，在同一次回答中生成中文 Markdown 指标表格 content 和一条理论检索问题 retrieval_query。
+
+## 输出规则
+1. 每个成功指标单独输出一个三级标题和一张连续的“字段／内容”两列表格。
+2. 每张表的表头只出现一次，**不要**拆分为原始值表和计算值表。
+3. 标题使用易懂的指标中文名称。
+4. 只使用提供的指标数据，**严禁**补造数据、趋势、来源或因果关系。
+5. content 只包含完整的 Markdown 指标表格，不包含检索问题、字段路径或工具执行过程。
+
+## 检索问题规则
+1. retrieval_query 用于检索书籍中的分析原理与解释方法，只输出一条完整中文问题，最多 100 字符。
+2. 问题必须对应 content 中的指标及其状态，保留必要的指标关系与统计窗口，不引入缺失指标或无关分析维度。
+
+## 表格格式模板
+### {指标中文名称}
+
+| 字段 | 内容 |
+| --- | --- |
+| 指标标识 | {indicator_id} |
+| {field_labels 中对应原始字段的固定中文名称} | {对应原始值} |
+| {field_labels 中对应计算字段的固定中文名称} | {对应计算值} |
+| 指标分数 | {score} |
+| 观测日期 | {observed_at} |
+| 来源链接 | {url} |
+"""
+
+    example = "## 参考示例（完整输出）\n" + json.dumps(
+        {
+            "content": """### 趋势
 
 | 字段 | 内容 |
 | --- | --- |
@@ -33,52 +70,38 @@ def skill_output_messages(
 | 指标分数 | 5 |
 | 观测日期 | 2026-10-13 |
 | 来源链接 | https://www.binance.com/ |""",
-        "retrieval_query": "当价格高于50日及200日均线、两条均线较20日前抬升，但负向DI高于正向DI时，如何综合判断趋势与动量？",
-    }
+            "retrieval_query": "当价格高于50日及200日均线、两条均线较20日前抬升，但负向DI高于正向DI时，如何综合判断趋势与动量？",
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
 
-    system_template = """\
-        根据成功指标，在同一次回答中生成中文 Markdown 指标表格 content 和一条理论检索问题 retrieval_query。
+    pydantic_schema = json.dumps(
+        SkillOutput.model_json_schema(), ensure_ascii=False, indent=2
+    )
 
-        ## 输出规则
-        1. 每个成功指标单独输出一个三级标题和一张连续的“字段／内容”两列表格。
-        2. 每张表的表头只出现一次，**不要**拆分为原始值表和计算值表。
-        3. 标题使用易懂的指标中文名称。
-        4. 只使用提供的指标数据，**严禁**补造数据、趋势、来源或因果关系。
-        5. content 只包含完整的 Markdown 指标表格，不包含检索问题、字段路径或工具执行过程。
+    user_prompt = """\
+## 任务上下文
+- 分析对象：{analysis_subject}
+- 技能：{skill_name}
+- 成功指标：
+{indicators_json}
+"""
 
-        ## 检索问题规则
-        1. retrieval_query 用于检索书籍中的分析原理与解释方法，只输出一条完整中文问题，最多 100 字符。
-        2. 问题必须对应 content 中的指标及其状态，保留必要的指标关系与统计窗口，不引入缺失指标或无关分析维度。
+    system_prompt = build_system_prompt(instruction, example)
+    system_prompt_with_schema = build_system_prompt(
+        instruction, example, pydantic_schema
+    )
 
-        ## 表格格式模板
-        ### {{指标中文名称}}
 
-        | 字段 | 内容 |
-        | --- | --- |
-        | 指标标识 | {{indicator_id}} |
-        | {{field_labels 中对应原始字段的固定中文名称}} | {{对应原始值}} |
-        | {{field_labels 中对应计算字段的固定中文名称}} | {{对应计算值}} |
-        | 指标分数 | {{score}} |
-        | 观测日期 | {{observed_at}} |
-        | 来源链接 | {{url}} |
-
-        ## 参考示例（完整输出）
-        {example_json}"""
-    task_template = """\
-        ## 任务上下文
-        - 分析对象：{analysis_subject}
-        - 技能：{skill_name}
-        - 成功指标：
-        {indicators_json}"""
-
+def skill_output_messages(
+    analysis_subject: str, skill_name: str, indicators: list[dict[str, Any]]
+) -> list[BaseMessage]:
+    """分开表格和检索问题的生成规则与本轮成功指标数据。"""
     return [
-        SystemMessage(
-            content=system_template.format(
-                example_json=json.dumps(example_output, ensure_ascii=False, indent=2)
-            )
-        ),
+        SystemMessage(content=SkillOutputPrompt.system_prompt_with_schema),
         HumanMessage(
-            content=task_template.format(
+            content=SkillOutputPrompt.user_prompt.format(
                 analysis_subject=analysis_subject,
                 skill_name=skill_name,
                 indicators_json=json.dumps(indicators, ensure_ascii=False, indent=2),

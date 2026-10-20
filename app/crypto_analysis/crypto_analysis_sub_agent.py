@@ -16,7 +16,6 @@ from langchain_core.messages import (
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from pydantic import BaseModel, ConfigDict, Field
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
@@ -42,6 +41,7 @@ from prompts.crypto_analysis_calculate_metrics import (
     calculate_metrics_messages,
 )
 from prompts.crypto_analysis_skill_content import (
+    SkillOutput,
     skill_output_messages,
 )
 
@@ -137,18 +137,6 @@ async def _retrieve_thought_context(
                 path=settings.thought_retrieval_capture_path,
             )
         return result
-
-
-class SkillOutput(BaseModel):
-    """同次调用生成指标表格和对应的理论检索问题。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    content: str = Field(min_length=1, description="完整的中文 Markdown 指标表格")
-    retrieval_query: str = Field(
-        min_length=1,
-        max_length=300,
-        description="依据表格指标状态提炼的一条理论检索问题，不提前给出结论",
-    )
 
 
 @trace_generation_call(

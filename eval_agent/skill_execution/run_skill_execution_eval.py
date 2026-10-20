@@ -26,7 +26,7 @@ from langfuse import Evaluation, Langfuse, get_client
 from langfuse.api import DatasetItem
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.core.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
@@ -38,6 +38,7 @@ from app.crypto_analysis.crypto_analysis_sub_agent import (
 )
 from app.crypto_analysis.metric_service import _log_reason
 from app.crypto_analysis.skill_loader import LoadedSkill
+from app.crypto_analysis.tools.registry import get_tool_registry
 from app.llm.model import (
     _make_bailian_llm,
     make_bailian_fast_llm,
@@ -88,14 +89,6 @@ class SourceResponse(BaseModel):
     raw: dict[str, Any] | None = None
     error: str | None = Field(default=None, min_length=1)
 
-    @model_validator(mode="after")
-    def valid_response(self) -> "SourceResponse":
-        if self.source not in SOURCE_TARGETS:
-            raise ValueError("回放数据源未注册")
-        if (self.raw is None) == (self.error is None):
-            raise ValueError("raw 与 error 必须且只能提供一个")
-        return self
-
 
 class SkillExecutionScope(BaseModel):
     """保留真实技能节点收到的请求范围；as_of 仅为原有展示时间。"""
@@ -130,16 +123,6 @@ class SourceReplayConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     source_responses: list[SourceResponse] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def unique_responses(self) -> "SourceReplayConfig":
-        identifiers = [
-            (item.source, json.dumps(item.arguments, sort_keys=True))
-            for item in self.source_responses
-        ]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("同一数据源和参数不能配置多个回放响应")
-        return self
 
 
 class IndicatorResult(BaseModel):
@@ -283,9 +266,42 @@ def load_cases(path: Path) -> list[SkillExecutionCase]:
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         try:
             case = SkillExecutionCase.model_validate_json(line)
+            for metric in json.loads(line)["input"]["skill"]["scoring"]["metrics"]:
+                weight = metric["weight"]
+                if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                    raise ValueError("指标权重必须是数值")  # noqa: TRY004 - 沿用配置错误类型。
+            ids = [metric.id for metric in case.input.skill.scoring.metrics]
+            if len(ids) != len(set(ids)):
+                raise ValueError("Skill 指标重复")
+            if (
+                abs(
+                    sum(metric.weight for metric in case.input.skill.scoring.metrics)
+                    - 1
+                )
+                > 1e-06
+            ):
+                raise ValueError("Skill 指标权重总和必须为 1")
+            if len(case.input.skill.tools) != len(set(case.input.skill.tools)):
+                raise ValueError("Skill 工具名称重复")
+            unknown = set(case.input.skill.tools) - get_tool_registry().keys()
+            if unknown:
+                raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
+            for item in case.replay.source_responses:
+                if item.source not in SOURCE_TARGETS:
+                    raise ValueError("回放数据源未注册")
+                if (item.raw is None) == (item.error is None):
+                    raise ValueError("raw 与 error 必须且只能提供一个")
+            response_identifiers = [
+                (item.source, json.dumps(item.arguments, sort_keys=True))
+                for item in case.replay.source_responses
+            ]
+            if len(response_identifiers) != len(set(response_identifiers)):
+                raise ValueError("同一数据源和参数不能配置多个回放响应")
         except ValidationError as exc:
             errors = exc.errors(include_input=False, include_url=False)
             raise ValueError(f"{path}:{number} 案例格式错误：{errors}") from None
+        except ValueError as exc:
+            raise ValueError(f"{path}:{number} 案例格式错误：{exc}") from None
         if case.metadata.case_id in identifiers:
             raise ValueError(f"{path}:{number} 案例标识重复：{case.metadata.case_id}")
         skill = case.input.skill
@@ -388,6 +404,27 @@ async def evaluate_skill(
     timeout_seconds: float,
 ) -> SkillExecutionOutput:
     """真实模型选择工具，只替换取数返回，沿用生产计算器、重试与单次超时。"""
+    ids = [metric.id for metric in inputs.skill.scoring.metrics]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Skill 指标重复")
+    if abs(sum(metric.weight for metric in inputs.skill.scoring.metrics) - 1) > 1e-06:
+        raise ValueError("Skill 指标权重总和必须为 1")
+    if len(inputs.skill.tools) != len(set(inputs.skill.tools)):
+        raise ValueError("Skill 工具名称重复")
+    unknown = set(inputs.skill.tools) - get_tool_registry().keys()
+    if unknown:
+        raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
+    for item in replay_config.source_responses:
+        if item.source not in SOURCE_TARGETS:
+            raise ValueError("回放数据源未注册")
+        if (item.raw is None) == (item.error is None):
+            raise ValueError("raw 与 error 必须且只能提供一个")
+    response_identifiers = [
+        (item.source, json.dumps(item.arguments, sort_keys=True))
+        for item in replay_config.source_responses
+    ]
+    if len(response_identifiers) != len(set(response_identifiers)):
+        raise ValueError("同一数据源和参数不能配置多个回放响应")
     skill = inputs.skill
     replay = ReplayState(responses=replay_config.source_responses)
     # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
@@ -906,6 +943,10 @@ def main() -> None:
 
     async def task(*, item: DatasetItem) -> dict[str, Any] | None:
         inputs = SkillExecutionInput.model_validate(item.input)
+        for metric in item.input["skill"]["scoring"]["metrics"]:
+            weight = metric["weight"]
+            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                raise ValueError("指标权重必须是数值")  # noqa: TRY004 - 沿用配置错误类型。
         replay_config = SourceReplayConfig.model_validate(item.metadata["replay"])
         output = await evaluate_skill(
             client, inputs, replay_config, args.timeout_seconds

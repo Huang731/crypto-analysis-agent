@@ -21,7 +21,7 @@ from langchain_community.chat_models.tongyi import ChatTongyi
 from langchain_core.callbacks import AsyncCallbackManagerForLLMRun
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import LanguageModelInput
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.runnables import RunnableBinding, RunnableConfig
 from langchain_openai import ChatOpenAI
@@ -29,7 +29,6 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, SecretStr
 
 from app.core.config import settings
-from prompts.structured_output import structured_output_instruction
 
 _Schema = TypeVar("_Schema", bound=BaseModel)
 
@@ -194,21 +193,15 @@ async def ainvoke_structured(
         parameters = model.kwargs
         config = model.config
         model = model.bound
-    request_messages = messages
     if isinstance(model, ChatOpenAI):
         structured = model.with_structured_output(schema, method="json_mode")
-        # 格式要求放在末尾的用户消息中，保留原始消息且不增加系统消息。
-        request_messages = [
-            *messages,
-            HumanMessage(content=structured_output_instruction(schema).content),
-        ]
     else:
         structured = model.with_structured_output(
             schema, method="function_calling", tool_choice="required"
         )
     return await ainvoke_model(
         structured.bind(**parameters).with_config(config),
-        request_messages,
+        messages,
         timeout=timeout,
     )
 

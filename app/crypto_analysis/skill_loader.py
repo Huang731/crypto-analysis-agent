@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import ClassVar, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import settings
 from app.core.observability import get_logger
@@ -68,27 +68,11 @@ class MetricRule(BaseModel):
     weight: float = Field(gt=0, le=1, allow_inf_nan=False)
     kind: Literal["numeric", "text"]
 
-    @field_validator("weight", mode="before")
-    @classmethod
-    def numeric_weight(cls, value):
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError("指标权重必须是数值")  # noqa: TRY004 - Pydantic 捕获 ValueError。
-        return value
-
 
 class SkillScoring(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, strict=True)
     metrics: list[MetricRule] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def valid_metrics(self):
-        ids = [metric.id for metric in self.metrics]
-        if len(ids) != len(set(ids)):
-            raise ValueError("Skill 指标重复")
-        if abs(sum(metric.weight for metric in self.metrics) - 1) > 1e-6:
-            raise ValueError("Skill 指标权重总和必须为 1")
-        return self
 
 
 class LoadedSkill(BaseModel):
@@ -96,17 +80,6 @@ class LoadedSkill(BaseModel):
     description: str
     tools: list[str] = Field(min_length=1)
     scoring: SkillScoring
-
-    @field_validator("tools")
-    @classmethod
-    def valid_tools(cls, names: list[str]) -> list[str]:
-        """加载时拒绝重复或未注册工具，不补充默认工具。"""
-        if len(names) != len(set(names)):
-            raise ValueError("Skill 工具名称重复")
-        unknown = set(names) - get_tool_registry().keys()
-        if unknown:
-            raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
-        return names
 
 
 @dataclass
@@ -190,12 +163,27 @@ class SkillLoader:
                 if name not in self._sources:
                     raise ValueError(f"skill '{name}' 不存在")
                 data, _ = _parse_document(self._sources[name])
-                self._definitions[name] = LoadedSkill(
-                    name=data["name"],
-                    description=data["description"],
-                    tools=data["tools"],
-                    scoring=SkillScoring.model_validate(data["scoring"]),
-                )
+                definition = LoadedSkill.model_validate(data)
+                for metric in data["scoring"]["metrics"]:
+                    weight = metric["weight"]
+                    if isinstance(weight, bool) or not isinstance(weight, (int, float)):
+                        raise ValueError("指标权重必须是数值")  # noqa: TRY004 - 沿用配置错误类型。
+                ids = [metric.id for metric in definition.scoring.metrics]
+                if len(ids) != len(set(ids)):
+                    raise ValueError("Skill 指标重复")
+                if (
+                    abs(sum(metric.weight for metric in definition.scoring.metrics) - 1)
+                    > 1e-6
+                ):
+                    raise ValueError("Skill 指标权重总和必须为 1")
+                if len(definition.tools) != len(set(definition.tools)):
+                    raise ValueError("Skill 工具名称重复")
+                unknown = set(definition.tools) - get_tool_registry().keys()
+                if unknown:
+                    raise ValueError(
+                        f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}"
+                    )
+                self._definitions[name] = definition
             except (ValueError, yaml.YAMLError) as exc:
                 raise ValueError(f"Skill {name} 配置无效：{exc}") from exc
         return self._definitions[name]

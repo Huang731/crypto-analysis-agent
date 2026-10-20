@@ -2,18 +2,11 @@
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
-
-def routing_messages(question: str) -> list[BaseMessage]:
-    """分开路由系统规则与本轮已改写问题。"""
-    return [
-        SystemMessage(content=routing_prompt()),
-        HumanMessage(content=question),
-    ]
+from prompts.common import build_system_prompt
 
 
-def routing_prompt() -> str:
-    """按任务目的选择加密分析或主题研究，只返回 Agent 名称。"""
-    return """\
+class RoutingPrompt:
+    instruction = """\
 # Role
 你是任务路由员。请根据用户问题的【核心任务目的】，从下方两个 Agent 中选择唯一匹配项。
 
@@ -36,7 +29,9 @@ def routing_prompt() -> str:
 # 核心注意事项
 - 必须按【任务目的】判断，不能仅凭出现币名或"行情/投资/指标"等关键词就选择加密分析。
 - 已明确币种的综合分析或仓位决策，不属于"意图不明确"，必须路由至 crypto_analysis_agent。
+"""
 
+    example = """\
 # Few-Shot 示例
 分析比特币（BTC） → crypto_analysis_agent
 比特币（BTC）现在可以加仓吗？ → crypto_analysis_agent
@@ -50,3 +45,17 @@ def routing_prompt() -> str:
 只输出 `crypto_analysis_agent` 或 `topic_research_agent`。
 禁止输出 JSON、解释、标点符号或任何其他多余内容。
 """
+
+    user_prompt = """\
+{question}
+"""
+
+    system_prompt = build_system_prompt(instruction, example)
+
+
+def routing_messages(question: str) -> list[BaseMessage]:
+    """分开路由系统规则与本轮已改写问题。"""
+    return [
+        SystemMessage(content=RoutingPrompt.system_prompt),
+        HumanMessage(content=RoutingPrompt.user_prompt.format(question=question)),
+    ]

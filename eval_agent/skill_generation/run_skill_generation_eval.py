@@ -14,7 +14,7 @@ import truststore
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import convert_to_openai_messages
 from langfuse import Evaluation, Langfuse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.config import PROJECT_ROOT, settings
@@ -51,16 +51,6 @@ class ThoughtContext(BaseModel):
     status: Literal["ok", "no_results", "error"]
     documents: list[DocumentEvidence]
 
-    @model_validator(mode="after")
-    def valid_documents(self) -> "ThoughtContext":
-        if (self.status == "ok") != bool(self.documents):
-            raise ValueError("检索状态与固定材料不一致")
-        if len({doc.id for doc in self.documents}) != len(self.documents):
-            raise ValueError("思想材料 ID 重复")
-        if any(not doc.metadata.get("section") for doc in self.documents):
-            raise ValueError("思想材料必须有来源章节")
-        return self
-
 
 class GenerationInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -74,25 +64,6 @@ class GenerationInput(BaseModel):
     fixed_response: str | None = None
     source_generation_duration_ms: float | None = Field(default=None, ge=0)
 
-    @model_validator(mode="after")
-    def valid_input(self) -> "GenerationInput":
-        loader = SkillLoader.from_snapshot({self.skill_name: self.skill_source})
-        skill = loader.load_definition(self.skill_name)
-        if self.result.skill_name != self.skill_name:
-            raise ValueError("指标所属技能不一致")
-        if [item.indicator_id for item in self.result.indicators] != [
-            metric.id for metric in skill.scoring.metrics
-        ]:
-            raise ValueError("固定指标与 Skill 配置不一致")
-        if (self.mode != "generation") != (self.fixed_response is not None):
-            raise ValueError("固定正文回放与校准必须提供回答，直接生成不能提供固定回答")
-        if (
-            self.mode == "response_replay"
-            and self.source_generation_duration_ms is None
-        ):
-            raise ValueError("正文回放必须保留原生成耗时")
-        return self
-
 
 class Expected(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -101,14 +72,6 @@ class Expected(BaseModel):
     faithfulness_max: float = Field(default=1, ge=0, le=1)
     answer_relevancy_min: float = Field(default=0.75, ge=0, le=1)
     answer_relevancy_max: float = Field(default=1, ge=0, le=1)
-
-    @model_validator(mode="after")
-    def valid_ranges(self) -> "Expected":
-        if self.faithfulness_min > self.faithfulness_max:
-            raise ValueError("忠实度区间无效")
-        if self.answer_relevancy_min > self.answer_relevancy_max:
-            raise ValueError("相关性区间无效")
-        return self
 
 
 class GenerationCaseMetadata(CaseMetadata):
@@ -120,17 +83,6 @@ class GenerationCaseMetadata(CaseMetadata):
     thought_context_origin: (
         Literal["fixed_local_knowledge_chunk", "no_documents"] | None
     ) = None
-
-    @model_validator(mode="after")
-    def complete_source(self) -> "GenerationCaseMetadata":
-        source = (
-            self.source_execution_report,
-            self.source_execution_case_id,
-            self.source_execution_sha256,
-        )
-        if any(source) and not all(source):
-            raise ValueError("计算输出来源必须同时提供文件、案例标识和文件哈希")
-        return self
 
 
 class Case(BaseModel):
@@ -193,6 +145,53 @@ def load_cases(path: Path) -> list[Case]:
         raise ValueError("案例为空或 ID 重复")
     reports: dict[str, tuple[str, dict[str, Any]]] = {}
     for case in cases:
+        if (case.input.thought_context.status == "ok") != bool(
+            case.input.thought_context.documents
+        ):
+            raise ValueError("检索状态与固定材料不一致")
+        if len({doc.id for doc in case.input.thought_context.documents}) != len(
+            case.input.thought_context.documents
+        ):
+            raise ValueError("思想材料 ID 重复")
+        if any(
+            not doc.metadata.get("section")
+            for doc in case.input.thought_context.documents
+        ):
+            raise ValueError("思想材料必须有来源章节")
+        loader = SkillLoader.from_snapshot(
+            {case.input.skill_name: case.input.skill_source}
+        )
+        skill = loader.load_definition(case.input.skill_name)
+        if case.input.result.skill_name != case.input.skill_name:
+            raise ValueError("指标所属技能不一致")
+        if [item.indicator_id for item in case.input.result.indicators] != [
+            metric.id for metric in skill.scoring.metrics
+        ]:
+            raise ValueError("固定指标与 Skill 配置不一致")
+        if (case.input.mode != "generation") != (case.input.fixed_response is not None):
+            raise ValueError("固定正文回放与校准必须提供回答，直接生成不能提供固定回答")
+        if (
+            case.input.mode == "response_replay"
+            and case.input.source_generation_duration_ms is None
+        ):
+            raise ValueError("正文回放必须保留原生成耗时")
+        if (
+            case.expected_output.faithfulness_min
+            > case.expected_output.faithfulness_max
+        ):
+            raise ValueError("忠实度区间无效")
+        if (
+            case.expected_output.answer_relevancy_min
+            > case.expected_output.answer_relevancy_max
+        ):
+            raise ValueError("相关性区间无效")
+        source = (
+            case.metadata.source_execution_report,
+            case.metadata.source_execution_case_id,
+            case.metadata.source_execution_sha256,
+        )
+        if any(source) and (not all(source)):
+            raise ValueError("计算输出来源必须同时提供文件、案例标识和文件哈希")
         source = case.metadata
         if source.source_execution_report is None:
             continue
@@ -391,6 +390,31 @@ def indicator_table_checks(
 async def evaluate(
     client: Langfuse, inputs: GenerationInput, judge_model: str
 ) -> dict[str, Any]:
+    if (inputs.thought_context.status == "ok") != bool(
+        inputs.thought_context.documents
+    ):
+        raise ValueError("检索状态与固定材料不一致")
+    if len({doc.id for doc in inputs.thought_context.documents}) != len(
+        inputs.thought_context.documents
+    ):
+        raise ValueError("思想材料 ID 重复")
+    if any(not doc.metadata.get("section") for doc in inputs.thought_context.documents):
+        raise ValueError("思想材料必须有来源章节")
+    loader = SkillLoader.from_snapshot({inputs.skill_name: inputs.skill_source})
+    skill = loader.load_definition(inputs.skill_name)
+    if inputs.result.skill_name != inputs.skill_name:
+        raise ValueError("指标所属技能不一致")
+    if [item.indicator_id for item in inputs.result.indicators] != [
+        metric.id for metric in skill.scoring.metrics
+    ]:
+        raise ValueError("固定指标与 Skill 配置不一致")
+    if (inputs.mode != "generation") != (inputs.fixed_response is not None):
+        raise ValueError("固定正文回放与校准必须提供回答，直接生成不能提供固定回答")
+    if (
+        inputs.mode == "response_replay"
+        and inputs.source_generation_duration_ms is None
+    ):
+        raise ValueError("正文回放必须保留原生成耗时")
     generation_counter, judge_counter = CallCounter(), CallCounter()
     active_stage: str | None = None
     started = 0.0
@@ -554,32 +578,6 @@ async def evaluate(
                     class GroundedJudgment(Judgment):
                         """核对待评句子完整性及证据编号，事实支持由裁判判断。"""
 
-                        @model_validator(mode="after")
-                        def validate_judgment(self) -> "GroundedJudgment":
-                            ids = [claim.response_id for claim in self.claims]
-                            if len(ids) != len(set(ids)) or set(ids) != set(statements):
-                                raise ValueError(
-                                    "裁判必须逐一评估全部正文句子，不能增删重复"
-                                )
-                            if set(self.field_mappings) != set(required) or any(
-                                set(self.field_mappings[metric_id]) != set(fields)
-                                for metric_id, fields in required.items()
-                            ):
-                                raise ValueError("裁判字段映射必须覆盖全部要求字段")
-                            if any(
-                                label and label not in tables.get(metric_id, {})
-                                for metric_id, mapping in self.field_mappings.items()
-                                for label in mapping.values()
-                            ):
-                                raise ValueError("裁判映射行名必须逐字来自原表格")
-                            for claim in self.claims:
-                                ids = set(claim.evidence_ids)
-                                if not ids <= contexts.keys() or (
-                                    claim.supported and not ids
-                                ):
-                                    raise ValueError("裁判未引用有效证据")
-                            return self
-
                     schema = GroundedJudgment.model_json_schema()
                     schema["properties"]["field_mappings"] = {
                         "type": "object",
@@ -643,11 +641,38 @@ async def evaluate(
                     )
                     async def invoke_judge() -> Judgment:
                         """只重试裁判请求与结构化校验，保留整体超时。"""
-                        return await ainvoke_structured(
+                        judgment = await ainvoke_structured(
                             judge.bind(enable_thinking=False),
                             judge_messages,
                             schema=GroundedJudgment,
                         )
+                        ids = [claim.response_id for claim in judgment.claims]
+                        if len(ids) != len(set(ids)) or set(ids) != set(statements):
+                            raise ValueError(
+                                "裁判必须逐一评估全部正文句子，不能增删重复"
+                            )
+                        if set(judgment.field_mappings) != set(required) or any(
+                            (
+                                set(judgment.field_mappings[metric_id]) != set(fields)
+                                for metric_id, fields in required.items()
+                            )
+                        ):
+                            raise ValueError("裁判字段映射必须覆盖全部要求字段")
+                        if any(
+                            (
+                                label and label not in tables.get(metric_id, {})
+                                for metric_id, mapping in judgment.field_mappings.items()
+                                for label in mapping.values()
+                            )
+                        ):
+                            raise ValueError("裁判映射行名必须逐字来自原表格")
+                        for claim in judgment.claims:
+                            ids = set(claim.evidence_ids)
+                            if not ids <= contexts.keys() or (
+                                claim.supported and (not ids)
+                            ):
+                                raise ValueError("裁判未引用有效证据")
+                        return judgment
 
                     with client.start_as_current_observation(
                         as_type="generation",
@@ -785,6 +810,10 @@ async def evaluate(
 
 
 def case_pass(output: dict[str, Any], expected: Expected, mode: str) -> bool:
+    if expected.faithfulness_min > expected.faithfulness_max:
+        raise ValueError("忠实度区间无效")
+    if expected.answer_relevancy_min > expected.answer_relevancy_max:
+        raise ValueError("相关性区间无效")
     if output["execution_status"] != "success" or output["skipped"] != expected.skipped:
         return False
     if output.get("assessment_scope") == "indicator_tables":

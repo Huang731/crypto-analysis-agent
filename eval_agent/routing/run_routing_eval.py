@@ -21,7 +21,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import make_glm_4_flash_llm, model_session
 from app.routing.graph import _invoke_route_decision
-from prompts.router import routing_messages, routing_prompt
+from prompts.router import RoutingPrompt, routing_messages
 
 
 class RoutingInput(BaseModel):
@@ -75,7 +75,7 @@ async def evaluate_route(
         as_type="span",
         name="routing.invoke",
         input={
-            "system_prompt": routing_prompt(),
+            "system_prompt": RoutingPrompt.system_prompt,
             "resolved_question": question.resolved_question,
         },
         metadata={"model": settings.glm_4_flash_model},
@@ -264,7 +264,9 @@ def main() -> None:
         parser.error("未配置 ZHIPUAI_API_KEY")
     metadata = {
         "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
-        "prompt_sha256": hashlib.sha256(routing_prompt().encode("utf-8")).hexdigest(),
+        "prompt_sha256": hashlib.sha256(
+            RoutingPrompt.system_prompt.encode("utf-8")
+        ).hexdigest(),
         "code_revision": subprocess.run(
             ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
         ).stdout.strip(),

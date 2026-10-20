@@ -87,6 +87,9 @@ def load_cases(path: Path, catalog_names: list[str]) -> list[PlanningCase]:
             raise ValueError(f"{path}:{number} 案例格式错误：{errors}") from None
         if case.metadata.case_id in identifiers:
             raise ValueError(f"{path}:{number} 案例标识重复：{case.metadata.case_id}")
+        case.expected_output.skill_names = list(
+            dict.fromkeys(case.expected_output.skill_names)
+        )
         names = case.expected_output.skill_names
         unknown = set(names) - set(catalog_names)
         if unknown:
@@ -143,6 +146,9 @@ async def evaluate_plan(
 
 def compare_plan(actual: PlanningOutput, expected: AnalysisPlan) -> dict[str, bool]:
     """技能按完整列表比较，漏选、多选和顺序错误均不通过。"""
+    expected.skill_names = list(dict.fromkeys(expected.skill_names))
+    if actual.plan is not None:
+        actual.plan.skill_names = list(dict.fromkeys(actual.plan.skill_names))
     success = actual.execution_status == "success" and actual.plan is not None
     scores = {
         "execution_success": success,
@@ -159,7 +165,10 @@ def compare_plan(actual: PlanningOutput, expected: AnalysisPlan) -> dict[str, bo
 def score_plan(*, output: Any, expected_output: Any, **kwargs: Any) -> list[Evaluation]:
     """一次生成五项确定性评分，不调用裁判模型。"""
     actual = PlanningOutput.model_validate(output)
+    if actual.plan is not None:
+        actual.plan.skill_names = list(dict.fromkeys(actual.plan.skill_names))
     expected = AnalysisPlan.model_validate(expected_output)
+    expected.skill_names = list(dict.fromkeys(expected.skill_names))
     actual_names = actual.plan.skill_names if actual.plan is not None else []
     details = {
         "execution_status": actual.execution_status,
@@ -187,7 +196,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     durations: list[float] = []
     for row in rows:
         actual = PlanningOutput.model_validate(row["output"])
+        if actual.plan is not None:
+            actual.plan.skill_names = list(dict.fromkeys(actual.plan.skill_names))
         expected = AnalysisPlan.model_validate(row["expected_output"])
+        expected.skill_names = list(dict.fromkeys(expected.skill_names))
         comparison = compare_plan(actual, expected)
         scores.update({name: int(correct) for name, correct in comparison.items()})
         statuses[actual.execution_status] += 1

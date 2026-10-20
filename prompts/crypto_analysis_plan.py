@@ -3,7 +3,7 @@
 import json
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from prompts.common import build_system_prompt
 
@@ -18,12 +18,6 @@ class AnalysisPlan(BaseModel):
         strict=True,
         description="用户是否明确要求重新获取数据，跳过已有技能缓存",
     )
-
-    @field_validator("skill_names")
-    @classmethod
-    def unique_skill_names(cls, names: list[str]) -> list[str]:
-        """按首次出现顺序去重，避免并行派发同一技能多次。"""
-        return list(dict.fromkeys(names))
 
 
 class AnalysisPlanPrompt:

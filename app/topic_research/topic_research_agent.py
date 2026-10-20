@@ -15,7 +15,6 @@ from langchain.agents.middleware.types import (
 from langchain_core.messages import (  # 工具 Agent 的消息交互。
     AIMessage,
     BaseMessage,
-    HumanMessage,
 )
 from langgraph.graph import END, START, StateGraph  # 保留原有父图和子图结构。
 from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图。
@@ -39,7 +38,7 @@ from app.topic_research.topic_research_state import (  # 使用主题研究专�
     SystemState,
 )
 from prompts.topic_research import (  # 提示词与节点逻辑分离。
-    research_continue_prompt,
+    research_continue_messages,
     research_messages,
     review_messages,
     split_messages,
@@ -242,11 +241,9 @@ def make_researcher(
                     **result,
                     "messages": [
                         *result["messages"],
-                        HumanMessage(
-                            content=research_continue_prompt(
-                                candidate_urls,
-                                searched_queries,
-                            )
+                        *research_continue_messages(
+                            candidate_urls,
+                            searched_queries,
                         ),
                     ],
                 }

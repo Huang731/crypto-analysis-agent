@@ -17,7 +17,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 import truststore
 from langfuse import Langfuse
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict
 
 from app.core.config import PROJECT_ROOT, settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
@@ -25,7 +25,10 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     _invoke_report_review,
 )
 from app.llm.model import make_glm_smart_llm, model_session
-from eval_agent.prompts.report_eval import reviewer_evaluation_question
+from eval_agent.prompts.report_eval import (
+    reviewer_evaluation_messages,
+    reviewer_target_messages,
+)
 from eval_agent.writer.run_writer_eval import (
     EvalSettings,
     WriterInput,
@@ -47,18 +50,15 @@ class ReviewerCase(BaseModel):
     expected_output: ReportReview
     metadata: WriterMetadata
 
-    @model_validator(mode="after")
-    def validate_snapshot(self) -> ReviewerCase:
-        if (
-            content_sha256(self.input.model_dump(mode="json"))
-            != self.metadata.input_sha256
-        ):
-            raise ValueError("案例输入与快照哈希不一致")
-        return self
-
 
 def build_evidence(case: ReviewerCase) -> dict[str, Any]:
     """审核原文与本轮证据分别标明，不使用历史摘要或人工参考。"""
+    if [message.type for message in case.input.root] != ["system", "human"]:
+        raise ValueError("writer 案例必须保留一条 system 和一条 human 消息")
+    if not case.expected_output.passed and not case.expected_output.feedback:
+        raise ValueError("报告审核不通过时必须提供修改意见")
+    if content_sha256(case.input.model_dump(mode="json")) != case.metadata.input_sha256:
+        raise ValueError("案例输入与快照哈希不一致")
     human = case.input.root[1].data.content
     scope, payload = human.split("## 任务上下文", 1)[1].split(
         "## 本轮证据（技能表格及对应思想原文）", 1
@@ -99,9 +99,9 @@ def build_evidence(case: ReviewerCase) -> dict[str, Any]:
     if any("USDT与USDC合计市值" in skill["content"] for skill in skills):
         contexts.append("本项目中，稳定币总市值是USDT与USDC合计市值的简称。")
     return {
-        "user_input": reviewer_evaluation_question(
+        "user_input": reviewer_evaluation_messages(
             asset.strip(), question, report.strip()
-        ),
+        )[0].content,
         "retrieved_contexts": contexts,
     }
 
@@ -161,7 +161,7 @@ async def evaluate(
                 review = await asyncio.wait_for(
                     _invoke_report_review(
                         make_glm_smart_llm(async_client=http),
-                        case.input.to_messages(),
+                        reviewer_target_messages(case.input.to_messages()),
                     ),
                     timeout=250,
                 )

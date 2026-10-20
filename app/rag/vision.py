@@ -20,7 +20,7 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.llm.model import invoke_vision
-from prompts.rag_vision import answer_with_image_prompt, describe_image_prompt
+from prompts.rag_vision import answer_with_image_messages, describe_image_messages
 
 # 描述缓存目录（落盘，按图片哈希去重）
 _CACHE_DIR = Path(settings.docs_dir).parent / "vision_cache"
@@ -82,17 +82,7 @@ def _call_vlm_describe(image_bytes: bytes) -> str:
     b64 = base64.b64encode(image_bytes).decode()
     data_url = f"data:image/png;base64,{b64}"
 
-    resp = invoke_vision(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                    {"type": "text", "text": describe_image_prompt()},
-                ],
-            }
-        ]
-    )
+    resp = invoke_vision(describe_image_messages(data_url))
     if not isinstance(resp.content, str):
         raise TypeError("百炼视觉模型未返回文本内容")
     return resp.content.strip()
@@ -121,20 +111,7 @@ def answer_with_image(
     b64 = base64.b64encode(image_bytes).decode()
     data_url = f"data:image/png;base64,{b64}"
 
-    resp = invoke_vision(
-        [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                    {
-                        "type": "text",
-                        "text": answer_with_image_prompt(question),
-                    },
-                ],
-            }
-        ]
-    )
+    resp = invoke_vision(answer_with_image_messages(data_url, question))
     if not isinstance(resp.content, str):
         raise TypeError("百炼视觉模型未返回文本内容")
     return resp.content.strip()

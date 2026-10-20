@@ -19,7 +19,7 @@ import httpx
 import truststore
 from langchain_core.messages import BaseMessage, HumanMessage, messages_from_dict
 from langfuse import Evaluation, Langfuse
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
@@ -60,12 +60,6 @@ class CapturedMessage(BaseModel):
 
 
 class WriterInput(RootModel[list[CapturedMessage]]):
-    @model_validator(mode="after")
-    def validate_roles(self) -> WriterInput:
-        if [message.type for message in self.root] != ["system", "human"]:
-            raise ValueError("writer 案例必须保留一条 system 和一条 human 消息")
-        return self
-
     def to_messages(self) -> list[BaseMessage]:
         return messages_from_dict(self.model_dump(mode="json"))
 
@@ -145,6 +139,8 @@ def decode_section(text: str) -> Any:
 
 
 def build_evidence(case: WriterCase) -> WriterEvidence:
+    if [message.type for message in case.input.root] != ["system", "human"]:
+        raise ValueError("writer 案例必须保留一条 system 和一条 human 消息")
     human = case.input.root[1].data.content
     scope, payload = human.split("## 任务上下文", 1)[1].split("## 各技能指标表格", 1)
     target, question = scope.split("- **目标资产**：", 1)[1].split(

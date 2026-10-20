@@ -10,12 +10,6 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Overwrite, Send, StreamWriter
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    model_validator,
-)
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
@@ -41,7 +35,7 @@ from app.llm.model import (
 )
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
-from prompts.crypto_analysis_reviewer import analysis_review_messages
+from prompts.crypto_analysis_reviewer import ReportReview, analysis_review_messages
 from prompts.crypto_analysis_summarize_history import (
     history_summary_messages,
 )
@@ -103,26 +97,6 @@ async def _invoke_report_text(
 # 请求规划模型
 
 
-class ReportReview(BaseModel):
-    """审核返回证据核对记录、是否通过和修改意见，不修改技能证据。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    review_process: str = Field(
-        strict=True,
-        min_length=1,
-        description="逐项对照报告原文与证据原文或表格数据的具体核对记录",
-    )
-    passed: bool = Field(strict=True, description="报告是否符合本轮证据和用户问题")
-    feedback: str = Field(strict=True, description="不通过时的具体问题、依据及修改要求")
-
-    @model_validator(mode="after")
-    def require_rework_feedback(self) -> "ReportReview":
-        """拒绝没有修改目标的不通过结果，使解析错误进入调用重试。"""
-        if not self.passed and not self.feedback:
-            raise ValueError("报告审核不通过时必须提供修改意见")
-        return self
-
-
 @trace_generation_call(
     name="crypto_report_review",
     model=settings.glm_smart_model,
@@ -142,6 +116,8 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
     review = await ainvoke_structured(llm, messages, schema=ReportReview)
     if review is None:
         raise ValueError("审核模型返回了空结果")
+    if not review.passed and not review.feedback:
+        raise ValueError("报告审核不通过时必须提供修改意见")
     return review
 
 
@@ -164,6 +140,8 @@ async def _invoke_analysis_plan(llm: Any, messages: list[BaseMessage]) -> Analys
     plan = await ainvoke_structured(llm, messages, schema=AnalysisPlan)
     if plan is None:
         raise ValueError("规划模型返回了空计划")
+    # 按首次出现顺序去重，避免并行派发同一技能多次。
+    plan.skill_names = list(dict.fromkeys(plan.skill_names))
     return plan
 
 

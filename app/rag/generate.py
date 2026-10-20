@@ -5,12 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 from app.llm.model import make_bailian_smart_llm
-from prompts.rag_generate import SAFE_SYSTEM_PROMPT
-
-_SYSTEM_PROMPT = SAFE_SYSTEM_PROMPT
+from prompts.rag_generate import rag_generate_messages
 
 
 def build_context(docs: list[Document]) -> str:
@@ -25,10 +22,7 @@ async def stream_answer(
     docs: list[Document],
 ) -> AsyncIterator[str]:
     """流式生成回答，逐 token yield。"""
-    messages: list[BaseMessage] = [SystemMessage(content=_SYSTEM_PROMPT)]
-    messages.append(
-        HumanMessage(content=f"【材料】\n{build_context(docs)}\n\n【问题】{question}")
-    )
+    messages = rag_generate_messages(build_context(docs), question)
 
     llm = make_bailian_smart_llm()
     async for chunk in llm.astream(messages):
