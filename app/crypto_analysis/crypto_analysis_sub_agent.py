@@ -13,7 +13,6 @@ from langchain_core.messages import (
     BaseMessage,
     messages_to_dict,
 )
-from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from tenacity import retry, stop_after_attempt, wait_random_exponential
@@ -186,29 +185,22 @@ def skill_worker_step_limit(metric_count: int) -> int:
 
 
 class MetricModelTrace(AgentMiddleware):
-    """保留指标模型的用量追踪、单次超时与有限重试。"""
+    """指标齐全时停止调用，并保留模型追踪、单次超时与有限重试。"""
 
     async def awrap_model_call(
         self,
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """模型调用成功后采集真实输入输出，不记录工具执行和状态更新。"""
-        response = await self._invoke_model_call(request, handler)
-        if settings.calculate_metrics_capture_enabled:
-            messages = list(request.messages)
-            if request.system_message is not None:
-                messages.insert(0, request.system_message)
-            append_node_candidate(
-                node="calculate_metrics",
-                input={
-                    "messages": messages_to_dict(messages),
-                    "tools": [convert_to_openai_tool(tool) for tool in request.tools],
-                },
-                actual_output=messages_to_dict(response.result),
-                path=settings.calculate_metrics_capture_path,
-            )
-        return response
+        """已记录的指标不再重算，缺少指标时才请求模型。"""
+        skill = request.runtime.context["skill"]
+        if all(
+            metric.id in request.state["indicator_results"]
+            for metric in skill.scoring.metrics
+        ):
+            # 无工具调用的结束消息让 Agent 退出，不产生额外模型用量。
+            return ModelResponse(result=[AIMessage(content="")])
+        return await self._invoke_model_call(request, handler)
 
     @trace_generation_call(
         name="crypto_metric_decision",
@@ -347,6 +339,23 @@ def make_calculate_metrics(
             name="crypto_metric_agent",
         )
         result = await _invoke_metric_agent(agent, state)
+        if settings.calculate_metrics_capture_enabled:
+            append_node_candidate(
+                node="calculate_metrics",
+                input={
+                    "skill": state["skill"].model_dump(),
+                    "scope": state["scope"],
+                    "messages": messages_to_dict(state["messages"]),
+                    "evidence": state["evidence"],
+                    "indicator_results": state["indicator_results"],
+                },
+                actual_output={
+                    "messages": messages_to_dict(result["messages"]),
+                    "evidence": result["evidence"],
+                    "indicator_results": result["indicator_results"],
+                },
+                path=settings.calculate_metrics_capture_path,
+            )
         # 外层状态已有输入历史，只回传本轮新增消息，避免重复合并旧消息。
         new_messages = result["messages"][len(state["messages"]) :]
         return {

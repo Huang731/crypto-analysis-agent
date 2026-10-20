@@ -27,8 +27,9 @@ from langfuse.api import DatasetItem
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
 from app.crypto_analysis.crypto_analysis_sub_agent import (
     make_calculate_metrics,
@@ -47,7 +48,6 @@ from app.llm.model import (
     make_glm_4_flash_llm,
     model_session,
 )
-from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
 from prompts.crypto_analysis_calculate_metrics import (
     CalculateMetricsPrompt,
     calculate_metrics_messages,
@@ -78,6 +78,26 @@ METRIC_DATA_KINDS = {
     "M2_YoY": "m2",
     "Fed_Balance": "walcl",
 }
+
+
+class CaseMetadata(BaseModel):
+    """人工标注案例的标识、分类和判定理由。"""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    case_id: str = Field(min_length=1)
+    category: str = Field(min_length=1)
+    label_reason: str = Field(min_length=1)
+
+
+class EvalSettings(BaseSettings):
+    """沿用项目环境变量，未配置 Langfuse 密钥时明确报错。"""
+
+    model_config = SettingsConfigDict(
+        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore"
+    )
+    langfuse_public_key: str = Field(min_length=1)
+    langfuse_secret_key: str = Field(min_length=1)
+    langfuse_base_url: str = "https://cloud.langfuse.com"
 
 
 class SourceResponse(BaseModel):
@@ -459,7 +479,7 @@ async def evaluate_skill(
             graph = builder.compile()
             with client.start_as_current_observation(
                 as_type="span",
-                name="skill_execution.invoke",
+                name="calculate_metrics.invoke",
                 input=inputs.model_dump(mode="json"),
                 metadata={
                     "model": inputs.metric_agent.model,
@@ -838,13 +858,15 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="固定数据回放的独立技能执行评测")
+    parser = argparse.ArgumentParser(
+        description="固定数据回放的 calculate_metrics 节点评测"
+    )
     parser.add_argument(
         "--cases",
         type=Path,
-        default=Path(__file__).with_name("skill_execution_cases.jsonl"),
+        default=Path(__file__).with_name("calculate_metrics_cases.jsonl"),
     )
-    parser.add_argument("--dataset", default="crypto-agent-skill-execution-result")
+    parser.add_argument("--dataset", default="crypto-agent-calculate-metrics")
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--repetitions", type=int, default=1)
@@ -854,7 +876,7 @@ def main() -> None:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("eval_agent/outputs/skill_execution_eval"),
+        default=Path("eval_agent/outputs/calculate_metrics_eval"),
     )
     args = parser.parse_args()
     if args.repetitions < 1 or (args.limit is not None and args.limit < 1):
@@ -870,7 +892,7 @@ def main() -> None:
         )
         return
     run_name = args.run_name or datetime.now(timezone.utc).strftime(
-        "skill-execution-%Y%m%dT%H%M%SZ"
+        "calculate-metrics-%Y%m%dT%H%M%SZ"
     )
     output_path = args.output_dir / f"{run_name}.json"
     if Path(run_name).name != run_name or run_name in {".", ".."}:
