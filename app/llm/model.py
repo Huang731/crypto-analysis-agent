@@ -87,24 +87,6 @@ def make_bailian_fast_llm(
     )
 
 
-def make_qwen3_5_4b_llm(
-    *,
-    async_client: httpx.AsyncClient | None = None,
-    enable_thinking: bool = False,
-) -> ChatOpenAI:
-    """按节点配置 Qwen3.5-4B 的思考开关，温度统一为 0.1。"""
-    return ChatOpenAI(
-        model=settings.qwen3_5_4b_model,
-        api_key=_siliconflow_api_key,
-        base_url="https://api.siliconflow.cn/v1",
-        temperature=0.1,
-        extra_body={"enable_thinking": enable_thinking, "max_tokens": 8192},
-        use_responses_api=False,
-        stream_usage=True,
-        http_async_client=async_client,
-    )
-
-
 def make_qwen3_8b_llm(
     *,
     async_client: httpx.AsyncClient | None = None,

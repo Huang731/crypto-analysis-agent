@@ -7,19 +7,19 @@ scoring:
   name: 美元流动性与加密内部流动性
   metrics:
   - id: DXY_Trend
-    label: 美元指数 DXY
+    label: 美元指数
     weight: 0.35
     kind: numeric
   - id: Stable_MCap
-    label: 稳定币总市值 Stable_MCap
+    label: 稳定币总市值
     weight: 0.3
     kind: numeric
   - id: M2_YoY
-    label: M2 同比变化 M2_YoY
+    label: M2 同比变化
     weight: 0.2
     kind: numeric
   - id: Fed_Balance
-    label: 美联储资产负债表 WALCL
+    label: 美联储资产负债表
     weight: 0.15
     kind: numeric
 ---

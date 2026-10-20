@@ -6,6 +6,7 @@ import hashlib
 import json
 import time
 from contextlib import AsyncExitStack
+from html import unescape
 from pathlib import Path
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, uuid5
@@ -18,14 +19,15 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.config import PROJECT_ROOT, settings
-from app.crypto_analysis.crypto_analysis_sub_agent import _invoke_skill_output
+from app.crypto_analysis.crypto_analysis_sub_agent import _invoke_skill_retrieval_query
+from app.crypto_analysis.metric_renderer import render_metric_tables
 from app.crypto_analysis.metric_service import _log_reason, metric_field_labels
 from app.crypto_analysis.skill_loader import SkillLoader
 from app.llm.model import (
     ainvoke_structured,
     make_bailian_fast_llm,
     make_bailian_smart_llm,
-    make_glm_4_5_air_llm,
+    make_glm_4_flash_llm,
     model_session,
 )
 from eval_agent.planning.run_planning_eval import CaseMetadata, EvalSettings
@@ -35,7 +37,6 @@ from eval_agent.skill_execution.run_skill_execution_eval import (
     duration_summary,
     values_equal,
 )
-from prompts.crypto_analysis_skill_content import skill_output_messages
 
 
 class DocumentEvidence(BaseModel):
@@ -285,6 +286,9 @@ def parse_tables(content: str) -> tuple[dict[str, dict[str, str]], dict[str, str
 def value_matches(actual: str, expected: Any, *, allow_percent: bool = False) -> bool:
     """保留日期、精度与有效零分，支持完整列表和 Markdown 链接展示。"""
     actual = actual.strip("`* ")
+    if isinstance(expected, str):
+        actual = actual.replace("<br>", "\n")
+    actual = unescape(actual)
     if expected is None:
         return actual == "N/A"
     if isinstance(expected, bool):
@@ -347,6 +351,8 @@ def required_fields(inputs: GenerationInput) -> dict[str, dict[str, Any]]:
         fields = {
             key: values[key] for key in ("indicator_id", "score", "observed_at", "url")
         }
+        if inputs.mode == "generation":
+            fields["unit"] = values["unit"]
         for group in ("raw_values", "calculated_values"):
             fields.update(
                 {f"{group}.{key}": value for key, value in values[group].items()}
@@ -362,6 +368,7 @@ def indicator_table_checks(
     fixed_labels = {
         "indicator_id": "指标标识",
         "score": "指标分数",
+        "unit": "单位",
         "observed_at": "观测日期",
         "url": "来源链接",
     }
@@ -437,7 +444,7 @@ async def evaluate(
         async with AsyncExitStack() as stack:
             generation_http = await stack.enter_async_context(model_session())
             judge_http = await stack.enter_async_context(model_session())
-            generator = make_glm_4_5_air_llm(async_client=generation_http)
+            generator = make_glm_4_flash_llm(async_client=generation_http)
             judge_factory = (
                 make_bailian_fast_llm
                 if judge_model == settings.bailian_fast_model
@@ -456,26 +463,23 @@ async def evaluate(
                 active_stage = "generation"
                 if inputs.mode == "generation":
                     indicators = [
-                        {
-                            **item.model_dump(),
-                            "field_labels": metric_field_labels(item.indicator_id),
-                        }
+                        item.model_dump()
                         for item in inputs.result.indicators
                         if item.status == "ok"
                     ]
-                    generated = await asyncio.wait_for(
-                        _invoke_skill_output(
-                            generator.with_config(callbacks=[generation_counter]),
-                            skill_output_messages(
+                    response = render_metric_tables(skill, indicators)
+                    output["retrieval_query"] = ""
+                    if indicators:
+                        generated = await asyncio.wait_for(
+                            _invoke_skill_retrieval_query(
+                                generator.with_config(callbacks=[generation_counter]),
+                                indicators,
                                 analysis_subject=inputs.analysis_subject,
                                 skill_name=inputs.skill_name,
-                                indicators=indicators,
                             ),
-                        ),
-                        timeout=300,
-                    )
-                    response = generated.content
-                    output["retrieval_query"] = generated.retrieval_query
+                            timeout=300,
+                        )
+                        output["retrieval_query"] = generated
                 else:
                     response = inputs.fixed_response
                 output["generation_duration_ms"] = (
@@ -931,7 +935,7 @@ def main() -> None:
         base_url=config.langfuse_base_url,
     )
     metadata = {
-        "generator_model": settings.glm_smart_model,
+        "generator_model": settings.glm_4_flash_model,
         "judge_model": args.judge_model,
         "scoring_method": "project_llm_judge_v2",
         "faithfulness_definition": "正确表格字段与有证据支持的正文句子占全部待评字段及句子的比例；句内全部事实须有依据",

@@ -12,13 +12,13 @@ from prompts.query_rewriter import query_rewriter_messages
 
 
 async def rewrite_question(
-    glm_4_5_air_llm: BaseChatModel,
+    glm_4_flash_llm: BaseChatModel,
     question: str,
     previous_question: str,
 ) -> str:
     """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
     messages = query_rewriter_messages(question, previous_question)
-    rewritten = await _rewrite_messages(glm_4_5_air_llm, messages)
+    rewritten = await _rewrite_messages(glm_4_flash_llm, messages)
     if settings.rewrite_capture_enabled:
         append_node_candidate(
             node="rewrite",
@@ -31,7 +31,7 @@ async def rewrite_question(
 
 @trace_generation_call(
     name="question_rewriter",
-    model=settings.glm_smart_model,
+    model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
     kind="generation",
@@ -42,12 +42,12 @@ async def rewrite_question(
     reraise=True,
 )
 async def _rewrite_messages(
-    glm_4_5_air_llm: BaseChatModel, messages: list[BaseMessage]
+    glm_4_flash_llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    # 使用工厂创建的智能模型，保留原有超时和文本校验。
+    # 使用轻量模型改写问题，保留原有超时和文本校验。
     response = await ainvoke_model(
-        glm_4_5_air_llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        glm_4_flash_llm,
         messages,
         timeout=120,
     )

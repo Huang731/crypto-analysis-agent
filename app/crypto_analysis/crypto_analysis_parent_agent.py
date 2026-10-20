@@ -44,7 +44,7 @@ from prompts.crypto_analysis_writer import analysis_report_messages
 
 @trace_generation_call(
     name="crypto_history_summary",
-    model=settings.glm_smart_model,
+    model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
     record_io=True,
@@ -59,9 +59,9 @@ async def _invoke_history_summary(
     llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """直接生成摘要正文，保留正文非空校验与有限重试。"""
-    # 历史摘要沿用智能模型，调用与正文校验整体重试。
+    # 轻量模型压缩已有报告，调用与正文校验整体重试。
     response = await ainvoke_model(
-        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        llm,
         messages,
         timeout=120,
     )
@@ -145,6 +145,7 @@ async def _invoke_analysis_plan(llm: Any, messages: list[BaseMessage]) -> Analys
         llm.bind(extra_body={"thinking": {"type": "disabled"}}),
         messages,
         schema=AnalysisPlan,
+        timeout=120,
     )
     if plan is None:
         raise ValueError("规划模型返回了空计划")
@@ -373,7 +374,7 @@ def route_after_review(state: DynamicAnalysisState) -> str:
 
 
 def make_summarize_history(
-    glm_4_5_air_llm: BaseChatModel,
+    glm_4_flash_llm: BaseChatModel,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, str]]]:
     """创建累计历史摘要节点。"""
 
@@ -384,7 +385,7 @@ def make_summarize_history(
             previous_summary=state.get("history_summary", ""),
             report=state["report"],
         )
-        summary = await _invoke_history_summary(glm_4_5_air_llm, messages)
+        summary = await _invoke_history_summary(glm_4_flash_llm, messages)
         update = {"history_summary": summary}
         if settings.summarize_history_capture_enabled:
             append_node_candidate(
@@ -402,15 +403,16 @@ def build_crypto_analysis_parent_agent(
     retriever: KBRetriever,
     *,
     glm_4_5_air_llm: BaseChatModel,
+    glm_4_flash_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
-    sub_graph = build_crypto_analysis_sub_agent(glm_4_5_air_llm, retriever)
+    sub_graph = build_crypto_analysis_sub_agent(glm_4_flash_llm, retriever)
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", make_plan(glm_4_5_air_llm))
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
     builder.add_node("writer", make_writer(glm_4_5_air_llm))
     builder.add_node("reviewer", make_reviewer(glm_4_5_air_llm))
-    builder.add_node("summarize_history", make_summarize_history(glm_4_5_air_llm))
+    builder.add_node("summarize_history", make_summarize_history(glm_4_flash_llm))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")

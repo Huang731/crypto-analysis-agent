@@ -7,7 +7,7 @@ scoring:
   name: 市场情绪
   metrics:
   - id: Fear_Greed
-    label: Fear_Greed
+    label: 恐惧与贪婪指数
     weight: 1.0
     kind: numeric
 ---

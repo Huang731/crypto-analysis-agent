@@ -7,7 +7,7 @@ scoring:
   name: 趋势与均线
   metrics:
   - id: Trend
-    label: Trend
+    label: 趋势与均线
     weight: 1.0
     kind: numeric
 ---

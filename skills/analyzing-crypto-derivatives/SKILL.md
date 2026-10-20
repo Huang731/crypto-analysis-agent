@@ -7,11 +7,11 @@ scoring:
   name: 衍生品数据
   metrics:
   - id: OI
-    label: OI
+    label: 未平仓量
     weight: 0.6
     kind: numeric
   - id: Funding
-    label: Funding
+    label: 资金费率
     weight: 0.4
     kind: numeric
 ---

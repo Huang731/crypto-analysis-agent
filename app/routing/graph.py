@@ -26,7 +26,7 @@ from prompts.router import routing_messages
 
 @trace_generation_call(
     name="routing_decision",
-    model=settings.glm_smart_model,
+    model=settings.glm_4_flash_model,
     input_arg="messages",
     input_format="messages",
     output_format="text",
@@ -43,7 +43,7 @@ async def _invoke_route_decision(
 ) -> str:
     """保留路由追踪，对文本调用和 Agent 名称校验整体重试。"""
     response = await ainvoke_model(
-        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        llm,
         messages,
         timeout=120,
     )
@@ -95,6 +95,7 @@ def build_routing_graph(
     crypto_agent = build_crypto_analysis_parent_agent(
         retriever,
         glm_4_5_air_llm=glm_4_5_air_llm,
+        glm_4_flash_llm=glm_4_flash_llm,
     )
     topic_agent = build_topic_research_agent(
         glm_4_flash_llm,
@@ -106,7 +107,7 @@ def build_routing_graph(
         """结合上一轮问题补全本轮问题，保留用户原话。"""
         original = state["scope"]["original_question"]
         question = await rewrite_question(
-            glm_4_5_air_llm, original, state.get("previous_question", "")
+            glm_4_flash_llm, original, state.get("previous_question", "")
         )
         return {
             "resolved_question": question,
@@ -118,7 +119,7 @@ def build_routing_graph(
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = routing_messages(state["resolved_question"])
         route = await _invoke_route_decision(
-            glm_4_5_air_llm,
+            glm_4_flash_llm,
             messages,
         )
         if settings.routing_capture_enabled:

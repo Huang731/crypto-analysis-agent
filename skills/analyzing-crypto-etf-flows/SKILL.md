@@ -7,7 +7,7 @@ scoring:
   name: ETF资金流
   metrics:
   - id: ETF_Flows
-    label: ETF_Flows
+    label: ETF资金流
     weight: 1.0
     kind: numeric
 ---

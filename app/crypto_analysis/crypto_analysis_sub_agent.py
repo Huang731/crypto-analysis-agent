@@ -27,7 +27,7 @@ from app.crypto_analysis.crypto_analysis_state import (
     MetricAgentState,
     SkillWorkerGraphState,
 )
-from app.crypto_analysis.metric_service import metric_field_labels
+from app.crypto_analysis.metric_renderer import render_metric_tables
 from app.crypto_analysis.skill_loader import LoadedSkill, get_skill_loader
 from app.crypto_analysis.skill_memory import (
     SkillMemoryContent,
@@ -35,15 +35,12 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_structured
+from app.llm.model import ainvoke_model
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_calculate_metrics import (
     calculate_metrics_messages,
 )
-from prompts.crypto_analysis_skill_content import (
-    SkillOutput,
-    skill_output_messages,
-)
+from prompts.crypto_analysis_skill_content import skill_retrieval_messages
 
 # 技能结果聚合、内容生成与缓存
 
@@ -139,28 +136,45 @@ async def _retrieve_thought_context(
         return result
 
 
-@trace_generation_call(
-    name="crypto_skill_output",
-    model=settings.glm_smart_model,
-    input_arg="messages",
-    input_format="messages",
-    output_format="json",
-    kind="generation",
-)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
-async def _invoke_skill_output(llm: Any, messages: list[BaseMessage]) -> SkillOutput:
-    """结构化解析表格和检索问题，保留超时、校验重试与用量追踪。"""
-    # 表格生成沿用智能模型，保留原有超时和内容校验。
-    return await ainvoke_structured(
-        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
-        messages,
-        schema=SkillOutput,
-        timeout=120,
+async def _invoke_skill_retrieval_query(
+    llm: Any,
+    indicators: list[dict[str, Any]],
+    *,
+    analysis_subject: str,
+    skill_name: str,
+) -> str:
+    """在调用内部组装消息，只生成检索问题并保留有限重试。"""
+    messages = skill_retrieval_messages(
+        analysis_subject=analysis_subject,
+        skill_name=skill_name,
+        indicators=indicators,
     )
+
+    @trace_generation_call(
+        name="crypto_skill_retrieval_query",
+        model=settings.glm_4_flash_model,
+        input_arg="messages",
+        input_format="messages",
+        kind="generation",
+    )
+    async def invoke(messages: list[BaseMessage]) -> str:
+        """追踪实际发送的完整消息，避免遗漏提示词用量。"""
+        response = await ainvoke_model(
+            llm,
+            messages,
+            timeout=120,
+        )
+        query = response.content.strip()
+        if not query:
+            raise ValueError("检索问题不能为空")
+        return query
+
+    return await invoke(messages)
 
 
 def skill_worker_step_limit(metric_count: int) -> int:
@@ -180,16 +194,6 @@ class MetricModelTrace(AgentMiddleware):
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse:
         """模型调用成功后采集真实输入输出，不记录工具执行和状态更新。"""
-        if request.model.model_name == settings.glm_smart_model:
-            request = request.override(
-                model_settings={
-                    **request.model_settings,
-                    "extra_body": {
-                        **request.model_settings.get("extra_body", {}),
-                        "thinking": {"type": "disabled"},
-                    },
-                }
-            )
         response = await self._invoke_model_call(request, handler)
         if settings.calculate_metrics_capture_enabled:
             messages = list(request.messages)
@@ -322,7 +326,7 @@ async def _invoke_metric_agent(
 
 
 def make_calculate_metrics(
-    glm_4_5_air_llm: Any,
+    glm_4_flash_llm: Any,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
 
@@ -335,7 +339,7 @@ def make_calculate_metrics(
             for name in state["skill"].tools
         ]
         agent = create_agent(
-            model=glm_4_5_air_llm,
+            model=glm_4_flash_llm,
             tools=tools,
             state_schema=MetricAgentState,
             context_schema=MetricAgentContext,
@@ -390,9 +394,9 @@ def route_metrics(
 
 
 def make_skill_content(
-    glm_4_5_air_llm: Any, retriever: KBRetriever
+    glm_4_flash_llm: Any, retriever: KBRetriever
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
-    """生成指标表格与检索问题，再检索对应思想材料。"""
+    """代码渲染指标表格，模型生成检索问题后查询思想材料。"""
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
@@ -403,25 +407,27 @@ def make_skill_content(
             if key.asset_scope == "GLOBAL"
             else state["scope"]["target_asset"]
         )
-        indicators = [
-            {**item, "field_labels": metric_field_labels(item["indicator_id"])}
-            for item in state["metric_result"]["indicators"]
-            if item["status"] == "ok"
-        ]
-        messages = skill_output_messages(
-            analysis_subject=analysis_subject,
-            skill_name=skill.name,
-            indicators=indicators,
-        )
-        output = await _invoke_skill_output(glm_4_5_air_llm, messages)
-        thought_context = _select_thought_context(
-            await _retrieve_thought_context(retriever, output.retrieval_query)
-        )
+        indicators = state["metric_result"]["indicators"]
+        content = render_metric_tables(skill, indicators)
+        successful_indicators = [item for item in indicators if item["status"] == "ok"]
+        retrieval_query = ""
+        if successful_indicators:
+            retrieval_query = await _invoke_skill_retrieval_query(
+                glm_4_flash_llm,
+                successful_indicators,
+                analysis_subject=analysis_subject,
+                skill_name=skill.name,
+            )
+            thought_context = _select_thought_context(
+                await _retrieve_thought_context(retriever, retrieval_query)
+            )
+        else:
+            thought_context = {"query": "", "status": "no_results", "documents": []}
         update = {
             "skill_result": {
                 "skill_name": skill.name,
                 "name": skill.scoring.name,
-                "content": output.content,
+                "content": content,
                 "thought_context": thought_context,
                 "cache_hit": False,
             }
@@ -429,8 +435,12 @@ def make_skill_content(
         if settings.skill_content_capture_enabled:
             append_node_candidate(
                 node="skill_content",
-                input=messages_to_dict(messages),
-                actual_output=output.model_dump(),
+                input={
+                    "analysis_subject": analysis_subject,
+                    "skill_name": skill.name,
+                    "indicators": successful_indicators,
+                },
+                actual_output={"content": content, "retrieval_query": retrieval_query},
                 path=settings.skill_content_capture_path,
             )
         return update
@@ -467,14 +477,14 @@ def make_finalize_skill() -> Callable[
 
 
 def build_crypto_analysis_sub_agent(
-    glm_4_5_air_llm: Any, retriever: KBRetriever
+    glm_4_flash_llm: Any, retriever: KBRetriever
 ) -> CompiledStateGraph:
     """组装缓存分支、指标执行循环和技能内容生成子图。"""
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
-    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_5_air_llm))
+    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_flash_llm))
     graph.add_node("check_metrics", make_check_metrics())
-    graph.add_node("skill_content", make_skill_content(glm_4_5_air_llm, retriever))
+    graph.add_node("skill_content", make_skill_content(glm_4_flash_llm, retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(

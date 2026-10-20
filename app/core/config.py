@@ -39,7 +39,6 @@ class Settings(BaseSettings):
 
     # 向量、重排与 Qwen 聊天模型共用硅基流动密钥。
     siliconflow_api_key: str = Field(default="", description="硅基流动 API Key")
-    qwen3_5_4b_model: str = "Qwen/Qwen3.5-4B"
     qwen3_8b_model: str = "Qwen/Qwen3-8B"
 
     # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
