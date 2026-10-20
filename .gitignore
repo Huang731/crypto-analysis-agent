@@ -255,9 +255,6 @@ build/
 .coverage
 htmlcov/
 
-*.md
-!/README.md
-
 # 本地会话状态及 SQLite 辅助文件
 /data/checkpoints.sqlite
 /data/checkpoints.sqlite-*

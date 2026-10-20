@@ -33,6 +33,7 @@ from langchain_core.documents import Document
 from app.core.config import settings
 from app.core.tracing import start_trace, trace_generation_call, trace_span
 from app.llm.model import get_embeddings
+from app.rag.cleaner import CleanProcessor
 from app.rag.loader import file_md5, list_documents, load_and_split
 
 
@@ -287,9 +288,13 @@ def _load_pdf_as_documents(path: Path) -> list[Document]:
         # 图片元素内容为空时（OCR/描述未启用）不入库，避免空 chunk 污染向量库
         if el.type == "image" and not el.content:
             continue
+        # 保留 PDF 的元素边界和溯源字段，只统一清洗解析后的正文。
+        content = CleanProcessor.clean(el.content)
+        if not content.strip():
+            continue
         docs.append(
             Document(
-                page_content=el.content,
+                page_content=content,
                 metadata={
                     "source": path.name,
                     "section": f"P{el.page}·{el.type}",  # 引用溯源展示「P3·table」

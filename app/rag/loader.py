@@ -17,6 +17,7 @@ from langchain_text_splitters import (
 
 from app.core.config import settings
 from app.core.tracing import trace_span
+from app.rag.cleaner import CleanProcessor
 
 SUPPORTED_SUFFIXES = (".md", ".txt", ".pdf")
 
@@ -81,6 +82,8 @@ def load_and_split(path: Path, *, src_hash: str | None = None) -> list[Document]
     with trace_span("rag.document.load_split", source=path.name) as node_span:
         try:
             text = path.read_text(encoding="utf-8")
+            # 在结构感知分块前清洗，章节与切片均基于同一份正文。
+            text = CleanProcessor.clean(text)
             if path.suffix.lower() == ".md":
                 chunks = split_markdown(text)
             else:
