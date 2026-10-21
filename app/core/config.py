@@ -34,9 +34,6 @@ class Settings(BaseSettings):
 
     # 百炼连接：聊天与视觉共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
-    bailian_smart_models: list[str] = Field(
-        default_factory=lambda: ["qwen3.7-plus"], min_length=1
-    )
     bailian_fast_models: list[str] = Field(
         default_factory=lambda: [
             "qwen3.6-flash",
@@ -47,6 +44,18 @@ class Settings(BaseSettings):
             "qwen3.6-flash-2026-04-16",
             "qwen-flash",
             "qwen3.7-flash",
+        ],
+        min_length=1,
+    )
+    bailian_smart_models: list[str] = Field(
+        default_factory=lambda: [
+            "qwen3.7-plus",
+            "qwen3.7-plus-2026-05-26",
+            "qwen3.6-plus",
+            "qwen3.6-plus-2026-04-02",
+            "qwen3.5-plus",
+            "qwen3.5-plus-2026-02-15",
+            "qwen3.5-plus-2026-04-20",
         ],
         min_length=1,
     )

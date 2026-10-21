@@ -16,10 +16,12 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 import truststore
-from langfuse import Langfuse
-from pydantic import BaseModel, ConfigDict
+from langfuse import Evaluation, Langfuse
+from langfuse.langchain import CallbackHandler
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.config import PROJECT_ROOT, settings
+from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     ReportReview,
     _invoke_report_review,
@@ -30,16 +32,25 @@ from eval_agent.prompts.report_eval import (
     reviewer_target_messages,
 )
 from eval_agent.writer.run_eval import (
-    EvalSettings,
     WriterInput,
     WriterMetadata,
     content_sha256,
     create_metrics,
     decode_section,
     error_message,
-    score_case,
     summarize,
 )
+
+
+class EvalSettings(BaseSettings):
+    """评测密钥沿用项目环境变量。"""
+
+    model_config = SettingsConfigDict(
+        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore"
+    )
+    langfuse_public_key: str = Field(min_length=1)
+    langfuse_secret_key: str = Field(min_length=1)
+    langfuse_base_url: str = "https://cloud.langfuse.com"
 
 
 class ReviewerCase(BaseModel):
@@ -171,7 +182,9 @@ async def evaluate(
             return output
 
         async with model_session() as http:
-            for name, metric in create_metrics(judge_model, http=http).items():
+            for name, metric in create_metrics(
+                judge_model, http=http, callbacks=[CallbackHandler()]
+            ).items():
                 arguments = {
                     "user_input": evidence["user_input"],
                     "response": review.model_dump_json(),
@@ -197,6 +210,15 @@ async def evaluate(
             output=output, level="ERROR" if output["errors"] else "DEFAULT"
         )
     return output
+
+
+def score_case(*, output: Any, **kwargs: Any) -> list[Evaluation]:
+    """只上传两项质量分数，运行状态与耗时不再转换成分数。"""
+    return [
+        Evaluation(name=name, value=output[name])
+        for name in ("faithfulness", "answer_relevancy")
+        if output[name] is not None
+    ]
 
 
 def main() -> None:

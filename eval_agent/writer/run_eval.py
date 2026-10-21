@@ -2,28 +2,22 @@
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 import hashlib
 import json
 import math
 import os
-from datetime import datetime, timezone
-from importlib import import_module
-from importlib.metadata import version
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar
-from uuid import NAMESPACE_URL, uuid5
 
 import httpx
-import truststore
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, messages_from_dict
-from langfuse import Evaluation, Langfuse
 from pydantic import BaseModel, ConfigDict, Field, RootModel
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.core.config import PROJECT_ROOT, _env_files, settings
+from app.core.config import PROJECT_ROOT, settings
 from app.llm.model import (
     ainvoke_structured,
     get_embeddings,
@@ -32,17 +26,6 @@ from app.llm.model import (
 )
 
 _Schema = TypeVar("_Schema", bound=BaseModel)
-
-
-class EvalSettings(BaseSettings):
-    """评测密钥沿用项目环境变量。"""
-
-    model_config = SettingsConfigDict(
-        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore"
-    )
-    langfuse_public_key: str = Field(min_length=1)
-    langfuse_secret_key: str = Field(min_length=1)
-    langfuse_base_url: str = "https://cloud.langfuse.com"
 
 
 class MessageData(BaseModel):
@@ -210,20 +193,22 @@ def load_cases(path: Path) -> list[WriterCase]:
     return cases
 
 
-def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, Any]:
+def create_metrics(
+    judge_model: str,
+    *,
+    http: httpx.AsyncClient,
+    callbacks: list[BaseCallbackHandler] | None = None,
+) -> dict[str, Any]:
     """仅实际评测时加载 RAGAS，离线案例校验不依赖模型框架。"""
-    from langfuse.langchain import CallbackHandler
     from ragas.embeddings.base import BaseRagasEmbedding
     from ragas.llms.base import InstructorBaseRagasLLM
     from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
     if judge_model != settings.glm_5_3_flash_model:
         raise ValueError(f"未配置的智谱裁判模型：{judge_model}")
-    model = (
-        make_glm_5_3_flash_llm(async_client=http)
-        .bind(reasoning_effort="low")
-        .with_config(callbacks=[CallbackHandler()])
-    )
+    model = make_glm_5_3_flash_llm(async_client=http).bind(reasoning_effort="low")
+    if callbacks is not None:
+        model = model.with_config(callbacks=callbacks)
 
     class GLMJudge(InstructorBaseRagasLLM):
         """将智谱 5 系列结构化调用接入 RAGAS 原生指标。"""
@@ -248,7 +233,7 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
 
     embeddings = get_embeddings()
 
-    class BailianRagasEmbeddings(BaseRagasEmbedding):
+    class RagasEmbeddings(BaseRagasEmbedding):
         """将项目向量模型的异步接口接入 RAGAS。"""
 
         def embed_text(self, text: str, **kwargs: Any) -> list[float]:
@@ -279,7 +264,7 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
         "faithfulness": Faithfulness(llm=judge),
         "answer_relevancy": AnswerRelevancy(
             llm=judge,
-            embeddings=BailianRagasEmbeddings(),
+            embeddings=RagasEmbeddings(),
             strictness=1,
         ),
     }
@@ -297,10 +282,8 @@ def error_message(exc: Exception) -> str:
     return f"{type(exc).__name__}: {message[:600]}"
 
 
-async def evaluate(
-    client: Langfuse, case: WriterCase, judge_model: str
-) -> dict[str, Any]:
-    """直接评分案例中的报告，不重新调用 writer。"""
+async def evaluate(case: WriterCase, judge_model: str) -> dict[str, Any]:
+    """直接评分案例中的报告，不重新调用 writer，结果仅保存在本地。"""
     evidence = build_evidence(case)
     output: dict[str, Any] = {
         "actual_output": case.actual_output,
@@ -309,47 +292,23 @@ async def evaluate(
         "answer_relevancy": None,
         "errors": {},
     }
-    with client.start_as_current_observation(
-        as_type="span", name="writer.evaluate", input=case.model_dump(mode="json")
-    ) as observation:
-        async with model_session() as http:
-            for name, metric in create_metrics(judge_model, http=http).items():
-                if name == "faithfulness" and not evidence.retrieved_contexts:
-                    continue
-                arguments: dict[str, Any] = {
-                    "user_input": evidence.user_input,
-                    "response": case.actual_output,
-                }
-                if name == "faithfulness":
-                    arguments["retrieved_contexts"] = evidence.retrieved_contexts
-                with client.start_as_current_observation(
-                    as_type="span", name=f"writer.ragas.{name}", input=arguments
-                ) as metric_observation:
-                    try:
-                        result = await asyncio.wait_for(
-                            metric.ascore(**arguments), timeout=600
-                        )
-                        if math.isfinite(result.value):
-                            output[name] = result.value
-                        metric_observation.update(output={"value": output[name]})
-                    except Exception as exc:  # noqa: BLE001 - 指标失败不抹掉另一项得分。
-                        output["errors"][name] = error_message(exc)
-                        metric_observation.update(
-                            output={"error": output["errors"][name]}, level="ERROR"
-                        )
-        observation.update(
-            output=output, level="ERROR" if output["errors"] else "DEFAULT"
-        )
+    async with model_session() as http:
+        for name, metric in create_metrics(judge_model, http=http).items():
+            if name == "faithfulness" and not evidence.retrieved_contexts:
+                continue
+            arguments: dict[str, Any] = {
+                "user_input": evidence.user_input,
+                "response": case.actual_output,
+            }
+            if name == "faithfulness":
+                arguments["retrieved_contexts"] = evidence.retrieved_contexts
+            try:
+                result = await asyncio.wait_for(metric.ascore(**arguments), timeout=600)
+                if math.isfinite(result.value):
+                    output[name] = result.value
+            except Exception as exc:  # noqa: BLE001 - 指标失败不抹掉另一项得分。
+                output["errors"][name] = error_message(exc)
     return output
-
-
-def score_case(*, output: Any, **kwargs: Any) -> list[Evaluation]:
-    """只上传两项质量分数，运行状态与耗时不再转换成分数。"""
-    return [
-        Evaluation(name=name, value=output[name])
-        for name in ("faithfulness", "answer_relevancy")
-        if output[name] is not None
-    ]
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -365,151 +324,52 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="固定 writer 案例的 RAGAS 评测")
-    parser.add_argument(
-        "--cases",
-        type=Path,
-        default=PROJECT_ROOT / "eval_agent/writer/writer_cases.jsonl",
-    )
-    parser.add_argument("--run-name")
-    parser.add_argument("--validate-only", action="store_true")
-    parser.add_argument("--limit", type=int)
-    parser.add_argument("--system-certificates", action="store_true")
-    parser.add_argument(
-        "--judge-model",
-        choices=(settings.glm_5_3_flash_model,),
-        default=settings.glm_5_3_flash_model,
-    )
-    args = parser.parse_args()
-    cases = load_cases(args.cases)
-    if args.limit is not None:
-        if args.limit < 1:
-            parser.error("案例数量必须大于零")
-        cases = cases[: args.limit]
-    if args.validate_only:
-        print(f"已校验 {len(cases)} 个 writer 案例及 RAGAS 输入")
-        return
-    run_name = args.run_name or datetime.now(timezone.utc).strftime(
-        "writer-ragas-%Y%m%dT%H%M%SZ"
-    )
-    if Path(run_name).name != run_name or run_name in {".", ".."}:
-        parser.error("实验名称不能包含路径")
-    path = PROJECT_ROOT / "eval_agent/outputs/writer_eval" / f"{run_name}.json"
-    if path.exists():
-        parser.error("结果文件已存在，请使用新的实验名称")
-    if not settings.dashscope_api_key.strip():
-        parser.error("未配置 DASHSCOPE_API_KEY")
-    if args.system_certificates:
-        truststore.inject_into_ssl()
-    # 禁用 RAGAS 自身的匿名使用上报，记录只写入配置的 Langfuse。
-    os.environ["RAGAS_DO_NOT_TRACK"] = "true"
-    # 上传数据之前验证 RAGAS 依赖。
-    import_module("ragas.metrics.collections")
-    config = EvalSettings()
-    client = Langfuse(
-        public_key=config.langfuse_public_key,
-        secret_key=config.langfuse_secret_key,
-        base_url=config.langfuse_base_url,
-    )
-    metadata = {
-        "data_mode": "fixed_writer_input_output",
-        "judge_model": args.judge_model,
-        "embedding_model": settings.embedding_model,
-        "ragas_version": version("ragas"),
-        "langchain_community_version": version("langchain-community"),
-        "scoring_method": "ragas_native",
-        "metrics": ["faithfulness", "answer_relevancy"],
-        "answer_relevancy_strictness": 1,
-        "model_timeout_seconds": 120,
-        "metric_timeout_seconds": 600,
-        "max_attempts": 2,
-        "cases_file": str(args.cases.resolve()),
-        "cases_file_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
-        "evaluator_code_sha256": hashlib.sha256(
-            Path(__file__).read_bytes()
-        ).hexdigest(),
-        "boundary": "评估人工维护的writer案例input和actual_output，不重新生成报告",
-    }
-    rows: list[dict[str, Any]] = []
-    run_status = "failed"
+async def score_samples(cases: list[WriterCase]) -> list[dict[str, Any]]:
+    """保持三案例并发，评分报告并返回本地记录。"""
+    semaphore = asyncio.Semaphore(3)
 
-    async def task(*, item: Any) -> dict[str, Any]:
-        case = WriterCase.model_validate(item.input)
-        output = await evaluate(client, case, args.judge_model)
-        rows.append(
-            {
-                **case.model_dump(mode="json"),
-                "output": output,
-            }
-        )
+    async def one(case: WriterCase) -> dict[str, Any]:
+        async with semaphore:
+            output = await evaluate(case, settings.glm_5_3_flash_model)
         print(
             f"案例第{case.source_line}行：faithfulness={output['faithfulness']}，answer_relevancy={output['answer_relevancy']}",
             flush=True,
         )
-        return output
+        return {
+            **case.model_dump(mode="json"),
+            "output": output,
+            "scores": [
+                {"name": name, "value": output[name]}
+                for name in ("faithfulness", "answer_relevancy")
+                if output[name] is not None
+            ],
+        }
 
-    try:
-        if not client.auth_check():
-            raise RuntimeError("Langfuse 认证失败")
-        dataset = "crypto-agent-writer"
-        client.create_dataset(
-            name=dataset,
-            description="人工维护的writer输入与报告，使用RAGAS原生两项指标评分",
-            input_schema=WriterCase.model_json_schema(),
-            expected_output_schema={},
-        )
-        items = [
-            client.create_dataset_item(
-                dataset_name=dataset,
-                id=str(
-                    uuid5(
-                        NAMESPACE_URL,
-                        f"{dataset}:{content_sha256(case.model_dump(mode='json'))}",
-                    )
-                ),
-                input=case.model_dump(mode="json"),
-            )
-            for case in cases
-        ]
-        experiment = client.run_experiment(
-            name=dataset,
-            run_name=run_name,
-            data=items,
-            task=task,
-            evaluators=[score_case],
-            max_concurrency=3,
-            metadata=metadata,
-        )
-        rows_by_line = {row["source_line"]: row for row in rows}
-        for result in experiment.item_results:
-            row = rows_by_line[result.item.input["source_line"]]
-            row["scores"] = [score.__dict__ for score in result.evaluations]
-            row["langfuse_trace_id"] = result.trace_id
-        if len(rows) != len(cases) or len(experiment.item_results) != len(rows):
-            raise RuntimeError("评测记录不完整")
-        run_status = "completed"
-        print(experiment.format())
-    finally:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "run_name": run_name,
-                    "run_status": run_status,
-                    "planned_cases": len(cases),
-                    "metadata": metadata,
-                    "summary": summarize(rows),
-                    "cases": rows,
-                },
-                ensure_ascii=False,
-                indent=2,
-                allow_nan=False,
-            ),
-            encoding="utf-8",
-        )
-        client.flush()
-        print(f"本地结果：{path}")
+    return list(await asyncio.gather(*(one(case) for case in cases)))
+
+
+def run_eval(cases: list[WriterCase]) -> dict[str, Any]:
+    """执行两项 RAGAS 指标并汇总结果，不重新生成报告。"""
+    print(f"开始 {len(cases)} 条 writer 案例评测...", flush=True)
+    rows = asyncio.run(score_samples(cases))
+    summary = summarize(rows)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    return {"summary": summary, "cases": rows}
+
+
+def main() -> None:
+    cases_path = Path(__file__).with_name("writer_cases.jsonl")
+    output_path = PROJECT_ROOT / "eval_agent/outputs/writer_eval/results.json"
+    os.environ["RAGAS_DO_NOT_TRACK"] = "true"
+
+    cases = load_cases(cases_path)
+    result = run_eval(cases)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False),
+        encoding="utf-8",
+    )
+    print(f"结果已写入 {output_path}")
 
 
 if __name__ == "__main__":

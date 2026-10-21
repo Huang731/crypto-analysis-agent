@@ -265,7 +265,7 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 ```bash
 .venv-eval/bin/python -m eval_agent.routing.run_eval
 .venv-eval/bin/python -m eval_agent.calculate_metrics.run_eval
-.venv-eval/bin/python -m eval_agent.writer.run_eval --run-name writer-demo
+.venv-eval/bin/python -m eval_agent.writer.run_eval
 .venv-eval/bin/python -m eval_agent.rag_retrieval.run_eval \
   --out eval_agent/outputs/rag_eval/results.json
 ```
@@ -281,6 +281,7 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 | [路由](#路由) | 27 | 路由正确率 1.0 | 约 22 秒 |
 | [分析规划](#分析规划) | 24 | 三项规则指标均为 1.0 | 约 28 秒 |
 | [指标计算](#指标计算) | 6 | 四项规则指标均为 1.0 | 约 19 秒 |
+| [Writer 报告质量](#writer-报告质量) | 11 | 忠实度均分 0.6118，回答相关性均分 0.7960 | 未记录 |
 | [RAG 检索与回答](#rag-检索与回答) | 10 | 忠实度 0.9587，回答相关性 0.9151 | 约 115 秒 |
 
 #### 路由
@@ -317,6 +318,17 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 | `indicator_results_valid` | 指标结果校验通过率 | 1.0 |
 
 ![指标节点评测运行截图：6 条用例的四项规则指标与运行耗时](docs/images/calculate-metrics-evaluation-results.png)
+
+#### Writer 报告质量
+
+以下为一次 11 条 Writer 案例的报告质量评测结果，使用 RAGAS 对已保存报告的忠实度与回答相关性进行评分，不重新调用 Writer 生成报告。两项指标均完成 11 条案例评分，均分保留四位小数，与本地结果文件 `eval_agent/outputs/writer_eval/results.json` 一致。
+
+| 指标 | 含义 | 均分 | 已评分案例数 |
+| --- | --- | --- | --- |
+| `faithfulness` | 回答忠实度 | 0.6118 | 11 |
+| `answer_relevancy` | 回答相关性 | 0.7960 | 11 |
+
+![Writer 报告质量评测运行截图：11 条案例的忠实度与回答相关性均分](docs/images/writer-evaluation-results.png)
 
 #### RAG 检索与回答
 

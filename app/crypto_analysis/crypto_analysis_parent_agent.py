@@ -31,7 +31,7 @@ from app.crypto_analysis.skill_memory import (
 from app.llm.model import (
     ainvoke_model,
     ainvoke_structured,
-    make_bailian_fast_llm,
+    make_bailian_smart_llm,
 )
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
@@ -41,7 +41,7 @@ from prompts.crypto_analysis_writer import analysis_report_messages
 
 @trace_generation_call(
     name="crypto_analysis_writer",
-    model=settings.bailian_fast_models[0],
+    model=settings.bailian_smart_models[0],
     input_arg="messages",
     input_format="messages",
     record_io=True,
@@ -69,7 +69,7 @@ async def _invoke_report_text(
 
 @trace_generation_call(
     name="crypto_report_review",
-    model=settings.bailian_fast_models[0],
+    model=settings.bailian_smart_models[0],
     input_arg="messages",
     input_format="messages",
     output_format="json",
@@ -243,7 +243,7 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
 
 
 def make_writer(
-    bailian_fast_llm: Any,
+    bailian_smart_llm: Any,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
@@ -271,7 +271,7 @@ def make_writer(
             previous_report=state["report"],
         )
         report = await _invoke_report_text(
-            bailian_fast_llm.bind(temperature=0.1),
+            bailian_smart_llm.bind(temperature=0.2),
             messages,
         )
         if settings.writer_capture_enabled:
@@ -289,7 +289,7 @@ def make_writer(
 
 
 def make_reviewer(
-    bailian_fast_llm: Any,
+    bailian_smart_llm: Any,
 ) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建报告审核节点，保留原有审核规则。"""
 
@@ -305,7 +305,7 @@ def make_reviewer(
             skill_results=state["skill_results"],
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
-        review = await _invoke_report_review(bailian_fast_llm, messages)
+        review = await _invoke_report_review(bailian_smart_llm, messages)
         if settings.reviewer_capture_enabled:
             append_node_candidate(
                 node="reviewer",
@@ -345,12 +345,12 @@ def build_crypto_analysis_parent_agent(
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
     sub_graph = build_crypto_analysis_sub_agent(glm_4_flash_llm, retriever)
-    bailian_fast_llm = make_bailian_fast_llm()
+    bailian_smart_llm = make_bailian_smart_llm()
     builder = StateGraph(DynamicAnalysisState)
     builder.add_node("plan", make_plan(glm_4_5_air_llm))
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
-    builder.add_node("writer", make_writer(bailian_fast_llm))
-    builder.add_node("reviewer", make_reviewer(bailian_fast_llm))
+    builder.add_node("writer", make_writer(bailian_smart_llm))
+    builder.add_node("reviewer", make_reviewer(bailian_smart_llm))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
