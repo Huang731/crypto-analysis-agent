@@ -148,13 +148,6 @@ class Settings(BaseSettings):
     reviewer_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "reviewer_candidates.jsonl"
     )
-    summarize_history_capture_enabled: bool = True
-    summarize_history_capture_path: str = str(
-        PROJECT_ROOT
-        / "eval_agent"
-        / "candidates"
-        / "summarize_history_candidates.jsonl"
-    )
 
     # 浏览器取证：单页超时单位为秒。
     browser_page_timeout: int = 15

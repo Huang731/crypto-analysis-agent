@@ -22,7 +22,6 @@ class DynamicAnalysisState(TypedDict, total=False):
     plan: dict[str, Any]
     skill_results: Annotated[list[dict[str, Any]], operator.add]
     skill_memory: Annotated[dict[str, str], merge_skill_memory]
-    history_summary: str
     report: str
     review_decision: Literal["pending", "pass", "rework"]
     review_count: int

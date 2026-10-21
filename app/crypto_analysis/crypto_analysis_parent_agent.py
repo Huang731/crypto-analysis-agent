@@ -37,38 +37,7 @@ from app.llm.model import (
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
 from prompts.crypto_analysis_reviewer import ReportReview, analysis_review_messages
-from prompts.crypto_analysis_summarize_history import (
-    history_summary_messages,
-)
 from prompts.crypto_analysis_writer import analysis_report_messages
-
-
-@trace_generation_call(
-    name="crypto_history_summary",
-    model=settings.glm_4_flash_model,
-    input_arg="messages",
-    input_format="messages",
-    record_io=True,
-    kind="generation",
-)
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_random_exponential(min=1, max=2),
-    reraise=True,
-)
-async def _invoke_history_summary(
-    llm: BaseChatModel, messages: list[BaseMessage]
-) -> str:
-    """直接生成摘要正文，保留正文非空校验与有限重试。"""
-    # 轻量模型压缩已有报告，调用与正文校验整体重试。
-    response = await ainvoke_model(
-        llm,
-        messages,
-    )
-    summary = response.content.strip()
-    if not summary:
-        raise ValueError("历史摘要不能为空")
-    return summary
 
 
 @trace_generation_call(
@@ -366,36 +335,10 @@ def make_reviewer(
 
 
 def route_after_review(state: DynamicAnalysisState) -> str:
-    """只有审核通过的报告进入历史摘要，失败时保留证据并重写。"""
+    """审核通过后结束，失败时保留证据并重写。"""
     if state["review_decision"] == "pass":
-        return "summarize_history"
+        return END
     return "writer"
-
-
-def make_summarize_history(
-    glm_4_flash_llm: BaseChatModel,
-) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, str]]]:
-    """创建累计历史摘要节点。"""
-
-    @timed_node(label=lambda state: state["scope"]["target_asset"])
-    async def summarize_history(state: DynamicAnalysisState) -> dict[str, str]:
-        """根据本轮最终报告更新累计结论摘要。"""
-        messages = history_summary_messages(
-            previous_summary=state.get("history_summary", ""),
-            report=state["report"],
-        )
-        summary = await _invoke_history_summary(glm_4_flash_llm, messages)
-        update = {"history_summary": summary}
-        if settings.summarize_history_capture_enabled:
-            append_node_candidate(
-                node="summarize_history",
-                input=messages_to_dict(messages),
-                actual_output=summary,
-                path=settings.summarize_history_capture_path,
-            )
-        return update
-
-    return summarize_history
 
 
 def build_crypto_analysis_parent_agent(
@@ -412,7 +355,6 @@ def build_crypto_analysis_parent_agent(
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
     builder.add_node("writer", make_writer(bailian_fast_llm))
     builder.add_node("reviewer", make_reviewer(bailian_fast_llm))
-    builder.add_node("summarize_history", make_summarize_history(glm_4_flash_llm))
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")
@@ -420,7 +362,6 @@ def build_crypto_analysis_parent_agent(
     builder.add_conditional_edges(
         "reviewer",
         route_after_review,
-        {"summarize_history": "summarize_history", "writer": "writer"},
+        {END: END, "writer": "writer"},
     )
-    builder.add_edge("summarize_history", END)
     return builder.compile(checkpointer=True, name="crypto_analysis_agent")
