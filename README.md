@@ -126,12 +126,13 @@ Markdown 文档按标题结构与长度分块，保留文件名、章节路径�
 | --- | --- | --- |
 | 问题改写、路由、指标执行、检索问题生成、历史摘要、主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
 | 加密分析规划、报告写作与审核、检索多查询改写、主题研究的报告写作与审核 | `GLM_SMART_MODEL` | `glm-4.5-air` |
+| RAG、报告写作与审核评测的评分裁判 | `GLM_5_3_FLASH_MODEL` | `glm-5.3-flash` |
 | 文档向量 | `EMBEDDING_MODEL` | `BAAI/bge-m3` |
 | 检索重排 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` |
 
 加密分析规划和检索多查询改写显式关闭 Air 的深度思考；报告写作与审核保留默认思考配置。
 
-百炼模型另外用于独立 RAG 回答、部分图文处理和评测裁判。上述模型分工是代码中的节点配置，费用与延迟效果需通过具体运行记录验证。
+百炼模型另外用于独立 RAG 回答和部分图文处理，评测裁判统一使用智谱 5 系列。上述模型分工是代码中的节点配置，费用与延迟效果需通过具体运行记录验证。
 
 ### 日志、追踪与评测采集
 
@@ -179,13 +180,13 @@ cp .env.example .env
 | --- | --- | --- |
 | `SILICONFLOW_API_KEY` | Qwen 聊天、向量、重排 | 当前服务与知识入库需要 |
 | `ZHIPUAI_4_API_KEY` | GLM 4 系列：主题研究、报告写作与审核 | 当前服务需要 |
-| `ZHIPUAI_5_API_KEY` | GLM 5 系列模型 | 使用 5 系列模型时需要 |
+| `ZHIPUAI_5_API_KEY` | GLM 5 系列评测裁判 | 执行裁判评分时需要 |
 | `BOCHA_API_KEY` | 网页搜索 | 通用主题研究需要 |
 | `FRED_API_KEY` | 美联储政策及宏观序列 | 相关分析维度需要 |
 | `CMC_PRO_API_KEY` | 稳定币市值与恐惧贪婪指数 | 相关分析维度需要 |
 | `EODHD_API_KEY` | 通过 MCP 获取美元指数 | 流动性分析需要 |
 | `CRYPTO_ETF_MCP_API_KEY` | 通过 MCP 获取现货 ETF 资金流 | ETF 分析需要 |
-| `DASHSCOPE_API_KEY` | 百炼聊天、图文处理与裁判 | 独立 RAG 回答、相关入库或评测需要 |
+| `DASHSCOPE_API_KEY` | 百炼聊天与图文处理 | 独立 RAG 回答或相关入库需要 |
 | `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL` | 实验记录 | 写入 Langfuse 的评测需要 |
 
 Binance 行情工具使用公开行情接口。各数据源的访问权限、可用地区和接口额度取决于服务提供方。

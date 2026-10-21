@@ -45,11 +45,10 @@ async def _rewrite_messages(
     glm_4_flash_llm: BaseChatModel, messages: list[BaseMessage]
 ) -> str:
     """保留文本校验和整体重试，统计规范化后的输出。"""
-    # 使用轻量模型改写问题，保留原有超时和文本校验。
+    # 使用轻量模型改写问题，保留原有文本校验。
     response = await ainvoke_model(
         glm_4_flash_llm,
         messages,
-        timeout=120,
     )
     rewritten = response.content.strip()
     if not rewritten:

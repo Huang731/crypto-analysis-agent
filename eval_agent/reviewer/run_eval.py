@@ -24,7 +24,7 @@ from app.crypto_analysis.crypto_analysis_parent_agent import (
     ReportReview,
     _invoke_report_review,
 )
-from app.llm.model import make_glm_4_5_air_llm, model_session
+from app.llm.model import make_bailian_fast_llm, model_session
 from eval_agent.prompts.report_eval import (
     reviewer_evaluation_messages,
     reviewer_target_messages,
@@ -157,14 +157,13 @@ async def evaluate(
         input=case.input.model_dump(mode="json"),
     ) as observation:
         try:
-            async with model_session() as http:
-                review = await asyncio.wait_for(
-                    _invoke_report_review(
-                        make_glm_4_5_air_llm(async_client=http),
-                        reviewer_target_messages(case.input.to_messages()),
-                    ),
-                    timeout=250,
-                )
+            review = await asyncio.wait_for(
+                _invoke_report_review(
+                    make_bailian_fast_llm(),
+                    reviewer_target_messages(case.input.to_messages()),
+                ),
+                timeout=250,
+            )
             output["actual_output"] = review.model_dump()
         except Exception as exc:  # noqa: BLE001 - 单个案例失败不阻断其余案例。
             output["errors"]["target"] = error_message(exc)
@@ -214,8 +213,8 @@ def main() -> None:
     parser.add_argument("--system-certificates", action="store_true")
     parser.add_argument(
         "--judge-model",
-        choices=(settings.bailian_fast_model, settings.bailian_smart_model),
-        default=settings.bailian_smart_model,
+        choices=(settings.glm_5_3_flash_model,),
+        default=settings.glm_5_3_flash_model,
     )
     args = parser.parse_args()
     cases = load_cases(args.cases, args.check_sources)

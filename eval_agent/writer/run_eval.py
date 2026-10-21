@@ -27,8 +27,7 @@ from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import (
     ainvoke_structured,
     get_embeddings,
-    make_bailian_fast_llm,
-    make_bailian_smart_llm,
+    make_glm_5_3_flash_llm,
     model_session,
 )
 
@@ -218,16 +217,16 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
     from ragas.llms.base import InstructorBaseRagasLLM
     from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
-    if judge_model == settings.bailian_smart_model:
-        model = make_bailian_smart_llm(async_client=http)
-    elif judge_model == settings.bailian_fast_model:
-        model = make_bailian_fast_llm(async_client=http)
-    else:
-        raise ValueError(f"未配置的百炼裁判模型：{judge_model}")
-    model = model.bind(enable_thinking=False).with_config(callbacks=[CallbackHandler()])
+    if judge_model != settings.glm_5_3_flash_model:
+        raise ValueError(f"未配置的智谱裁判模型：{judge_model}")
+    model = (
+        make_glm_5_3_flash_llm(async_client=http)
+        .bind(reasoning_effort="low")
+        .with_config(callbacks=[CallbackHandler()])
+    )
 
-    class BailianJudge(InstructorBaseRagasLLM):
-        """将项目百炼结构化调用接入 RAGAS 原生指标。"""
+    class GLMJudge(InstructorBaseRagasLLM):
+        """将智谱 5 系列结构化调用接入 RAGAS 原生指标。"""
 
         def generate(self, prompt: str, response_model: type[_Schema]) -> _Schema:
             raise NotImplementedError("评测只使用异步 agenerate")
@@ -244,7 +243,6 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
                 model,
                 [HumanMessage(content=prompt)],
                 schema=response_model,
-                timeout=120,
             )
             return response_model.model_validate(result)
 
@@ -276,7 +274,7 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
                 embeddings.aembed_documents(texts), timeout=120
             )
 
-    judge = BailianJudge()
+    judge = GLMJudge()
     return {
         "faithfulness": Faithfulness(llm=judge),
         "answer_relevancy": AnswerRelevancy(
@@ -380,8 +378,8 @@ def main() -> None:
     parser.add_argument("--system-certificates", action="store_true")
     parser.add_argument(
         "--judge-model",
-        choices=(settings.bailian_fast_model, settings.bailian_smart_model),
-        default=settings.bailian_smart_model,
+        choices=(settings.glm_5_3_flash_model,),
+        default=settings.glm_5_3_flash_model,
     )
     args = parser.parse_args()
     cases = load_cases(args.cases)

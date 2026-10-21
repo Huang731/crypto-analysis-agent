@@ -45,7 +45,6 @@ async def _invoke_route_decision(
     response = await ainvoke_model(
         llm,
         messages,
-        timeout=120,
     )
     if not isinstance(response.content, str):
         raise ValueError("路由模型未返回文本")

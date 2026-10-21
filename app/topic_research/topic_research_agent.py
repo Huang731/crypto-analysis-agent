@@ -105,8 +105,8 @@ def make_split(
 
 
 async def _invoke_model(llm: Any, messages: list[BaseMessage]) -> Any:
-    """单次调用保留超时，重试由包含结果校验的业务节点负责。"""
-    return await ainvoke_model(llm, messages, timeout=120)
+    """执行单次调用，重试由包含结果校验的业务节点负责。"""
+    return await ainvoke_model(llm, messages)
 
 
 @trace_generation_call(

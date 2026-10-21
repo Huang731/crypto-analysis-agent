@@ -166,7 +166,6 @@ async def _invoke_skill_retrieval_query(
         response = await ainvoke_model(
             llm,
             messages,
-            timeout=120,
         )
         query = response.content.strip()
         if not query:

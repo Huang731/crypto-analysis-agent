@@ -88,7 +88,6 @@ def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, An
                 model,
                 [HumanMessage(content=prompt)],
                 schema=response_model,
-                timeout=120,
             )
             return response_model.model_validate(result)
 
