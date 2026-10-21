@@ -305,7 +305,10 @@ def make_reviewer(
             skill_results=state["skill_results"],
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
-        review = await _invoke_report_review(bailian_smart_llm, messages)
+        review = await _invoke_report_review(
+            bailian_smart_llm.bind(temperature=0.1),
+            messages,
+        )
         if settings.reviewer_capture_enabled:
             append_node_candidate(
                 node="reviewer",
