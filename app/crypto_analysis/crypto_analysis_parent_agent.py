@@ -8,8 +8,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, messages_to_dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.runtime import Runtime
-from langgraph.types import Overwrite, Send, StreamWriter
+from langgraph.types import Overwrite, Send
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
@@ -56,10 +55,8 @@ from prompts.crypto_analysis_writer import analysis_report_messages
 async def _invoke_report_text(
     llm: Any,
     messages: list[BaseMessage],
-    stream_writer: StreamWriter,
 ) -> str:
-    """生成正文前通知开始，完成后校验报告。"""
-    stream_writer({"event": "report_start", "node": "writer"})
+    """生成并校验报告，流式片段由路由服务统一转发。"""
     response = await ainvoke_model(llm, messages)
     report = response.content.strip()
     if not report:
@@ -247,11 +244,11 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
 
 def make_writer(
     bailian_fast_llm: Any,
-) -> Callable[..., Awaitable[dict[str, Any]]]:
+) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
-    async def writer(state: DynamicAnalysisState, runtime: Runtime) -> dict[str, Any]:
+    async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
         """依据本轮技能证据撰写结论，报告只包含结论正文。"""
         ordered = sorted(state["skill_results"], key=lambda item: item["skill_name"])
         # 只传入本轮技能证据和审稿反馈。
@@ -276,7 +273,6 @@ def make_writer(
         report = await _invoke_report_text(
             bailian_fast_llm.bind(temperature=0.1),
             messages,
-            runtime.stream_writer,
         )
         if settings.writer_capture_enabled:
             append_node_candidate(

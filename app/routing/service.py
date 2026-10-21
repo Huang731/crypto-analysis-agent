@@ -5,6 +5,8 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from langchain_core.messages import BaseMessage
+
 from api.schemas import AskRequest
 from app.core.observability import get_logger, log_event
 from app.core.tracing import trace_span
@@ -40,7 +42,7 @@ class _RoutingStreamState:
         default_factory=lambda: {"skill_results": [], "findings": []}
     )
     routed_agent: str | None = None
-    report_released: bool = False
+    writer_message_id: str | None = None
 
     def route(self, agent: str, conflict_reason: str) -> dict[str, str] | None:
         """首次路由通知前端，实际执行必须与路由目标一致。"""
@@ -92,22 +94,21 @@ class _RoutingStreamState:
             self.final_state["report"] = delta["report"]
         elif node == "research_team" and "findings" in delta:
             self.final_state["findings"] = delta["findings"]
-        elif node == "reviewer" and delta.get("review_decision") == "pass":
-            yield from self.approved_report_events()
 
-    def approved_report_events(self) -> Iterator[dict[str, str]]:
-        """只在审核通过后分段发送本轮报告，重写期间不推送正文。"""
-        if self.report_released:
+    def apply_message(
+        self, message: BaseMessage, metadata: dict[str, Any]
+    ) -> Iterator[dict[str, str]]:
+        """只转发写作正文，每次模型重试或报告重写都先清空旧稿。"""
+        if metadata.get("langgraph_node") != "writer":
             return
-        report = self.final_state["report"]
-        if not isinstance(report, str) or not report.strip():
-            raise ValueError("审核通过的报告正文为空")
-        self.report_released = True
-        yield _event("report_start", {"node": "writer"})
-        for offset in range(0, len(report), 64):
-            yield _event(
-                "token", {"node": "writer", "content": report[offset : offset + 64]}
-            )
+        if not isinstance(message.content, str) or not message.content:
+            return
+        if not message.id:
+            raise ValueError("报告流式片段缺少消息 ID")
+        if message.id != self.writer_message_id:
+            self.writer_message_id = message.id
+            yield _event("report_start", {"node": "writer"})
+        yield _event("token", {"node": "writer", "content": message.content})
 
     def completion_event(self) -> dict[str, str]:
         """保持两类专家完成事件的字段，无路由时明确失败。"""
@@ -163,10 +164,10 @@ class RoutingService:
             "configurable": {"thread_id": thread_id},
         }
         with trace_span("routing_graph"):
-            # 只订阅节点更新，避免模型草稿和审核内容在通过前进入页面。
+            # 节点更新保留进度和最终状态，模型消息只转发写作节点的正文。
             async for part in self._routing_graph.astream(
                 {"scope": scope},
-                stream_mode=["updates"],
+                stream_mode=["updates", "messages"],
                 subgraphs=True,
                 version="v2",
                 config=config,
@@ -175,6 +176,10 @@ class RoutingService:
                     for node, delta in part["data"].items():
                         for event in result.apply_update(part["ns"], node, delta):
                             yield event
+                elif part["type"] == "messages":
+                    message, metadata = part["data"]
+                    for event in result.apply_message(message, metadata):
+                        yield event
         yield result.completion_event()
 
 
