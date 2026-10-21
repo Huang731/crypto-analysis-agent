@@ -6,7 +6,7 @@
 
 **技术栈：** Python · FastAPI · LangChain · LangGraph · Pydantic · MCP · FAISS · SQLite · SSE
 
-[功能与演示](#功能与演示) · [系统架构](#系统架构) · [核心设计](#核心设计) · [快速启动](#快速启动) · [评测与验证](#评测与验证) · [项目目录](#项目目录) · [当前范围](#当前范围)
+[功能与演示](#功能与演示) · [系统架构](#系统架构) · [核心设计](#核心设计) · [快速启动](#快速启动) · [评测与验证](#评测与验证) · [项目目录](#项目目录)
 
 ## 功能与演示
 
@@ -246,22 +246,24 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 评测代码位于 [eval_agent/](eval_agent/)，独立于业务执行链路。固定用例由人工维护，直接复用生产函数或节点进行校验和评分。
 
+### 评测范围与入口
+
 | 评测范围 | 评测方式 | 入口 |
 | --- | --- | --- |
 | 路由 | RAGAS 自定义规则指标：路由正确率 | [routing](eval_agent/routing/run_eval.py) |
 | 分析规划 | 资产、Skill 选择及规划规则 | [planning](eval_agent/planning/run_eval.py) |
-| 指标计算（calculate_metrics） | 固定取数响应回放、指标与计算结果校验 | [calculate_metrics](eval_agent/calculate_metrics/run_eval.py) |
-| Skill 正文 | 项目裁判、规则检查与裁判校准 | [skill_generation](eval_agent/skill_generation/run_eval.py) |
+| 指标计算（calculate_metrics） | RAGAS 规则评测工具名称、参数、证据关联和指标结果契约 | [calculate_metrics](eval_agent/calculate_metrics/run_eval.py) |
 | Writer | RAGAS 忠实度与回答相关性 | [writer](eval_agent/writer/run_eval.py) |
 | Reviewer | 审核案例与 RAGAS 指标 | [reviewer](eval_agent/reviewer/run_eval.py) |
 | RAG | 忠实度、回答相关性、上下文精确率与召回率 | [rag_retrieval](eval_agent/rag_retrieval/run_eval.py) |
 
-### 模型评分与结果记录
+### 运行方式
 
 实际评分需要配置对应模型服务，写入 Langfuse 的评测还需要其连接配置。例如：
 
 ```bash
 .venv-eval/bin/python -m eval_agent.routing.run_eval
+.venv-eval/bin/python -m eval_agent.calculate_metrics.run_eval
 .venv-eval/bin/python -m eval_agent.writer.run_eval --run-name writer-demo
 .venv-eval/bin/python -m eval_agent.rag_retrieval.run_eval \
   --out eval_agent/outputs/rag_eval/results.json
@@ -269,7 +271,53 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同用例、模型、提示词版本与运行配置一起解读；本地用例校验不能代替真实服务评分。
 
-### RAGAS 评测结果
+### 评测结果
+
+以下汇总已记录的评测运行，样本数、指标和耗时对应各次运行；具体分数与原始截图见下方明细。
+
+| 评测环节 | 用例数 | 本次结果 | 全流程耗时 |
+| --- | --- | --- | --- |
+| [路由](#路由) | 27 | 路由正确率 1.0 | 约 22 秒 |
+| [分析规划](#分析规划) | 24 | 三项规则指标均为 1.0 | 约 28 秒 |
+| [指标计算](#指标计算) | 6 | 四项规则指标均为 1.0 | 约 19 秒 |
+| [RAG 检索与回答](#rag-检索与回答) | 10 | 忠实度 0.9587，回答相关性 0.9151 | 约 115 秒 |
+
+#### 路由
+
+以下为一次 27 道题的路由评测结果，路由生成与规则评分全流程耗时约 22 秒。通过 RAGAS 自定义规则指标，将路由输出与人工标注进行比对，本次用例的路由正确率为 1.0。分数与本地结果文件 `eval_agent/outputs/routing_eval/results.json` 一致。
+
+| 指标 | 含义 | 分数 |
+| --- | --- | --- |
+| `route_correct` | 路由正确率 | 1.0 |
+
+![路由评测运行截图：27 道题的路由正确率与运行耗时](docs/images/routing-evaluation-results.png)
+
+#### 分析规划
+
+以下为一次 24 道题的分析规划评测结果，规划生成与规则评分全流程耗时约 28 秒。通过 RAGAS 自定义规则指标，将规划输出与人工标注进行比对，三项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/planning_eval/results.json` 一致。
+
+| 指标 | 含义 | 分数 |
+| --- | --- | --- |
+| `target_asset_correct` | 目标资产识别正确率 | 1.0 |
+| `skill_selection_correct` | Skill 选择正确率 | 1.0 |
+| `refresh_correct` | 刷新标志判断正确率 | 1.0 |
+
+![分析规划评测运行截图：24 道题的三项规则指标与运行耗时](docs/images/planning-evaluation-results.png)
+
+#### 指标计算
+
+以下为一次 6 条指标节点用例的评测结果，节点执行与规则评分全流程耗时约 19 秒。通过 RAGAS 自定义规则指标，校验工具选择、调用参数、证据关联和指标结果契约，四项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/calculate_metrics_eval/results.json` 一致。
+
+| 指标 | 含义 | 分数 |
+| --- | --- | --- |
+| `tool_selection_correct` | 工具选择正确率 | 1.0 |
+| `tool_arguments_correct` | 工具调用参数正确率 | 1.0 |
+| `evidence_valid` | 证据与关联校验通过率 | 1.0 |
+| `indicator_results_valid` | 指标结果校验通过率 | 1.0 |
+
+![指标节点评测运行截图：6 条用例的四项规则指标与运行耗时](docs/images/calculate-metrics-evaluation-results.png)
+
+#### RAG 检索与回答
 
 以下为一次 10 道题的 RAG 评测结果，检索、回答生成与裁判评分全流程耗时约 115 秒。分数与本地结果文件 `eval_agent/outputs/rag_eval/results.json` 一致，反映本次用例与运行配置下的表现。
 
@@ -282,29 +330,7 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 
 ![RAGAS 评测运行截图：10 道题的四项指标与运行耗时](docs/images/rag-evaluation-results.png)
 
-### 分析规划评测结果
-
-以下为一次 24 道题的分析规划评测结果，规划生成与规则评分全流程耗时约 28 秒。通过 RAGAS 自定义规则指标，将规划输出与人工标注进行比对，三项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/planning_eval/results.json` 一致。
-
-| 指标 | 含义 | 分数 |
-| --- | --- | --- |
-| `target_asset_correct` | 目标资产识别正确率 | 1.0 |
-| `skill_selection_correct` | Skill 选择正确率 | 1.0 |
-| `refresh_correct` | 刷新标志判断正确率 | 1.0 |
-
-![分析规划评测运行截图：24 道题的三项规则指标与运行耗时](docs/images/planning-evaluation-results.png)
-
-### 路由评测结果
-
-以下为一次 27 道题的路由评测结果，路由生成与规则评分全流程耗时约 22 秒。通过 RAGAS 自定义规则指标，将路由输出与人工标注进行比对，本次用例的路由正确率为 1.0。分数与本地结果文件 `eval_agent/outputs/routing_eval/results.json` 一致。
-
-| 指标 | 含义 | 分数 |
-| --- | --- | --- |
-| `route_correct` | 路由正确率 | 1.0 |
-
-![路由评测运行截图：27 道题的路由正确率与运行耗时](docs/images/routing-evaluation-results.png)
-
-### 评测数据管理
+### 数据与结果管理
 
 数据与结果的职责分布：
 

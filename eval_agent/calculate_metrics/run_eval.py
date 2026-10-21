@@ -1,148 +1,45 @@
-"""固定取数响应，直接调用生产指标节点，保存 Langfuse 与本地结果。"""
+"""RAGAS 指标节点评测：真实节点输入 → 工具执行 → 四项规则评分。"""
 
-import argparse
 import asyncio
-import hashlib
 import json
-import subprocess
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
-from contextlib import ExitStack
 from copy import deepcopy
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from math import ceil, isclose
+from math import isclose
 from pathlib import Path
-from statistics import median
 from typing import Any, Literal
-from unittest.mock import patch
-from uuid import NAMESPACE_URL, uuid5
 
-import truststore
-from langchain_core.callbacks import AsyncCallbackHandler
-from langchain_core.outputs import LLMResult
-from langfuse import Evaluation, Langfuse, get_client
-from langfuse.api import DatasetItem
-from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command
+from langchain_core.messages import messages_from_dict, messages_to_dict
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from ragas import Dataset, experiment
+from ragas.backends import InMemoryBackend
+from ragas.metrics import numeric_metric
 
-from app.core.config import PROJECT_ROOT, _env_files, settings
+from app.core.config import PROJECT_ROOT
 from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
-from app.crypto_analysis.crypto_analysis_sub_agent import (
-    make_calculate_metrics,
-    make_check_metrics,
-    route_metrics,
-    skill_worker_step_limit,
-)
-from app.crypto_analysis.metric_service import _log_reason
+from app.crypto_analysis.crypto_analysis_sub_agent import make_calculate_metrics
 from app.crypto_analysis.skill_loader import LoadedSkill
-from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import (
-    _make_bailian_llm,
-    make_bailian_fast_llm,
-    make_bailian_smart_llm,
-    make_glm_4_5_air_llm,
-    make_glm_4_flash_llm,
-    model_session,
-)
-from prompts.crypto_analysis_calculate_metrics import (
-    CalculateMetricsPrompt,
-    calculate_metrics_messages,
+from app.llm.model import make_glm_4_flash_llm, model_session
+
+METRICS = (
+    "tool_selection_correct",
+    "tool_arguments_correct",
+    "evidence_valid",
+    "indicator_results_valid",
 )
 
-# 只替换工具模块引用的数据源函数，取数证据处理、计算器与聚合保持原样。
-SOURCE_TARGETS = {
-    "fear_greed": "app.crypto_analysis.tools.sentiment_tools.get_fear_and_greed",
-    "derivatives": "app.crypto_analysis.tools.derivatives_tools.get_binance_derivatives",
-    "etf": "app.crypto_analysis.tools.etf_tools.get_crypto_etf_flows",
-    "trend": "app.crypto_analysis.tools.trend_tools.get_binance_trend_klines",
-    "fed_target_range": "app.crypto_analysis.tools.fed_policy_tools.get_fed_target_range",
-    "dxy": "app.crypto_analysis.tools.liquidity_tools.query_dxy_from_official_mcp",
-    "stablecoin": "app.crypto_analysis.tools.liquidity_tools.get_stablecoin_historical_market_cap",
-    "fred_observations": "app.crypto_analysis.tools.liquidity_tools.get_m2_yoy_change",
-}
-
-# 各指标必须使用对应类型的原始证据，共用数据的 OI 与 Funding 指向同一类型。
 METRIC_DATA_KINDS = {
+    "Fear_Greed": "fear_greed",
+    "Trend": "trend",
     "OI": "derivatives",
     "Funding": "derivatives",
-    "ETF_Flows": "etf",
-    "Trend": "trend",
     "Fed_Rate_Change_3M": "fed_target_range",
-    "Fear_Greed": "fear_greed",
     "DXY_Trend": "dxy",
     "Stable_MCap": "stablecoin",
     "M2_YoY": "m2",
     "Fed_Balance": "walcl",
+    "ETF_Flows": "etf",
 }
-
-
-class CaseMetadata(BaseModel):
-    """人工标注案例的标识、分类和判定理由。"""
-
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
-    case_id: str = Field(min_length=1)
-    category: str = Field(min_length=1)
-    label_reason: str = Field(min_length=1)
-
-
-class EvalSettings(BaseSettings):
-    """沿用项目环境变量，未配置 Langfuse 密钥时明确报错。"""
-
-    model_config = SettingsConfigDict(
-        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore"
-    )
-    langfuse_public_key: str = Field(min_length=1)
-    langfuse_secret_key: str = Field(min_length=1)
-    langfuse_base_url: str = "https://cloud.langfuse.com"
-
-
-class SourceResponse(BaseModel):
-    """按数据源与参数匹配固定返回值，或模拟明确的取数异常。"""
-
-    model_config = ConfigDict(extra="forbid")
-    source: str = Field(min_length=1)
-    arguments: dict[str, Any]
-    raw: dict[str, Any] | None = None
-    error: str | None = Field(default=None, min_length=1)
-
-
-class SkillExecutionScope(BaseModel):
-    """保留真实技能节点收到的请求范围；as_of 仅为原有展示时间。"""
-
-    model_config = ConfigDict(extra="forbid")
-    as_of: str = Field(min_length=1)
-    original_question: str = Field(min_length=1)
-    resolved_question: str = Field(min_length=1)
-    target_asset: str = Field(pattern=r"^[A-Z0-9]+$", strict=True)
-    thread_id: str = Field(min_length=1)
-    trace_id: str = Field(min_length=1)
-
-
-class MetricAgentConfig(BaseModel):
-    """保留案例模型配置，用于重建指标决策模型。"""
-
-    model_config = ConfigDict(extra="forbid")
-    model: str = Field(min_length=1)
-
-
-class SkillExecutionInput(BaseModel):
-    """保留执行模型、技能定义和请求范围三个评测入参。"""
-
-    model_config = ConfigDict(extra="forbid")
-    metric_agent: MetricAgentConfig
-    skill: LoadedSkill
-    scope: SkillExecutionScope
-
-
-class SourceReplayConfig(BaseModel):
-    """固定取数响应属于评测环境配置，不混入生产函数入参。"""
-
-    model_config = ConfigDict(extra="forbid")
-    source_responses: list[SourceResponse] = Field(min_length=1)
 
 
 class IndicatorResult(BaseModel):
@@ -160,420 +57,6 @@ class IndicatorResult(BaseModel):
     source: str | None
     url: str | None
     score: float | None = Field(ge=0, le=10, allow_inf_nan=False, strict=True)
-
-
-class SkillExecutionResult(BaseModel):
-    """生产函数返回的完整技能结果，不以模型正文代替指标结果。"""
-
-    model_config = ConfigDict(extra="forbid")
-    skill_name: str
-    name: str
-    status: Literal[
-        "ok", "partial", "data_missing", "not_applicable", "calculation_error"
-    ]
-    reason: str | None
-    score: float | None = Field(ge=0, le=10, allow_inf_nan=False, strict=True)
-    indicators: list[IndicatorResult] = Field(min_length=1)
-
-
-class SkillExecutionCase(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    input: SkillExecutionInput
-    expected_output: SkillExecutionResult
-    replay: SourceReplayConfig
-    metadata: CaseMetadata
-
-
-class SourceCall(BaseModel):
-    source: str
-    arguments: dict[str, Any]
-    matched: bool
-
-
-class SkillExecutionOutput(BaseModel):
-    """错误保留独立状态；耗时包含指标循环内全部模型与工具步骤。"""
-
-    model_config = ConfigDict(extra="forbid")
-    result: SkillExecutionResult | None = None
-    raw_result: Any = None
-    execution_status: Literal["success", "error"]
-    duration_ms: float = Field(ge=0)
-    error_type: str | None = None
-    error_stage: str | None = None
-    error_message: str | None = None
-    replay_valid: bool | None
-    source_calls: list[SourceCall]
-    tool_calls: list[dict[str, Any]]
-    tool_error_count: int = Field(ge=0)
-    model_attempt_count: int = Field(ge=0)
-    evidence_chain_valid: bool
-    token_usage: list[dict[str, Any]]
-
-
-@dataclass(eq=False)
-class ReplayState(AsyncCallbackHandler):
-    """一次案例持有自己的固定响应与调用记录；评测必须串行运行。"""
-
-    responses: list[SourceResponse]
-    source_calls: list[SourceCall] = field(default_factory=list)
-    agent_state: dict[str, Any] | None = None
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
-    tool_error_count: int = 0
-    model_attempt_count: int = 0
-    token_usage: list[dict[str, Any]] = field(default_factory=list)
-
-    async def on_chat_model_start(
-        self, serialized: Any, messages: Any, **kwargs: Any
-    ) -> None:
-        self.model_attempt_count += 1
-
-    async def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
-        for generations in response.generations:
-            for generation in generations:
-                self.tool_calls.extend(
-                    dict(call) for call in generation.message.tool_calls
-                )
-                if generation.message.usage_metadata:
-                    self.token_usage.append(dict(generation.message.usage_metadata))
-
-    async def on_tool_end(self, output: Any, **kwargs: Any) -> None:
-        messages = (
-            output.update.get("messages", [])
-            if isinstance(output, Command)
-            else [output]
-        )
-        self.tool_error_count += sum(
-            getattr(message, "status", None) == "error" for message in messages
-        )
-
-    async def on_tool_error(self, error: BaseException, **kwargs: Any) -> None:
-        self.tool_error_count += 1
-
-    def source_function(self, source: str) -> Callable[..., Awaitable[dict[str, Any]]]:
-        async def replay(**arguments: Any) -> dict[str, Any]:
-            matches = [
-                item
-                for item in self.responses
-                if item.source == source and item.arguments == arguments
-            ]
-            self.source_calls.append(
-                SourceCall(source=source, arguments=arguments, matched=bool(matches))
-            )
-            if not matches:
-                # 未配置的调用只能失败，禁止访问真实行情或补造默认数据。
-                raise RuntimeError("回放案例未提供匹配的数据源响应")
-            response = matches[0]
-            if response.error is not None:
-                raise RuntimeError(response.error)
-            assert response.raw is not None
-            return deepcopy(response.raw)
-
-        return replay
-
-
-@dataclass
-class EvaluationRunState:
-    """当前评测持有运行记录和诊断，不把它们混入生产出参。"""
-
-    rows: list[dict[str, Any]] = field(default_factory=list)
-    diagnostics: dict[str, SkillExecutionOutput] = field(default_factory=dict)
-
-
-def load_cases(path: Path) -> list[SkillExecutionCase]:
-    """校验案例、唯一标识、技能归属、指标顺序及缺失分数，禁止静默跳过。"""
-    cases: list[SkillExecutionCase] = []
-    identifiers: set[str] = set()
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        try:
-            case = SkillExecutionCase.model_validate_json(line)
-            for metric in json.loads(line)["input"]["skill"]["scoring"]["metrics"]:
-                weight = metric["weight"]
-                if isinstance(weight, bool) or not isinstance(weight, (int, float)):
-                    raise ValueError("指标权重必须是数值")  # noqa: TRY004 - 沿用配置错误类型。
-            ids = [metric.id for metric in case.input.skill.scoring.metrics]
-            if len(ids) != len(set(ids)):
-                raise ValueError("Skill 指标重复")
-            if (
-                abs(
-                    sum(metric.weight for metric in case.input.skill.scoring.metrics)
-                    - 1
-                )
-                > 1e-06
-            ):
-                raise ValueError("Skill 指标权重总和必须为 1")
-            if len(case.input.skill.tools) != len(set(case.input.skill.tools)):
-                raise ValueError("Skill 工具名称重复")
-            unknown = set(case.input.skill.tools) - get_tool_registry().keys()
-            if unknown:
-                raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
-            for item in case.replay.source_responses:
-                if item.source not in SOURCE_TARGETS:
-                    raise ValueError("回放数据源未注册")
-                if (item.raw is None) == (item.error is None):
-                    raise ValueError("raw 与 error 必须且只能提供一个")
-            response_identifiers = [
-                (item.source, json.dumps(item.arguments, sort_keys=True))
-                for item in case.replay.source_responses
-            ]
-            if len(response_identifiers) != len(set(response_identifiers)):
-                raise ValueError("同一数据源和参数不能配置多个回放响应")
-        except ValidationError as exc:
-            errors = exc.errors(include_input=False, include_url=False)
-            raise ValueError(f"{path}:{number} 案例格式错误：{errors}") from None
-        except ValueError as exc:
-            raise ValueError(f"{path}:{number} 案例格式错误：{exc}") from None
-        if case.metadata.case_id in identifiers:
-            raise ValueError(f"{path}:{number} 案例标识重复：{case.metadata.case_id}")
-        skill = case.input.skill
-        expected = case.expected_output
-        if expected.skill_name != skill.name or expected.name != skill.scoring.name:
-            raise ValueError(f"{path}:{number} 预期结果与技能不一致")
-        if [item.indicator_id for item in expected.indicators] != [
-            metric.id for metric in skill.scoring.metrics
-        ]:
-            raise ValueError(f"{path}:{number} 预期指标与技能配置顺序不一致")
-        for item in expected.indicators:
-            if item.skill_name != skill.name:
-                raise ValueError(f"{path}:{number} 指标所属技能不一致")
-            if item.status == "ok" and item.score is None:
-                raise ValueError(f"{path}:{number} 成功指标缺少分数")
-            if item.status != "ok" and (item.score is not None or not item.reason):
-                raise ValueError(f"{path}:{number} 缺失指标必须无分数且有原因")
-        identifiers.add(case.metadata.case_id)
-        cases.append(case)
-    if not cases:
-        raise ValueError(f"{path} 没有评测案例")
-    return cases
-
-
-def tool_trajectory(
-    state: dict[str, Any] | None, skill: LoadedSkill
-) -> tuple[list[dict[str, Any]], int, bool]:
-    """核对组合工具调用、各指标状态与完整证据关联。"""
-    if state is None:
-        return [], 0, False
-    calls: list[dict[str, Any]] = []
-    calls_by_id: dict[str, dict[str, Any]] = {}
-    responded: set[str] = set()
-    errors = 0
-    valid = True
-    for message in state["messages"]:
-        if message.type == "ai":
-            for call in message.tool_calls:
-                calls.append(dict(call))
-                calls_by_id[call["id"]] = call
-                if call["name"] not in skill.tools:
-                    valid = False
-                valid &= call["args"] == {}
-        elif message.type == "tool":
-            if message.status == "error":
-                # 框架校验错误是普通文本，保留失败事实，不当作取数证据解析。
-                errors += 1
-                valid = False
-                continue
-            payload = json.loads(message.content)
-            if "indicators" not in payload or not isinstance(message.artifact, dict):
-                valid = False
-                continue
-            references = message.artifact.get("indicator_evidence_ids")
-            if not isinstance(references, dict):
-                valid = False
-                continue
-            valid &= message.tool_call_id in calls_by_id
-            valid &= message.tool_call_id not in responded
-            responded.add(message.tool_call_id)
-            summaries = payload["indicators"]
-            metric_ids = [item["indicator_id"] for item in summaries]
-            valid &= len(metric_ids) == len(set(metric_ids))
-            valid &= set(metric_ids) == {metric.id for metric in skill.scoring.metrics}
-            valid &= set(references) == set(metric_ids)
-            call_evidence = {
-                evidence_id
-                for evidence_id in state["evidence"]
-                if evidence_id.startswith(f"{message.tool_call_id}:")
-            }
-            valid &= bool(call_evidence) and set(references.values()) == call_evidence
-            for item in summaries:
-                evidence_id = references.get(item["indicator_id"])
-                evidence = state["evidence"].get(evidence_id)
-                valid &= (
-                    evidence is not None
-                    and evidence["data_kind"]
-                    == (METRIC_DATA_KINDS[item["indicator_id"]])
-                )
-                result = state["indicator_results"].get(item["indicator_id"])
-                valid &= result is not None and item["status"] == result["status"]
-                if result is not None and result["status"] != "ok":
-                    valid &= item.get("reason") == result["reason"]
-    return (
-        calls,
-        errors,
-        (
-            valid
-            and bool(calls)
-            and len(calls_by_id) == len(calls)
-            and responded == calls_by_id.keys()
-        ),
-    )
-
-
-async def evaluate_skill(
-    client: Langfuse,
-    inputs: SkillExecutionInput,
-    replay_config: SourceReplayConfig,
-    timeout_seconds: float,
-) -> SkillExecutionOutput:
-    """真实模型选择工具，只替换取数返回，沿用生产计算器、重试与单次超时。"""
-    ids = [metric.id for metric in inputs.skill.scoring.metrics]
-    if len(ids) != len(set(ids)):
-        raise ValueError("Skill 指标重复")
-    if abs(sum(metric.weight for metric in inputs.skill.scoring.metrics) - 1) > 1e-06:
-        raise ValueError("Skill 指标权重总和必须为 1")
-    if len(inputs.skill.tools) != len(set(inputs.skill.tools)):
-        raise ValueError("Skill 工具名称重复")
-    unknown = set(inputs.skill.tools) - get_tool_registry().keys()
-    if unknown:
-        raise ValueError(f"Skill 包含未注册工具：{'、'.join(sorted(unknown))}")
-    for item in replay_config.source_responses:
-        if item.source not in SOURCE_TARGETS:
-            raise ValueError("回放数据源未注册")
-        if (item.raw is None) == (item.error is None):
-            raise ValueError("raw 与 error 必须且只能提供一个")
-    response_identifiers = [
-        (item.source, json.dumps(item.arguments, sort_keys=True))
-        for item in replay_config.source_responses
-    ]
-    if len(response_identifiers) != len(set(response_identifiers)):
-        raise ValueError("同一数据源和参数不能配置多个回放响应")
-    skill = inputs.skill
-    replay = ReplayState(responses=replay_config.source_responses)
-    # 每例持有独立异步连接，避免关闭框架共享连接后影响下一例。
-    async with model_session() as http_client:
-        if inputs.metric_agent.model == settings.glm_smart_model:
-            llm = make_glm_4_5_air_llm(async_client=http_client)
-        elif inputs.metric_agent.model == settings.glm_4_flash_model:
-            llm = make_glm_4_flash_llm(async_client=http_client)
-        elif inputs.metric_agent.model == settings.bailian_fast_model:
-            llm = make_bailian_fast_llm(async_client=http_client)
-        elif inputs.metric_agent.model == settings.bailian_smart_model:
-            llm = make_bailian_smart_llm(async_client=http_client)
-        else:
-            # 历史案例继续使用其明确记录的文本模型，不改写案例标签。
-            llm = _make_bailian_llm(
-                inputs.metric_agent.model, async_client=http_client, protocol="text"
-            )
-        with ExitStack() as stack:
-            for source, target in SOURCE_TARGETS.items():
-                stack.enter_context(patch(target, new=replay.source_function(source)))
-            # 直接复用生产指标节点，仅截断后续检索与正文生成。
-            builder = StateGraph(SkillWorkerGraphState)
-            builder.add_node("calculate_metrics", make_calculate_metrics(llm))
-            builder.add_node("check_metrics", make_check_metrics())
-            builder.add_edge(START, "calculate_metrics")
-            builder.add_edge("calculate_metrics", "check_metrics")
-            builder.add_conditional_edges(
-                "check_metrics",
-                route_metrics,
-                {"incomplete": "calculate_metrics", "complete": END},
-            )
-            graph = builder.compile()
-            with client.start_as_current_observation(
-                as_type="span",
-                name="calculate_metrics.invoke",
-                input=inputs.model_dump(mode="json"),
-                metadata={
-                    "model": inputs.metric_agent.model,
-                    "data_mode": "fixed_replay",
-                },
-            ) as observation:
-                started = time.perf_counter()
-                stage = "agent"
-                raw_result: Any = None
-                try:
-                    state = await asyncio.wait_for(
-                        graph.ainvoke(
-                            {
-                                "skill": skill,
-                                "scope": inputs.scope.model_dump(),
-                                "messages": [],
-                                "evidence": {},
-                                "indicator_results": {},
-                            },
-                            config={
-                                "callbacks": [replay],
-                                "recursion_limit": skill_worker_step_limit(
-                                    len(skill.scoring.metrics)
-                                ),
-                            },
-                        ),
-                        timeout=timeout_seconds,
-                    )
-                    replay.agent_state = state
-                    raw_result = state["metric_result"]
-                    duration_ms = (time.perf_counter() - started) * 1000
-                    stage = "result_validation"
-                    actual = SkillExecutionResult.model_validate(raw_result)
-                    status, error_type, error_stage, error_message = (
-                        "success",
-                        None,
-                        None,
-                        None,
-                    )
-                except Exception as exc:  # noqa: BLE001 - 保留单项失败，继续其他案例。
-                    duration_ms = (time.perf_counter() - started) * 1000
-                    actual, status, error_type = None, "error", type(exc).__name__
-                    error_stage = stage
-                    message = str(exc)
-                    for key in (
-                        settings.dashscope_api_key,
-                        settings.zhipuai_4_api_key,
-                        settings.zhipuai_5_api_key,
-                    ):
-                        if key:
-                            message = message.replace(key, "[已隐藏]")
-                    error_message = _log_reason(message)[:1000]
-                _, errors, chain_valid = tool_trajectory(replay.agent_state, skill)
-                configured = Counter(
-                    (item.source, json.dumps(item.arguments, sort_keys=True))
-                    for item in replay.responses
-                )
-                requested = Counter(
-                    (call.source, json.dumps(call.arguments, sort_keys=True))
-                    for call in replay.source_calls
-                )
-                output = SkillExecutionOutput(
-                    result=actual,
-                    raw_result=raw_result,
-                    execution_status=status,
-                    duration_ms=duration_ms,
-                    error_type=error_type,
-                    error_stage=error_stage,
-                    error_message=error_message,
-                    replay_valid=(
-                        configured == requested
-                        and all(call.matched for call in replay.source_calls)
-                        if status == "success" or replay.source_calls
-                        else None
-                    ),
-                    source_calls=replay.source_calls,
-                    tool_calls=replay.tool_calls,
-                    tool_error_count=(
-                        errors
-                        if replay.agent_state is not None
-                        else replay.tool_error_count
-                    ),
-                    model_attempt_count=replay.model_attempt_count,
-                    evidence_chain_valid=chain_valid,
-                    token_usage=replay.token_usage,
-                )
-                observation.update(
-                    output=raw_result,
-                    metadata=output.model_dump(
-                        mode="json", exclude={"result", "raw_result"}
-                    ),
-                    level="DEFAULT" if status == "success" else "ERROR",
-                )
-                return output
 
 
 def values_equal(actual: Any, expected: Any) -> bool:
@@ -604,480 +87,311 @@ def values_equal(actual: Any, expected: Any) -> bool:
     return actual == expected
 
 
-def result_differences(
-    actual: Any, expected: Any, path: str = "$"
-) -> list[dict[str, Any]]:
-    """记录具体字段差异，沿用完整结构比较及浮点容差。"""
-    if values_equal(actual, expected):
-        return []
-    if isinstance(actual, dict) and isinstance(expected, dict):
-        differences: list[dict[str, Any]] = []
-        for key in sorted(actual.keys() | expected.keys()):
-            field_path = f"{path}.{key}"
-            if key not in actual or key not in expected:
-                differences.append(
-                    {
-                        "path": field_path,
-                        "expected": expected.get(key),
-                        "actual": actual.get(key),
-                        "expected_present": key in expected,
-                        "actual_present": key in actual,
-                    }
-                )
-            else:
-                differences.extend(
-                    result_differences(actual[key], expected[key], field_path)
-                )
-        return differences
-    if isinstance(actual, list) and isinstance(expected, list):
-        differences = []
-        if len(actual) != len(expected):
-            differences.append(
-                {
-                    "path": f"{path}.length",
-                    "expected": len(expected),
-                    "actual": len(actual),
-                }
-            )
-        for index, (left, right) in enumerate(zip(actual, expected)):
-            differences.extend(result_differences(left, right, f"{path}[{index}]"))
-        return differences
-    return [{"path": path, "expected": expected, "actual": actual}]
-
-
-def compare_skill(
-    actual: SkillExecutionOutput, expected: SkillExecutionResult, skill: LoadedSkill
-) -> dict[str, bool | None]:
-    """分开检查调度、计算、状态和聚合；无结果时计算正确性保持未知。"""
-    success = actual.execution_status == "success" and actual.result is not None
-    scores: dict[str, bool | None] = {
-        "execution_success": success,
-        "replay_valid": actual.replay_valid,
-        "tool_selection_correct": None,
-        "indicator_calculation_correct": None,
-        "status_handling_correct": None,
-        "aggregate_score_correct": None,
-    }
-    if success or actual.error_stage == "result_validation":
-        scores["tool_selection_correct"] = (
-            Counter(call["name"] for call in actual.tool_calls) == Counter(skill.tools)
-            and all(call["args"] == {} for call in actual.tool_calls)
-            and actual.evidence_chain_valid
-            and actual.tool_error_count == 0
-        )
-        result = actual.raw_result
-        if isinstance(result, dict):
-            indicators = result.get("indicators")
-            valid_indicators = isinstance(indicators, list) and all(
-                isinstance(item, dict) for item in indicators
-            )
-            scores["indicator_calculation_correct"] = valid_indicators and values_equal(
-                [
-                    {
-                        key: value
-                        for key, value in item.items()
-                        if key not in {"status", "reason"}
-                    }
-                    for item in indicators
-                ],
-                [
-                    item.model_dump(exclude={"status", "reason"})
-                    for item in expected.indicators
-                ],
-            )
-            scores["status_handling_correct"] = valid_indicators and values_equal(
-                {
-                    **{
-                        key: value
-                        for key, value in result.items()
-                        if key in {"status", "reason"}
-                    },
-                    "indicators": [
-                        {
-                            key: value
-                            for key, value in item.items()
-                            if key in {"indicator_id", "status", "reason"}
-                        }
-                        for item in indicators
-                    ],
-                },
-                {
-                    "status": expected.status,
-                    "reason": expected.reason,
-                    "indicators": [
-                        item.model_dump(include={"indicator_id", "status", "reason"})
-                        for item in expected.indicators
-                    ],
-                },
-            )
-            scores["aggregate_score_correct"] = values_equal(
-                {
-                    key: value
-                    for key, value in result.items()
-                    if key in {"skill_name", "name", "score"}
-                },
-                expected.model_dump(include={"skill_name", "name", "score"}),
-            )
-        else:
-            scores.update(
-                indicator_calculation_correct=False,
-                status_handling_correct=False,
-                aggregate_score_correct=False,
-            )
-    scores["skill_execution_correct"] = all(value is True for value in scores.values())
-    return scores
-
-
-def score_skill(
-    *,
-    output: Any,
-    expected_output: Any,
-    input: Any,
-    diagnostics: SkillExecutionOutput,
-) -> list[Evaluation]:
-    """案例出参就是生产结果；执行诊断单独保存，评分不调用裁判模型。"""
-    expected = SkillExecutionResult.model_validate(expected_output)
-    skill = LoadedSkill.model_validate(input["skill"])
-    recorded = diagnostics.raw_result
-    if output is not recorded and not values_equal(output, recorded):
-        raise ValueError("案例出参与记录的指标聚合结果不一致")
-    details = {
-        "execution_status": diagnostics.execution_status,
-        "error_type": diagnostics.error_type,
-        "error_stage": diagnostics.error_stage,
-        "error_message": diagnostics.error_message,
-        "differences": result_differences(output, expected.model_dump())
-        if output is not None
-        else [],
-        "tool_call_count": len(diagnostics.tool_calls),
-        "tool_error_count": diagnostics.tool_error_count,
-        "model_attempt_count": diagnostics.model_attempt_count,
-    }
-    comment = json.dumps(details, ensure_ascii=False)
+def tool_calls(output: dict[str, Any]) -> list[dict[str, Any]]:
+    """仅提取本轮模型实际请求的工具名称和参数。"""
     return [
-        *[
-            Evaluation(name=name, value=int(correct), comment=comment)
-            for name, correct in compare_skill(diagnostics, expected, skill).items()
-            if correct is not None
-        ],
-        Evaluation(
-            name="duration_ms",
-            value=diagnostics.duration_ms,
-            comment="指标循环全程耗时，包含模型、重试、工具和聚合，单位毫秒",
-        ),
+        {"name": call["name"], "args": call["args"]}
+        for message in messages_from_dict(output["messages"])
+        if message.type == "ai"
+        for call in message.tool_calls
     ]
 
 
-def duration_summary(durations: list[float]) -> dict[str, float | None]:
-    """P50 使用中位数，P95 使用最近秩；无案例时明确返回未知。"""
-    if not durations:
-        return {
-            "mean_duration_ms": None,
-            "p50_duration_ms": None,
-            "p95_duration_ms": None,
-        }
-    ordered = sorted(durations)
-    return {
-        "mean_duration_ms": sum(durations) / len(durations),
-        "p50_duration_ms": median(durations),
-        "p95_duration_ms": ordered[ceil(len(durations) * 0.95) - 1],
-    }
+@numeric_metric(name="tool_selection_correct", allowed_values=(0, 1))
+def tool_selection_correct(
+    actual: list[dict[str, Any]], expected: list[dict[str, Any]]
+) -> int:
+    """工具名称和调用次数必须一致，不要求并行调用顺序一致。"""
+    return int(
+        Counter(call["name"] for call in actual)
+        == Counter(call["name"] for call in expected)
+    )
 
 
-def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    scores: Counter[str] = Counter()
-    evaluated: Counter[str] = Counter()
-    statuses: Counter[str] = Counter()
-    categories: dict[str, Counter[str]] = {}
-    durations: dict[str, list[float]] = {"success": [], "error": []}
-    tool_calls = 0
-    tool_errors = 0
-    model_attempts = 0
-    token_usage: list[dict[str, Any]] = []
-    for row in rows:
-        actual = SkillExecutionOutput.model_validate(
-            {
-                "result": row["output"]
-                if row["diagnostics"]["execution_status"] == "success"
-                else None,
-                "raw_result": row["output"],
-                **row["diagnostics"],
-            }
+@numeric_metric(name="tool_arguments_correct", allowed_values=(0, 1))
+def tool_arguments_correct(
+    actual: list[dict[str, Any]], expected: list[dict[str, Any]]
+) -> int:
+    """按名称匹配调用，参数必须完整一致。"""
+    return int(
+        sorted(
+            (call["name"], json.dumps(call["args"], sort_keys=True)) for call in actual
         )
-        expected = SkillExecutionResult.model_validate(row["expected_output"])
-        skill = LoadedSkill.model_validate(row["input"]["skill"])
-        comparison = compare_skill(actual, expected, skill)
-        for name, correct in comparison.items():
-            if correct is not None:
-                scores[name] += int(correct)
-                evaluated[name] += 1
-        statuses[actual.execution_status] += 1
-        durations[actual.execution_status].append(actual.duration_ms)
-        tool_calls += len(actual.tool_calls)
-        tool_errors += actual.tool_error_count
-        model_attempts += actual.model_attempt_count
-        token_usage.extend(actual.token_usage)
-        category = categories.setdefault(row["metadata"]["category"], Counter())
-        category["runs"] += 1
-        category["correct"] += int(comparison["skill_execution_correct"])
-    total = len(rows)
-    return {
-        "planned_runs": total,
-        "correct_runs": scores["skill_execution_correct"],
-        "overall_success_rate": scores["skill_execution_correct"] / total,
-        "accuracy_by_metric": {
-            name: scores[name] / evaluated[name] if evaluated[name] else None
-            for name in comparison
-        },
-        "evaluated_count_by_metric": {name: evaluated[name] for name in comparison},
-        "unknown_count_by_metric": {
-            name: total - evaluated[name] for name in comparison
-        },
-        "execution_status_counts": dict(statuses),
-        "accuracy_by_category": {
-            name: counts["correct"] / counts["runs"]
-            for name, counts in categories.items()
-        },
-        **duration_summary(durations["success"] + durations["error"]),
-        "duration_by_execution_status": {
-            status: duration_summary(values) for status, values in durations.items()
-        },
-        "tool_call_count": tool_calls,
-        "mean_tool_call_count": tool_calls / total,
-        "tool_error_count": tool_errors,
-        "model_attempts": model_attempts,
-        "token_usage": {
-            name: sum(usage[name] for usage in token_usage)
-            if token_usage and all(name in usage for usage in token_usage)
-            else None
-            for name in ("input_tokens", "output_tokens", "total_tokens")
-        },
-        "model_calls_with_token_usage": len(token_usage),
-        "cost": None,
+        == sorted(
+            (call["name"], json.dumps(call["args"], sort_keys=True))
+            for call in expected
+        )
+    )
+
+
+@numeric_metric(name="evidence_valid", allowed_values=(0, 1))
+def evidence_valid(
+    actual: dict[str, Any], inputs: dict[str, Any], expected: dict[str, Any]
+) -> int:
+    """检查证据来源、取数参数与指标关联，允许调用 ID 每次变化。"""
+    try:
+        evidence = actual["evidence"]
+        original = inputs["evidence"]
+        if not all(
+            key in evidence and values_equal(evidence[key], record)
+            for key, record in original.items()
+        ):
+            return 0
+        added = {key: value for key, value in evidence.items() if key not in original}
+        by_kind = {record["data_kind"]: record for record in added.values()}
+        expected_added = {
+            key: record
+            for key, record in expected["evidence"].items()
+            if key not in original
+        }
+        specs = {record["data_kind"]: record for record in expected_added.values()}
+        if (
+            len(by_kind) != len(added)
+            or len(specs) != len(expected_added)
+            or set(by_kind) != set(specs)
+        ):
+            return 0
+        for kind, spec in specs.items():
+            record = by_kind[kind]
+            if record["source_action"] != spec["source_action"] or not values_equal(
+                record["arguments"], spec["arguments"]
+            ):
+                return 0
+            if record["status"] == "ok":
+                if (
+                    not isinstance(record["raw"], dict)
+                    or not isinstance(record["raw"]["source"], str)
+                    or not record["raw"]["source"].strip()
+                ):
+                    return 0
+            elif record["status"] == "data_missing":
+                if (
+                    not isinstance(record["reason"], str)
+                    or not record["reason"].strip()
+                ):
+                    return 0
+            else:
+                return 0
+        pending = {
+            metric["id"] for metric in inputs["skill"]["scoring"]["metrics"]
+        } - inputs["indicator_results"].keys()
+        metric_kinds = {
+            metric_id: METRIC_DATA_KINDS[metric_id] for metric_id in pending
+        }
+        if set(metric_kinds.values()) != set(specs):
+            return 0
+
+        messages = messages_from_dict(actual["messages"])
+        calls: dict[str, dict[str, Any]] = {}
+        for message in messages:
+            if message.type == "ai":
+                if message.invalid_tool_calls:
+                    return 0
+                for call in message.tool_calls:
+                    if not call["id"] or call["id"] in calls:
+                        return 0
+                    calls[call["id"]] = call
+        responded: set[str] = set()
+        linked: set[str] = set()
+        recorded: set[str] = set()
+        for message in messages:
+            if message.type != "tool":
+                continue
+            call_id = message.tool_call_id
+            if (
+                message.status != "success"
+                or call_id not in calls
+                or call_id in responded
+                or message.name != calls[call_id]["name"]
+            ):
+                return 0
+            responded.add(call_id)
+            summaries = json.loads(message.content)["indicators"]
+            references = message.artifact["indicator_evidence_ids"]
+            ids = [item["indicator_id"] for item in summaries]
+            if len(ids) != len(set(ids)) or set(ids) != set(references):
+                return 0
+            for item in summaries:
+                metric_id = item["indicator_id"]
+                if metric_id in recorded or metric_id not in metric_kinds:
+                    return 0
+                recorded.add(metric_id)
+                evidence_id = references[metric_id]
+                kind = metric_kinds[metric_id]
+                if (
+                    evidence_id != f"{call_id}:{kind}"
+                    or evidence_id not in added
+                    or added[evidence_id]["data_kind"] != kind
+                ):
+                    return 0
+                linked.add(evidence_id)
+                result = actual["indicator_results"][metric_id]
+                if item["status"] != result["status"]:
+                    return 0
+                if result["status"] != "ok" and item["reason"] != result["reason"]:
+                    return 0
+        return int(
+            responded == set(calls) and linked == set(added) and recorded == pending
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        # 无效输出应记零分，不能被 RAGAS 当作未完成评分而跳过。
+        return 0
+
+
+@numeric_metric(name="indicator_results_valid", allowed_values=(0, 1))
+def indicator_results_valid(
+    actual: dict[str, Any], inputs: dict[str, Any], expected: dict[str, Any]
+) -> int:
+    """只校验结果契约与元数据，不将字段合法性当作数值计算正确性。"""
+    try:
+        results = actual["indicator_results"]
+        metric_ids = {metric["id"] for metric in inputs["skill"]["scoring"]["metrics"]}
+        if (
+            set(results) != metric_ids
+            or set(expected["indicator_results"]) != metric_ids
+        ):
+            return 0
+        if not all(
+            key in results and values_equal(results[key], value)
+            for key, value in inputs["indicator_results"].items()
+        ):
+            return 0
+        for metric_id, raw in results.items():
+            result = IndicatorResult.model_validate(raw)
+            if (
+                result.indicator_id != metric_id
+                or result.skill_name != inputs["skill"]["name"]
+            ):
+                return 0
+            if result.status == "ok":
+                if (
+                    result.score is None
+                    or result.reason is not None
+                    or not result.observed_at
+                    or not result.raw_values
+                    or not result.calculated_values
+                ):
+                    return 0
+                spec = expected["indicator_results"][metric_id]
+                if any(
+                    getattr(result, field) != spec[field]
+                    for field in ("unit", "source", "url")
+                ):
+                    return 0
+            elif (
+                result.score is not None
+                or not result.reason
+                or not result.reason.strip()
+                or result.raw_values
+                or result.calculated_values
+                or any(
+                    getattr(result, field) is not None
+                    for field in ("unit", "observed_at", "source", "url")
+                )
+            ):
+                return 0
+        return 1
+    except (KeyError, TypeError, ValueError, ValidationError, AttributeError):
+        return 0
+
+
+async def build_samples(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """直接运行生产 calculate_metrics 节点，保留已有状态和节点内部重试。"""
+    samples = []
+    async with model_session() as http:
+        node = make_calculate_metrics(make_glm_4_flash_llm(async_client=http))
+        for case in cases:
+            inputs = deepcopy(case["input"])
+            state: SkillWorkerGraphState = {
+                **inputs,
+                "skill_name": inputs["skill"]["name"],
+                "skill": LoadedSkill.model_validate(inputs["skill"]),
+                "messages": messages_from_dict(inputs["messages"]),
+            }
+            output = await asyncio.wait_for(node(state), timeout=600)
+            response = {
+                "messages": messages_to_dict(output["messages"]),
+                "evidence": output["evidence"],
+                "indicator_results": output["indicator_results"],
+            }
+            samples.append(
+                {
+                    "input": case["input"],
+                    "response": response,
+                    "reference": case["expected_output"],
+                }
+            )
+            print(f"已执行指标节点：{state['skill_name']}", flush=True)
+    return samples
+
+
+async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """执行四项 RAGAS 自定义规则，不使用裁判模型。"""
+
+    @experiment()
+    async def run_evaluation(sample: dict[str, Any]) -> dict[str, Any]:
+        row = dict(sample)
+        actual = sample["response"]
+        expected = sample["reference"]
+        for metric in (tool_selection_correct, tool_arguments_correct):
+            score = await metric.ascore(
+                actual=tool_calls(actual), expected=expected["tool_calls"]
+            )
+            if score.value is None:
+                raise ValueError(f"{metric.name} 评分失败：{score.reason}")
+            row[metric.name] = score.value
+        for metric in (evidence_valid, indicator_results_valid):
+            score = await metric.ascore(
+                actual=actual, inputs=sample["input"], expected=expected
+            )
+            if score.value is None:
+                raise ValueError(f"{metric.name} 评分失败：{score.reason}")
+            row[metric.name] = score.value
+        return row
+
+    dataset = Dataset(
+        "calculate_metrics_evaluation", backend=InMemoryBackend(), data=samples
+    )
+    result = await run_evaluation.arun(dataset)
+    if len(result) != len(samples):
+        raise RuntimeError("存在未完成的评测案例，请检查 RAGAS 实验错误")
+    return list(result)
+
+
+def run_eval(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """执行节点并汇总四项规则指标，数值正确性需另用完整原始数据验证。"""
+    if not cases:
+        raise ValueError("没有指标节点评测案例")
+    started = time.perf_counter()
+    print(f"开始 {len(cases)} 条指标节点评测...", flush=True)
+    samples = asyncio.run(build_samples(cases))
+    rows = asyncio.run(score_samples(samples))
+    aggregate = {
+        name: round(sum(row[name] for row in rows) / len(rows), 4) for name in METRICS
     }
+    print(f"评测完成（{time.perf_counter() - started:.0f}s）：{aggregate}")
+    return {"aggregate": aggregate, "per_question": rows}
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="固定数据回放的 calculate_metrics 节点评测"
+    cases_path = Path(__file__).with_name("calculate_metrics_cases.jsonl")
+    output_path = (
+        PROJECT_ROOT / "eval_agent/outputs/calculate_metrics_eval/results.json"
     )
-    parser.add_argument(
-        "--cases",
-        type=Path,
-        default=Path(__file__).with_name("calculate_metrics_cases.jsonl"),
-    )
-    parser.add_argument("--dataset", default="crypto-agent-calculate-metrics")
-    parser.add_argument("--run-name", default=None)
-    parser.add_argument("--limit", type=int, default=None)
-    parser.add_argument("--repetitions", type=int, default=1)
-    parser.add_argument("--validate-only", action="store_true")
-    parser.add_argument("--system-certificates", action="store_true")
-    parser.add_argument("--timeout-seconds", type=float, default=600)
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("eval_agent/outputs/calculate_metrics_eval"),
-    )
-    args = parser.parse_args()
-    if args.repetitions < 1 or (args.limit is not None and args.limit < 1):
-        parser.error("重复次数和案例数量必须大于零")
-    if not 0 < args.timeout_seconds < float("inf"):
-        parser.error("单案例超时必须是有限正数")
-    cases = load_cases(args.cases)
-    if args.limit is not None:
-        cases = cases[: args.limit]
-    if args.validate_only:
-        print(
-            f"已校验 {len(cases)} 个案例：{dict(Counter(c.metadata.category for c in cases))}"
-        )
-        return
-    run_name = args.run_name or datetime.now(timezone.utc).strftime(
-        "calculate-metrics-%Y%m%dT%H%M%SZ"
-    )
-    output_path = args.output_dir / f"{run_name}.json"
-    if Path(run_name).name != run_name or run_name in {".", ".."}:
-        parser.error("实验名称不能包含路径")
-    if output_path.exists():
-        parser.error(f"结果文件已存在，请更换实验名称：{output_path}")
-    if not settings.dashscope_api_key.strip() or settings.dashscope_api_key.startswith(
-        "xxxx"
-    ):
-        parser.error("未配置 DASHSCOPE_API_KEY")
-    if args.system_certificates:
-        truststore.inject_into_ssl()
-    config = EvalSettings()
-    hash_paths = [
-        PROJECT_ROOT / "app/crypto_analysis/crypto_analysis_sub_agent.py",
-        PROJECT_ROOT / "app/crypto_analysis/metric_service.py",
-        Path(__file__),
-        *sorted((PROJECT_ROOT / "app/crypto_analysis/calculators").glob("*.py")),
-        *sorted((PROJECT_ROOT / "app/crypto_analysis/tools").glob("*.py")),
+    cases = [
+        json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines()
     ]
-    metadata = {
-        "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
-        "prompt_sha256": hashlib.sha256(
-            (
-                CalculateMetricsPrompt.system_prompt
-                + "\n"
-                + "\n".join(
-                    calculate_metrics_messages(case.input.skill.model_dump())[1].content
-                    for case in cases
-                )
-            ).encode("utf-8")
-        ).hexdigest(),
-        "skill_configs_sha256": hashlib.sha256(
-            json.dumps(
-                {
-                    case.metadata.case_id: case.input.skill.model_dump(mode="json")
-                    for case in cases
-                },
-                ensure_ascii=False,
-                sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest(),
-        "working_tree_sha256": hashlib.sha256(
-            b"".join(
-                path.relative_to(PROJECT_ROOT).as_posix().encode()
-                + b"\0"
-                + path.read_bytes()
-                + b"\0"
-                for path in hash_paths
-            )
-        ).hexdigest(),
-        "code_revision": subprocess.run(
-            ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
-        ).stdout.strip(),
-        "models": sorted({case.input.metric_agent.model for case in cases}),
-        "scoring_version": "metric_graph_result_v2",
-        "input_contract": "metric_agent配置、skill、scope对应生产函数三个参数",
-        "output_contract": "案例expected_output与output均为生产指标节点完整metric_result",
-        "data_mode": "fixed_replay",
-        "repetitions": str(args.repetitions),
-        "case_count": str(len(cases)),
-        "model_timeout_seconds": "120",
-        "max_attempts": "2",
-        "case_timeout_seconds": str(args.timeout_seconds),
-        "system_certificates": str(args.system_certificates),
-    }
-    Langfuse(
-        public_key=config.langfuse_public_key,
-        secret_key=config.langfuse_secret_key,
-        base_url=config.langfuse_base_url,
+    result = run_eval(cases)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(
+            {"n_questions": len(cases), "results": [result]},
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    client = get_client(public_key=config.langfuse_public_key)
-    run_state = EvaluationRunState()
-
-    async def task(*, item: DatasetItem) -> dict[str, Any] | None:
-        inputs = SkillExecutionInput.model_validate(item.input)
-        for metric in item.input["skill"]["scoring"]["metrics"]:
-            weight = metric["weight"]
-            if isinstance(weight, bool) or not isinstance(weight, (int, float)):
-                raise ValueError("指标权重必须是数值")  # noqa: TRY004 - 沿用配置错误类型。
-        replay_config = SourceReplayConfig.model_validate(item.metadata["replay"])
-        output = await evaluate_skill(
-            client, inputs, replay_config, args.timeout_seconds
-        )
-        result = output.raw_result
-        run_state.diagnostics[item.metadata["case_id"]] = output
-        run_state.rows.append(
-            {
-                "input": item.input,
-                "expected_output": item.expected_output,
-                "replay": replay_config.model_dump(mode="json"),
-                "metadata": {k: v for k, v in item.metadata.items() if k != "replay"},
-                "output": result,
-                "diagnostics": output.model_dump(
-                    mode="json", exclude={"result", "raw_result"}
-                ),
-                "differences": result_differences(result, item.expected_output)
-                if result is not None
-                else [],
-            }
-        )
-        print(
-            f"{item.metadata['case_id']}：{output.execution_status}，{output.duration_ms:.0f} ms",
-            flush=True,
-        )
-        return result
-
-    def evaluate_item(
-        *,
-        output: Any,
-        expected_output: Any,
-        input: Any,
-        metadata: dict[str, Any],
-        **kwargs: Any,
-    ) -> list[Evaluation]:
-        return score_skill(
-            output=output,
-            expected_output=expected_output,
-            input=input,
-            diagnostics=run_state.diagnostics[metadata["case_id"]],
-        )
-
-    try:
-        if not client.auth_check():
-            raise RuntimeError("Langfuse 认证失败，请检查密钥和服务地址")
-        client.create_dataset(
-            name=args.dataset,
-            description="固定数据源响应与人工预期结果的独立指标子图评测",
-            input_schema=SkillExecutionInput.model_json_schema(),
-            expected_output_schema=SkillExecutionResult.model_json_schema(),
-        )
-        items = [
-            client.create_dataset_item(
-                dataset_name=args.dataset,
-                id=str(uuid5(NAMESPACE_URL, f"{args.dataset}:{case.metadata.case_id}")),
-                input=case.input.model_dump(mode="json"),
-                expected_output=case.expected_output.model_dump(mode="json"),
-                metadata={
-                    **case.metadata.model_dump(),
-                    "replay": case.replay.model_dump(mode="json"),
-                },
-            )
-            for case in cases
-        ]
-        print(f"开始 {len(items) * args.repetitions} 次技能执行评测", flush=True)
-        for repetition in range(1, args.repetitions + 1):
-            row_start = len(run_state.rows)
-            result = client.run_experiment(
-                name=args.dataset,
-                run_name=f"{run_name}-r{repetition}",
-                data=items,
-                task=task,
-                evaluators=[evaluate_item],
-                max_concurrency=1,
-                metadata=metadata,
-            )
-            for row, item_result in zip(
-                run_state.rows[row_start:], result.item_results, strict=True
-            ):
-                names = {score.name for score in item_result.evaluations}
-                if (
-                    not {"execution_success", "skill_execution_correct", "duration_ms"}
-                    <= names
-                ):
-                    raise RuntimeError("评分记录不完整，不能输出完整实验结果")
-                row["repetition"] = repetition
-                row["scores"] = [score.__dict__ for score in item_result.evaluations]
-                row["langfuse_trace_id"] = item_result.trace_id
-            print(result.format())
-        if len(run_state.rows) != len(items) * args.repetitions:
-            raise RuntimeError("执行记录不完整，不能输出完整成功率")
-        report = {
-            "run_name": run_name,
-            "metadata": metadata,
-            "summary": summarize(run_state.rows),
-            "cases": run_state.rows,
-        }
-        args.output_dir.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
-        print(f"本地结果：{output_path.resolve()}")
-    finally:
-        client.flush()
+    print(f"结果已写入 {output_path}")
 
 
 if __name__ == "__main__":
