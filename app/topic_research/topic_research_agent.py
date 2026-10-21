@@ -130,7 +130,7 @@ class ResearchModelTrace(AgentMiddleware):
 
     @trace_generation_call(
         name="topic_researcher",
-        model=settings.glm_4_flash_model,
+        model=settings.glm_smart_model,
         input_arg="request",
         input_format="model_request",
         output_attr="result",
@@ -151,6 +151,13 @@ class ResearchModelTrace(AgentMiddleware):
             """只重试当前模型请求，不重发工具调用或研究流程。"""
             return await asyncio.wait_for(handler(current_request), timeout=60)
 
+        # 仅研究模型调用关闭深度思考，不修改共享 Air 模型。
+        request = request.override(
+            model_settings={
+                **request.model_settings,
+                "extra_body": {"thinking": {"type": "disabled"}},
+            }
+        )
         if len(request.state.get("research_evidence", {})) >= RESEARCH_EVIDENCE_TARGET:
             request = request.override(tools=[], tool_choice="none")
         response = await invoke(request)
@@ -175,10 +182,10 @@ class ResearchModelTrace(AgentMiddleware):
         return response
 
 
-def build_research_agent(glm_4_flash_llm: Any) -> CompiledStateGraph:
+def build_research_agent(glm_4_5_air_llm: Any) -> CompiledStateGraph:
     """复用工具图，每次执行通过上下文注入独立浏览会话。"""
     return create_agent(
-        model=glm_4_flash_llm,
+        model=glm_4_5_air_llm,
         tools=[*build_web_search_tools(), *build_browser_tools()],
         state_schema=ResearchAgentState,
         context_schema=BrowserContext,
@@ -190,10 +197,10 @@ def build_research_agent(glm_4_flash_llm: Any) -> CompiledStateGraph:
 
 
 def make_researcher(
-    glm_4_flash_llm: Any,
+    glm_4_5_air_llm: Any,
 ) -> Callable[[dict[str, Any]], Awaitable[dict[str, list[dict[str, Any]]]]]:
     """让研究 Agent 搜索、浏览原文，再根据实际工具证据分析子问题。"""
-    research_agent = build_research_agent(glm_4_flash_llm)
+    research_agent = build_research_agent(glm_4_5_air_llm)
 
     @timed_node(label=lambda state: state["subquestion"])
     @trace_generation_call(name="topic.researcher", kind="span")
@@ -327,10 +334,12 @@ def make_summarize(
 
 def build_analysis_sub_graph(
     glm_4_flash_llm: Any,
+    *,
+    glm_4_5_air_llm: Any,
 ) -> CompiledStateGraph:  # 保留原有拆题并行汇总子图。
     graph = StateGraph(AnalysisState)  # 创建研究子图。
     graph.add_node("split", make_split(glm_4_flash_llm))  # 先拆分研究主题。
-    graph.add_node("researcher", make_researcher(glm_4_flash_llm))  # 并行分析各子问题。
+    graph.add_node("researcher", make_researcher(glm_4_5_air_llm))  # 并行分析各子问题。
     graph.add_node("summarize", make_summarize(glm_4_flash_llm))  # 汇总全部发现。
     graph.add_edge(START, "split")  # 从拆题进入子图。
     graph.add_conditional_edges("split", send_subquestions)  # 使用 Send 分派三个任务。
@@ -483,7 +492,9 @@ def build_topic_research_agent(
     glm_4_5_air_llm: Any,
 ) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
     """把主题研究子图封装为 路由 可调用的 Agent。"""
-    sub_graph = build_analysis_sub_graph(glm_4_flash_llm)  # 复用拆题并行汇总设计。
+    sub_graph = build_analysis_sub_graph(
+        glm_4_flash_llm, glm_4_5_air_llm=glm_4_5_air_llm
+    )  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
     builder.add_node("writer", make_writer(glm_4_5_air_llm))  # 报告写作节点。
