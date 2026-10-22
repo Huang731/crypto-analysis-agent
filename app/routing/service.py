@@ -31,6 +31,7 @@ _NODE_LABELS = {
     "split": "拆解研究主题",
     "researcher": "并行分析子问题",
     "summarize": "汇总发现",
+    "summarize_history": "更新对话摘要",
 }
 
 
@@ -214,6 +215,8 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     elif node == "reviewer":
         info["status"] = f"审稿：{delta.get('review_decision', '?')}"
         info["review_count"] = delta.get("review_count", 0)  # 展示当前审稿轮次。
+    elif node == "summarize_history":
+        info["status"] = "对话摘要已更新"
     else:
         info["status"] = "完成"
         info["keys"] = list(delta.keys())

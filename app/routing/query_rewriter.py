@@ -15,9 +15,12 @@ async def rewrite_question(
     glm_4_flash_llm: BaseChatModel,
     question: str,
     previous_question: str,
+    previous_answer_summary: str = "",
 ) -> str:
-    """结合上一轮问题改写本轮用户原话，失败时记录日志并向上报告。"""
-    messages = query_rewriter_messages(question, previous_question)
+    """结合上一轮问题与回答摘要改写本轮原话，失败时向上报告。"""
+    messages = query_rewriter_messages(
+        question, previous_question, previous_answer_summary
+    )
     rewritten = await _rewrite_messages(glm_4_flash_llm, messages)
     if settings.rewrite_capture_enabled:
         append_node_candidate(

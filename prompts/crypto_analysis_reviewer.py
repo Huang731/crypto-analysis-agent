@@ -12,7 +12,7 @@ from prompts.common import build_system_prompt
 class ReportReview(BaseModel):
     """审核返回证据核对记录、是否通过和修改意见，不修改技能证据。"""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
     review_process: str = Field(
         strict=True,
         min_length=1,

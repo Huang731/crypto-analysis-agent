@@ -62,7 +62,7 @@ def _parse_document(text: str) -> tuple[dict, str]:
 
 
 class MetricRule(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, strict=True)
     label: str = Field(min_length=1, strict=True)
     weight: float = Field(gt=0, le=1, allow_inf_nan=False)
@@ -70,7 +70,7 @@ class MetricRule(BaseModel):
 
 
 class SkillScoring(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, strict=True)
     metrics: list[MetricRule] = Field(min_length=1)
 
