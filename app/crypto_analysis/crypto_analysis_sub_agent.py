@@ -176,7 +176,7 @@ async def _invoke_skill_retrieval_query(
 
 
 def skill_worker_step_limit(metric_count: int) -> int:
-    """每个指标预留两轮计算与检查，另含缓存、生成、收尾及纠错预算。"""
+    """为指标计算循环、缓存、生成、收尾及纠错预留步数。"""
     return metric_count * 4 + 7
 
 
@@ -319,12 +319,12 @@ async def _invoke_metric_agent(
 def make_calculate_metrics(
     glm_4_flash_llm: Any,
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
-    """使用指标 Agent 执行本轮工具，完成情况仍由检查节点决定。"""
+    """使用指标 Agent 执行本轮工具，完成情况由条件路由决定。"""
 
     @timed_node(label=lambda state: state["skill_name"])
     async def calculate_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
         registry = get_tool_registry()
-        # 工具执行后直接退出本轮 Agent，由外层检查节点决定是否继续。
+        # 工具执行后直接退出本轮 Agent，由条件路由决定是否继续。
         tools = [
             registry[name].model_copy(update={"return_direct": True})
             for name in state["skill"].tools
@@ -366,30 +366,6 @@ def make_calculate_metrics(
     return calculate_metrics
 
 
-def make_check_metrics() -> Callable[
-    [SkillWorkerGraphState], Awaitable[dict[str, Any]]
-]:
-    """创建指标完整性检查节点，只依据工具实际写入的结果。"""
-
-    @timed_node(label=lambda state: state["skill_name"])
-    async def check_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
-        skill = state["skill"]
-        records = state["indicator_results"]
-        missing = [
-            metric.id for metric in skill.scoring.metrics if metric.id not in records
-        ]
-        if missing:
-            update = {}
-        else:
-            result = aggregate_skill_results(
-                skill, [records[metric.id] for metric in skill.scoring.metrics]
-            )
-            update = {"metric_result": result}
-        return update
-
-    return check_metrics
-
-
 def route_metrics(
     state: SkillWorkerGraphState,
 ) -> Literal["incomplete", "complete"]:
@@ -409,13 +385,17 @@ def make_skill_content(
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
         skill = state["skill"]
+        records = state["indicator_results"]
+        metric_result = aggregate_skill_results(
+            skill, [records[metric.id] for metric in skill.scoring.metrics]
+        )
         key = resolve_memory_key(state["scope"]["target_asset"], skill.name)
         analysis_subject = (
             "加密市场"
             if key.asset_scope == "GLOBAL"
             else state["scope"]["target_asset"]
         )
-        indicators = state["metric_result"]["indicators"]
+        indicators = metric_result["indicators"]
         content = render_metric_tables(skill, indicators)
         successful_indicators = [item for item in indicators if item["status"] == "ok"]
         retrieval_query = ""
@@ -432,13 +412,14 @@ def make_skill_content(
         else:
             thought_context = {"query": "", "status": "no_results", "documents": []}
         update = {
+            "metric_result": metric_result,
             "skill_result": {
                 "skill_name": skill.name,
                 "name": skill.scoring.name,
                 "content": content,
                 "thought_context": thought_context,
                 "cache_hit": False,
-            }
+            },
         }
         if settings.skill_content_capture_enabled:
             append_node_candidate(
@@ -491,7 +472,6 @@ def build_crypto_analysis_sub_agent(
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
     graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_flash_llm))
-    graph.add_node("check_metrics", make_check_metrics())
     graph.add_node("skill_content", make_skill_content(glm_4_flash_llm, retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
@@ -500,10 +480,9 @@ def build_crypto_analysis_sub_agent(
         route_cache,
         {"hit": "finalize_skill", "miss": "calculate_metrics"},
     )
-    graph.add_edge("calculate_metrics", "check_metrics")
     # 反应式Agent的工具调用循环
     graph.add_conditional_edges(
-        "check_metrics",
+        "calculate_metrics",
         route_metrics,
         {"incomplete": "calculate_metrics", "complete": "skill_content"},
     )

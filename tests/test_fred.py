@@ -90,6 +90,7 @@ class FredM2LiveTests(unittest.TestCase):
 
     def test_get_macro_data_returns_m2_report(self) -> None:
         out = fred.get_macro_data("m2", "2026-10-22")
+        print(out)
         self.assertIn("## FRED:", out)
         self.assertIn("(M2SL)", out)
         self.assertIn("| 日期 | 数值 |", out)
