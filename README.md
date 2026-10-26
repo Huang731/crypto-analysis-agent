@@ -1,8 +1,8 @@
 # Crypto Analysis Agent
 
-基于 LangChain、LangGraph 的加密资产分析与通用主题研究系统。
+基于 LangChain、LangGraph 的智能多 Agent 研究分析平台。
 
-通过问题改写与意图路由，选择加密资产分析或通用主题研究 Agent，结合外部数据、网页原文和本地知识库，完成分析、报告生成与审核，并通过 Web 工作台展示执行阶段与研究结果。
+通过问题改写与意图路由，选择加密资产分析专家或通用主题研究专家，结合外部数据、网页原文和本地知识库，完成分析、报告生成与审核，并通过 Web 工作台展示执行阶段与研究结果。
 
 **技术栈：** Python · FastAPI · LangChain · LangGraph · Pydantic · MCP · FAISS · SQLite · SSE
 
