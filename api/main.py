@@ -12,8 +12,6 @@ from pathlib import Path
 from traceback import format_exc
 from typing import Annotated
 
-from httpx import AsyncClient
-
 if __package__ in (None, ""):
     # 以 `python api/main.py` 直接运行时，sys.path[0] 是 api/ 而非项目根目录。
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -39,7 +37,6 @@ from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scop
 from app.llm.model import (
     make_glm_4_5_air_llm,
     make_glm_4_flash_llm,
-    model_session,
 )
 from app.rag.retriever import KBRetriever
 from app.routing.graph import build_routing_graph
@@ -58,14 +55,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        async with (
-            model_session() as model_client,
-            AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer,
-        ):
+        async with AsyncSqliteSaver.from_conn_string(
+            str(checkpoint_path)
+        ) as checkpointer:
             app.state.routing_service = _build_routing_service(
                 retriever=retriever,
                 checkpointer=checkpointer,
-                model_client=model_client,
             )
             yield
     finally:
@@ -108,11 +103,10 @@ def _build_routing_service(
     *,
     retriever: KBRetriever,
     checkpointer: BaseCheckpointSaver,
-    model_client: AsyncClient,
 ) -> RoutingService:
-    """集中组装各节点模型，复用同一连接并显式注入路由图。"""
-    glm_4_flash_llm = make_glm_4_flash_llm(async_client=model_client)
-    glm_4_5_air_llm = make_glm_4_5_air_llm(async_client=model_client)
+    """集中组装各节点模型，使用默认 HTTP 客户端并显式注入路由图。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
+    glm_4_5_air_llm = make_glm_4_5_air_llm()
     graph = build_routing_graph(
         glm_4_5_air_llm=glm_4_5_air_llm,
         retriever=retriever,
