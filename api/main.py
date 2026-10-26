@@ -34,10 +34,6 @@ from app.core.observability import (
 )
 from app.core.tracing import start_trace
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
-from app.llm.model import (
-    make_glm_4_5_air_llm,
-    make_glm_4_flash_llm,
-)
 from app.rag.retriever import KBRetriever
 from app.routing.graph import build_routing_graph
 from app.routing.service import RoutingService
@@ -104,14 +100,10 @@ def _build_routing_service(
     retriever: KBRetriever,
     checkpointer: BaseCheckpointSaver,
 ) -> RoutingService:
-    """集中组装各节点模型，使用默认 HTTP 客户端并显式注入路由图。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
-    glm_4_5_air_llm = make_glm_4_5_air_llm()
+    """注入检索器和会话存储，模型由各节点工厂创建并复用。"""
     graph = build_routing_graph(
-        glm_4_5_air_llm=glm_4_5_air_llm,
         retriever=retriever,
         checkpointer=checkpointer,
-        glm_4_flash_llm=glm_4_flash_llm,
     )
     return RoutingService(graph)
 

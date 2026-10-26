@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import BaseMessage, messages_to_dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -32,6 +31,7 @@ from app.llm.model import (
     ainvoke_model,
     ainvoke_structured,
     make_bailian_smart_llm,
+    make_glm_4_5_air_llm,
 )
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
@@ -178,10 +178,9 @@ def make_skill_worker(
 # 分析父图：规划、并行技能、报告
 
 
-def make_plan(
-    glm_4_5_air_llm: BaseChatModel,
-) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_plan() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建本轮技能规划节点。"""
+    glm_4_5_air_llm = make_glm_4_5_air_llm()
 
     @timed_node(label=lambda state: state["scope"]["resolved_question"])
     async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
@@ -242,10 +241,9 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
     ]
 
 
-def make_writer(
-    bailian_smart_llm: Any,
-) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_writer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
+    bailian_smart_llm = make_bailian_smart_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
     async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
@@ -288,10 +286,9 @@ def make_writer(
     return writer
 
 
-def make_reviewer(
-    bailian_smart_llm: Any,
-) -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_reviewer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
     """创建报告审核节点，保留原有审核规则。"""
+    bailian_smart_llm = make_bailian_smart_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
     @trace_generation_call(name="crypto.reviewer", kind="span")
@@ -342,18 +339,14 @@ def route_after_review(state: DynamicAnalysisState) -> str:
 
 def build_crypto_analysis_parent_agent(
     retriever: KBRetriever,
-    *,
-    glm_4_5_air_llm: BaseChatModel,
-    glm_4_flash_llm: BaseChatModel,
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
-    sub_graph = build_crypto_analysis_sub_agent(glm_4_flash_llm, retriever)
-    bailian_smart_llm = make_bailian_smart_llm()
+    sub_graph = build_crypto_analysis_sub_agent(retriever)
     builder = StateGraph(DynamicAnalysisState)
-    builder.add_node("plan", make_plan(glm_4_5_air_llm))
+    builder.add_node("plan", make_plan())
     builder.add_node("skill_worker", make_skill_worker(sub_graph))
-    builder.add_node("writer", make_writer(bailian_smart_llm))
-    builder.add_node("reviewer", make_reviewer(bailian_smart_llm))
+    builder.add_node("writer", make_writer())
+    builder.add_node("reviewer", make_reviewer())
     builder.add_edge(START, "plan")
     builder.add_conditional_edges("plan", send_skills)
     builder.add_edge("skill_worker", "writer")

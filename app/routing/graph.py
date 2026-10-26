@@ -24,7 +24,7 @@ from app.core.tracing import trace_generation_call
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
-from app.llm.model import ainvoke_model
+from app.llm.model import ainvoke_model, make_glm_4_flash_llm
 from app.memory.memory_manager import MemoryManager
 from app.rag.retriever import KBRetriever
 from app.routing.query_rewriter import rewrite_question
@@ -82,10 +82,11 @@ def select_agent(state: RoutingState) -> str:
     return state["route"]
 
 
-def make_summarize_history(
-    glm_4_flash_llm: BaseChatModel,
-) -> Callable[[RoutingState], Awaitable[dict[str, list[AnyMessage]]]]:
+def make_summarize_history() -> Callable[
+    [RoutingState], Awaitable[dict[str, list[AnyMessage]]]
+]:
     """追加本轮回答，超过阈值时压缩旧历史，再整体保存消息。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
     memory_manager = MemoryManager(3, 2)
 
     @timed_node(label=lambda state: state["resolved_question"])
@@ -111,23 +112,9 @@ def make_summarize_history(
     return summarize_history
 
 
-def build_routing_graph(
-    glm_4_5_air_llm: BaseChatModel,
-    retriever: KBRetriever,
-    *,
-    checkpointer: BaseCheckpointSaver,
-    glm_4_flash_llm: BaseChatModel,
-) -> CompiledStateGraph:
-    """保留现有构建入口，以显式图保证每轮只执行一个专家。"""
-    crypto_agent = build_crypto_analysis_parent_agent(
-        retriever,
-        glm_4_5_air_llm=glm_4_5_air_llm,
-        glm_4_flash_llm=glm_4_flash_llm,
-    )
-    topic_agent = build_topic_research_agent(
-        glm_4_flash_llm,
-        glm_4_5_air_llm=glm_4_5_air_llm,
-    )
+def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
+    """创建改写节点，模型仅在构建节点时初始化。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["scope"]["original_question"])
     async def rewrite(state: RoutingState) -> dict[str, Any]:
@@ -149,6 +136,13 @@ def build_routing_graph(
             "scope": {**state["scope"], "resolved_question": question},
         }
 
+    return rewrite
+
+
+def make_router() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
+    """创建路由节点，模型仅在构建节点时初始化。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
+
     @timed_node(label=lambda state: state["resolved_question"])
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
@@ -166,12 +160,23 @@ def build_routing_graph(
             )
         return {"route": route}
 
+    return router
+
+
+def build_routing_graph(
+    retriever: KBRetriever,
+    *,
+    checkpointer: BaseCheckpointSaver,
+) -> CompiledStateGraph:
+    """由节点工厂创建模型，以显式图保证每轮只执行一个专家。"""
+    crypto_agent = build_crypto_analysis_parent_agent(retriever)
+    topic_agent = build_topic_research_agent()
     workflow = StateGraph(RoutingState)
-    workflow.add_node("rewrite", rewrite)
-    workflow.add_node("router", router)
+    workflow.add_node("rewrite", make_rewrite())
+    workflow.add_node("router", make_router())
     workflow.add_node("crypto_analysis_agent", crypto_agent)
     workflow.add_node("topic_research_agent", topic_agent)
-    workflow.add_node("summarize_history", make_summarize_history(glm_4_flash_llm))
+    workflow.add_node("summarize_history", make_summarize_history())
     workflow.add_edge(START, "rewrite")
     workflow.add_edge("rewrite", "router")
     workflow.add_conditional_edges(

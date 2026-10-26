@@ -34,7 +34,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_model
+from app.llm.model import ainvoke_model, make_glm_4_flash_llm
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_calculate_metrics import (
     calculate_metrics_messages,
@@ -316,10 +316,9 @@ async def _invoke_metric_agent(
     )
 
 
-def make_calculate_metrics(
-    glm_4_flash_llm: Any,
-) -> Callable[..., Awaitable[dict[str, Any]]]:
+def make_calculate_metrics() -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行本轮工具，完成情况由条件路由决定。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["skill_name"])
     async def calculate_metrics(state: SkillWorkerGraphState) -> dict[str, Any]:
@@ -378,9 +377,10 @@ def route_metrics(
 
 
 def make_skill_content(
-    glm_4_flash_llm: Any, retriever: KBRetriever
+    retriever: KBRetriever,
 ) -> Callable[[SkillWorkerGraphState], Awaitable[dict[str, Any]]]:
     """代码渲染指标表格，模型生成检索问题后查询思想材料。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: SkillWorkerGraphState) -> dict[str, Any]:
@@ -466,13 +466,13 @@ def make_finalize_skill() -> Callable[
 
 
 def build_crypto_analysis_sub_agent(
-    glm_4_flash_llm: Any, retriever: KBRetriever
+    retriever: KBRetriever,
 ) -> CompiledStateGraph:
     """组装缓存分支、指标执行循环和技能内容生成子图。"""
     graph = StateGraph(SkillWorkerGraphState)
     graph.add_node("read_cache", make_read_cache())
-    graph.add_node("calculate_metrics", make_calculate_metrics(glm_4_flash_llm))
-    graph.add_node("skill_content", make_skill_content(glm_4_flash_llm, retriever))
+    graph.add_node("calculate_metrics", make_calculate_metrics())
+    graph.add_node("skill_content", make_skill_content(retriever))
     graph.add_node("finalize_skill", make_finalize_skill())
     graph.add_edge(START, "read_cache")
     graph.add_conditional_edges(

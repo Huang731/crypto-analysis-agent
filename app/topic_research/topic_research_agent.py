@@ -24,7 +24,11 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 from app.core.config import settings  # 读取模型配置用于成本估算。
 from app.core.observability import timed_node  # 保留节点耗时观测。
 from app.core.tracing import trace_generation_call
-from app.llm.model import ainvoke_model
+from app.llm.model import (
+    ainvoke_model,
+    make_glm_4_5_air_llm,
+    make_glm_4_flash_llm,
+)
 from app.topic_research.tools.browser_tool import (
     BrowserContext,
     BrowserTool,
@@ -65,12 +69,11 @@ def _latest_question(
     return resolved.strip()  # 拆题、写作和审稿使用相同的研究主题。
 
 
-def make_split(
-    glm_4_flash_llm: Any,
-) -> Callable[
+def make_split() -> Callable[
     [AnalysisState], Awaitable[dict[str, list[str]]]
 ]:  # 创建研究主题拆解节点。
     """把用户主题拆成三个可独立分析的子问题。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["question"])  # 沿用现有节点耗时和失败日志。
     @trace_generation_call(name="topic.split", kind="span")
@@ -182,8 +185,9 @@ class ResearchModelTrace(AgentMiddleware):
         return response
 
 
-def build_research_agent(glm_4_5_air_llm: Any) -> CompiledStateGraph:
+def build_research_agent() -> CompiledStateGraph:
     """复用工具图，每次执行通过上下文注入独立浏览会话。"""
+    glm_4_5_air_llm = make_glm_4_5_air_llm()
     return create_agent(
         model=glm_4_5_air_llm,
         tools=[*build_web_search_tools(), *build_browser_tools()],
@@ -196,11 +200,11 @@ def build_research_agent(glm_4_5_air_llm: Any) -> CompiledStateGraph:
     )
 
 
-def make_researcher(
-    glm_4_5_air_llm: Any,
-) -> Callable[[dict[str, Any]], Awaitable[dict[str, list[dict[str, Any]]]]]:
+def make_researcher() -> Callable[
+    [dict[str, Any]], Awaitable[dict[str, list[dict[str, Any]]]]
+]:
     """让研究 Agent 搜索、浏览原文，再根据实际工具证据分析子问题。"""
-    research_agent = build_research_agent(glm_4_5_air_llm)
+    research_agent = build_research_agent()
 
     @timed_node(label=lambda state: state["subquestion"])
     @trace_generation_call(name="topic.researcher", kind="span")
@@ -298,10 +302,11 @@ def send_subquestions(state: AnalysisState) -> list[Send]:  # 分派拆出的全
     ]  # 返回并行任务列表。
 
 
-def make_summarize(
-    glm_4_flash_llm: Any,
-) -> Callable[[AnalysisState], Awaitable[dict[str, str]]]:  # 创建全部发现的汇总节点。
+def make_summarize() -> Callable[
+    [AnalysisState], Awaitable[dict[str, str]]
+]:  # 创建全部发现的汇总节点。
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
+    glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["question"])  # 延续原图的节点观测。
     @trace_generation_call(name="topic.summarize", kind="span")
@@ -332,15 +337,11 @@ def make_summarize(
     return summarize  # 返回汇总节点。
 
 
-def build_analysis_sub_graph(
-    glm_4_flash_llm: Any,
-    *,
-    glm_4_5_air_llm: Any,
-) -> CompiledStateGraph:  # 保留原有拆题并行汇总子图。
+def build_analysis_sub_graph() -> CompiledStateGraph:  # 保留原有拆题并行汇总子图。
     graph = StateGraph(AnalysisState)  # 创建研究子图。
-    graph.add_node("split", make_split(glm_4_flash_llm))  # 先拆分研究主题。
-    graph.add_node("researcher", make_researcher(glm_4_5_air_llm))  # 并行分析各子问题。
-    graph.add_node("summarize", make_summarize(glm_4_flash_llm))  # 汇总全部发现。
+    graph.add_node("split", make_split())  # 先拆分研究主题。
+    graph.add_node("researcher", make_researcher())  # 并行分析各子问题。
+    graph.add_node("summarize", make_summarize())  # 汇总全部发现。
     graph.add_edge(START, "split")  # 从拆题进入子图。
     graph.add_conditional_edges("split", send_subquestions)  # 使用 Send 分派三个任务。
     graph.add_edge("researcher", "summarize")  # 等待并行研究结束后汇总。
@@ -382,10 +383,11 @@ def make_research_team(
     return research_team  # 返回父图节点。
 
 
-def make_writer(
-    glm_4_5_air_llm: Any,
-) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告写作节点。
+def make_writer() -> Callable[
+    [SystemState], Awaitable[dict[str, Any]]
+]:  # 创建研究报告写作节点。
     """依据研究摘要写报告，并处理审稿意见。"""
+    glm_4_5_air_llm = make_glm_4_5_air_llm()
 
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
@@ -422,10 +424,11 @@ def make_writer(
     return writer  # 返回父图写作节点。
 
 
-def make_reviewer(
-    glm_4_5_air_llm: Any,
-) -> Callable[[SystemState], Awaitable[dict[str, Any]]]:  # 创建研究报告审稿节点。
+def make_reviewer() -> Callable[
+    [SystemState], Awaitable[dict[str, Any]]
+]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
+    glm_4_5_air_llm = make_glm_4_5_air_llm()
 
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
@@ -486,19 +489,13 @@ def review_route(state: SystemState) -> str:  # 根据审稿结果保持原有�
     return "writer"  # 带审稿意见重写一次。
 
 
-def build_topic_research_agent(
-    glm_4_flash_llm: Any,
-    *,
-    glm_4_5_air_llm: Any,
-) -> CompiledStateGraph:  # 使用明确名称构建主题研究入口。
+def build_topic_research_agent() -> CompiledStateGraph:
     """把主题研究子图封装为 路由 可调用的 Agent。"""
-    sub_graph = build_analysis_sub_graph(
-        glm_4_flash_llm, glm_4_5_air_llm=glm_4_5_air_llm
-    )  # 复用拆题并行汇总设计。
+    sub_graph = build_analysis_sub_graph()  # 复用拆题并行汇总设计。
     builder = StateGraph(SystemState)  # 创建研究报告父图。
     builder.add_node("research_team", make_research_team(sub_graph))  # 子图研究节点。
-    builder.add_node("writer", make_writer(glm_4_5_air_llm))  # 报告写作节点。
-    builder.add_node("reviewer", make_reviewer(glm_4_5_air_llm))  # 有界审稿节点。
+    builder.add_node("writer", make_writer())  # 报告写作节点。
+    builder.add_node("reviewer", make_reviewer())  # 有界审稿节点。
     builder.add_edge(START, "research_team")  # 从用户问题开始研究。
     builder.add_edge("research_team", "writer")  # 研究完成后写报告。
     builder.add_edge("writer", "reviewer")  # 每份报告都进入审稿。

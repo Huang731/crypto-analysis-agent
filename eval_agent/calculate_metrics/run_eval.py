@@ -19,7 +19,6 @@ from app.core.config import PROJECT_ROOT
 from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
 from app.crypto_analysis.crypto_analysis_sub_agent import make_calculate_metrics
 from app.crypto_analysis.skill_loader import LoadedSkill
-from app.llm.model import make_glm_4_flash_llm, model_session
 
 METRICS = (
     "tool_selection_correct",
@@ -298,30 +297,29 @@ def indicator_results_valid(
 async def build_samples(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """直接运行生产 calculate_metrics 节点，保留已有状态和节点内部重试。"""
     samples = []
-    async with model_session() as http:
-        node = make_calculate_metrics(make_glm_4_flash_llm(async_client=http))
-        for case in cases:
-            inputs = deepcopy(case["input"])
-            state: SkillWorkerGraphState = {
-                **inputs,
-                "skill_name": inputs["skill"]["name"],
-                "skill": LoadedSkill.model_validate(inputs["skill"]),
-                "messages": messages_from_dict(inputs["messages"]),
+    node = make_calculate_metrics()
+    for case in cases:
+        inputs = deepcopy(case["input"])
+        state: SkillWorkerGraphState = {
+            **inputs,
+            "skill_name": inputs["skill"]["name"],
+            "skill": LoadedSkill.model_validate(inputs["skill"]),
+            "messages": messages_from_dict(inputs["messages"]),
+        }
+        output = await asyncio.wait_for(node(state), timeout=600)
+        response = {
+            "messages": messages_to_dict(output["messages"]),
+            "evidence": output["evidence"],
+            "indicator_results": output["indicator_results"],
+        }
+        samples.append(
+            {
+                "input": case["input"],
+                "response": response,
+                "reference": case["expected_output"],
             }
-            output = await asyncio.wait_for(node(state), timeout=600)
-            response = {
-                "messages": messages_to_dict(output["messages"]),
-                "evidence": output["evidence"],
-                "indicator_results": output["indicator_results"],
-            }
-            samples.append(
-                {
-                    "input": case["input"],
-                    "response": response,
-                    "reference": case["expected_output"],
-                }
-            )
-            print(f"已执行指标节点：{state['skill_name']}", flush=True)
+        )
+        print(f"已执行指标节点：{state['skill_name']}", flush=True)
     return samples
 
 
