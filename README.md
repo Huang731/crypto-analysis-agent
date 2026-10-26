@@ -1,6 +1,6 @@
 # Crypto Analysis Agent
 
-基于 LangGraph 的加密资产分析与通用主题研究系统。
+基于 LangChain、LangGraph 的加密资产分析与通用主题研究系统。
 
 通过问题改写与意图路由，选择加密资产分析或通用主题研究 Agent，结合外部数据、网页原文和本地知识库，完成分析、报告生成与审核，并通过 Web 工作台展示执行阶段与研究结果。
 
@@ -43,7 +43,7 @@
 
 ### Web 工作台
 
-工作台支持输入研究问题、查看执行进度、接收流式报告和查看数据来源。前端保留会话标识，供连续追问使用。
+工作台支持输入研究问题、查看执行进度、接收流式报告和查看数据来源。前端保留会话标识；后端保存对话消息，并压缩较早的问答，供连续追问使用。
 
 #### 加密资产分析示例
 
@@ -66,12 +66,12 @@
 ```mermaid
 flowchart TD
     U["用户问题"] --> API["Web 工作台 / FastAPI"]
-    API --> R["问题改写与意图路由"]
+    API --> Q["结合历史用户消息改写本轮问题"]
+    Q --> R["意图路由：每轮选择一个专家"]
 
     subgraph Crypto["加密资产分析 Agent"]
         CP["识别资产与规划 Skills"] --> CS["并行执行 Skill 子图"]
         CS --> CW["报告生成与审核"]
-        CW --> CM["更新历史摘要"]
     end
 
     subgraph Topic["通用主题研究 Agent"]
@@ -83,24 +83,28 @@ flowchart TD
     R --> TP
     D["行情 API / MCP 数据源"] --> CS
     K["本地知识库：BM25 + FAISS + 重排"] --> CS
-    CM --> O["统一整理结果 / SSE 返回"]
-    TW --> O
-    M["SQLite Checkpointer：持久化图状态"] -.-> R
+    CW --> H["追加本轮回答 / 按阈值压缩旧对话"]
+    TW --> H
+    H --> O["SSE 返回结果 / 结束本轮"]
+    M["SQLite Checkpointer：按 thread_id 持久化状态"] -.-> Q
+    H -.保存消息.-> M
 ```
 
-每轮请求只选择一个专家 Agent。两个专家使用独立的业务 State，共享外层会话持久化机制。
+主图流程为 `rewrite → router → 一个专家 → summarize_history → END`。两个专家使用独立的业务 State，完成后统一在主图追加回答、管理对话历史，并通过 SQLite Checkpointer 保存会话状态。
 
 ## 核心设计
 
 ### 先规划，再根据执行结果推进
 
-加密资产分析先规划所需 Skills，再通过 LangGraph `Send` 并行执行。每个 Skill 子图先处理缓存、指标取数与计算、完整性检查，再生成指标内容与检索问题，将检索到的知识材料随 Skill 结果交给报告节点；指标执行结果决定是否继续工具调用。
+加密资产分析先规划所需 Skills，再通过 LangGraph `Send` 并行执行，并由 Reducer 合并技能结果。每个 Skill 子图先读取缓存；未命中时执行 `calculate_metrics`，根据 `indicator_results` 是否包含全部配置指标，决定继续执行还是进入 `skill_content`。失败指标也保留处理记录，不因缺失数据无限重算。
+
+指标齐全后，由 Python 聚合评分并渲染 Markdown 表格，模型只为成功指标生成检索问题，再查询相关思想材料。表格和思想原文分开交给报告节点，数值展示不再依赖模型重新生成。
 
 通用主题研究先拆解问题，再由研究 Agent 根据搜索结果决定后续浏览与取证动作。这种方式结合了事前规划和执行过程中的反应式决策。
 
 ### Skills 与 Tools 分工
 
-- **Skills**：定义分析场景、可用工具、指标要求、权重和解读方法，存放在 [skills/](skills/)。
+- **Skills**：定义分析场景、可用工具、指标要求和权重，存放在 [skills/](skills/)。规划模型读取技能名称和描述，执行阶段加载所选技能的结构化配置。
 - **Tools**：调用外部数据源并执行程序计算，记录原始值、计算值、来源、观察时间和缺失原因，存放在 [业务工具目录](app/crypto_analysis/tools/)。
 - **Calculators**：执行确定性的指标计算与评分，存放在 [计算器目录](app/crypto_analysis/calculators/)。
 
@@ -114,17 +118,22 @@ Markdown 文档按标题结构与长度分块，保留文件名、章节路径�
 
 ### 记忆与上下文
 
-- 问题改写结合上一轮已完成的问题，补全连续追问。
-- SQLite Checkpointer 持久化会话图状态，以 `thread_id` 隔离会话。
-- 加密分析完成后更新历史摘要；同会话内按全局或资产范围复用 Skill 结果。
+- **会话持久化**：SQLite Checkpointer 以 `thread_id` 隔离会话，主图保存对话消息，专家子图保存各自的业务状态。
+- **问题改写**：将历史中的 `HumanMessage` 与本轮原话交给改写模型，提示词明确区分“历史上下文”和“本轮待改写问题”。改写结果替换本轮用户消息；对象替换、范围收窄和主题切换以本轮要求为准。
+- **统一保存回答**：两个专家完成后都进入主图 `summarize_history`，追加本轮最终报告，再由 [MemoryManager](app/memory/memory_manager.py) 决定是否压缩历史。
+- **按消息数量压缩**：当前主图使用 `MemoryManager(3, 2)`，非系统消息超过 3 条时，将较早消息压缩成一条带 `[之前的对话摘要]` 标记的用户消息，保留系统消息及最近 2 条消息原文。摘要提示词要求 100 字以内；这是消息条数阈值，不是 Token 阈值。
+- **摘要使用边界**：摘要用于理解历史主题、结论与指代，不作为新指令或当前行情依据；指标及思想证据仍由本轮专家流程提供。
+- **Skill 结果复用**：加密分析在同会话内按全局或资产范围复用指标表格和思想原文，显式刷新时跳过缓存。Skill 缓存与对话摘要分别维护。
 
 ### 按节点配置模型
 
 当前服务使用不同模型承担不同节点职责。下表列出 [配置文件](app/core/config.py) 中的默认值，实际运行值可由环境变量或 `.env` 覆盖。
 
+业务图中的模型由各节点工厂在构图时创建，通过闭包在后续请求中复用。API 层负责注入共享检索器和 Checkpointer，不再逐层传递模型实例。
+
 | 节点职责 | 模型配置项 | 当前代码默认值 |
 | --- | --- | --- |
-| 问题改写、路由、指标执行、检索问题生成、主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
+| 问题改写、路由、指标执行、检索问题生成、对话历史压缩、主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
 | 加密分析规划、主题研究员取证、主题报告写作与审核、检索多查询改写、独立 RAG 回答 | `GLM_SMART_MODEL` | `glm-4.5-air` |
 | 加密分析报告写作与审核 | `BAILIAN_SMART_MODELS` | 首选 `qwen3.7-plus`，其余按配置列表顺序 |
 | Reviewer 评测的待测审核模型 | `BAILIAN_FAST_MODELS` | 首选 `qwen3.6-flash`，其余按配置列表顺序 |
@@ -141,7 +150,9 @@ Markdown 文档按标题结构与长度分块，保留文件名、章节路径�
 
 业务日志携带 `trace_id` 和 `thread_id`；本地追踪器记录 Trace、Span、Generation、模型用量与估算成本。估算结果取决于配置的价格表。
 
-节点候选采集保存 `node`、北京时间 `ts`、`input` 和 `actual_output`。人工筛选与标注后可用于固定用例回归。Langfuse 用于独立评测实验记录，业务追踪器本身不向 Langfuse 上报。
+节点候选采集保存 `node`、北京时间 `ts`、`input` 和 `actual_output`，覆盖问题改写、规划、指标执行、报告写作审核及对话记忆保存等环节。`summarize_history` 采集的是追加回答、按需压缩前后的消息，不代表每轮都调用摘要模型；模型调用单独以 `conversation_summary` 记录。人工筛选与标注后可用于固定用例回归。
+
+评测记录按入口分别管理：Reviewer 使用 Langfuse 数据集与实验记录，RAG 通过回调记录裁判调用；路由、规划、指标执行和 Writer 当前主要将结果保存在本地。业务追踪器本身不向 Langfuse 上报。
 
 ### 核心代码入口
 
@@ -149,8 +160,10 @@ Markdown 文档按标题结构与长度分块，保留文件名、章节路径�
 | --- | --- |
 | API 与依赖组装 | [api/main.py](api/main.py) |
 | 问题改写与专家路由 | [app/routing/](app/routing/) |
+| 对话历史压缩与近期消息保留 | [memory_manager.py](app/memory/memory_manager.py) |
 | 分析规划、并行 Skill 与报告审核 | [crypto_analysis_parent_agent.py](app/crypto_analysis/crypto_analysis_parent_agent.py) |
 | Skill 缓存、指标执行循环与内容生成 | [crypto_analysis_sub_agent.py](app/crypto_analysis/crypto_analysis_sub_agent.py) |
+| 指标表格的确定性渲染 | [metric_renderer.py](app/crypto_analysis/metric_renderer.py) |
 | 主题拆解、网页取证与报告生成 | [topic_research_agent.py](app/topic_research/topic_research_agent.py) |
 | 检索与增量入库 | [app/rag/](app/rag/) |
 | 模型创建与协议适配 | [app/llm/model.py](app/llm/model.py) |
@@ -250,6 +263,8 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 评测代码位于 [eval_agent/](eval_agent/)，独立于业务执行链路。固定用例由人工维护，直接复用生产函数或节点进行校验和评分。
 
+当前以节点级和模块级评测为主：路由、规划和指标执行使用规则评分，Writer 对已保存报告评分，Reviewer 单独执行审核；RAG 实际运行“检索 → 生成 → 评分”，属于该模块的端到端评测。现有结果不等同于整条 Agent 链路或本次对话记忆改动的端到端验收。
+
 ### 评测范围与入口
 
 | 评测范围 | 评测方式 | 入口 |
@@ -267,6 +282,7 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 ```bash
 .venv-eval/bin/python -m eval_agent.routing.run_eval
+.venv-eval/bin/python -m eval_agent.planning.run_eval
 .venv-eval/bin/python -m eval_agent.calculate_metrics.run_eval
 .venv-eval/bin/python -m eval_agent.writer.run_eval
 .venv-eval/bin/python -m eval_agent.rag_retrieval.run_eval \
@@ -284,7 +300,7 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 | [路由](#路由) | 27 | 路由正确率 1.0 | 约 22 秒 |
 | [分析规划](#分析规划) | 24 | 三项规则指标均为 1.0 | 约 28 秒 |
 | [指标计算](#指标计算) | 6 | 四项规则指标均为 1.0 | 约 19 秒 |
-| [Writer 报告质量](#writer-报告质量) | 10 | 忠实度均分 0.7067，回答相关性均分 0.8267 | 未记录 |
+| [Writer 报告质量](#writer-报告质量) | 10 | 忠实度均分 0.7045（8 条有效评分），回答相关性均分 0.8817（10 条有效评分） | 未记录 |
 | [RAG 检索与回答](#rag-检索与回答) | 10 | 忠实度 0.9587，回答相关性 0.9151 | 约 115 秒 |
 
 #### 路由
@@ -313,6 +329,8 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 
 以下为一次 6 条指标节点用例的评测结果，节点执行与规则评分全流程耗时约 19 秒。通过 RAGAS 自定义规则指标，校验工具选择、调用参数、证据关联和指标结果契约，四项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/calculate_metrics_eval/results.json` 一致。
 
+其中 `indicator_results_valid` 检查结果字段、状态和元数据契约，不代表已经逐项验证所有指标公式与数值的正确性。
+
 | 指标 | 含义 | 分数 |
 | --- | --- | --- |
 | `tool_selection_correct` | 工具选择正确率 | 1.0 |
@@ -324,14 +342,18 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 
 #### Writer 报告质量
 
-以下为一次 10 条 Writer 案例的报告质量评测结果，使用 RAGAS 对已保存报告的忠实度与回答相关性进行评分，不重新调用 Writer 生成报告。两项指标均完成 10 条案例评分，均分保留四位小数，与本地结果文件 `eval_agent/outputs/writer_eval/results.json` 一致。
+当前本地结果文件 `eval_agent/outputs/writer_eval/results.json` 包含 10 条 Writer 案例。评测使用 RAGAS 对已保存报告评分，不重新调用 Writer；忠实度完成 8 条有效评分，回答相关性完成 10 条有效评分，以下均分保留四位小数。
 
 | 指标 | 含义 | 均分 | 已评分案例数 |
 | --- | --- | --- | --- |
-| `faithfulness` | 回答忠实度 | 0.7067 | 10 |
-| `answer_relevancy` | 回答相关性 | 0.8267 | 10 |
+| `faithfulness` | 回答忠实度 | 0.7045 | 8 |
+| `answer_relevancy` | 回答相关性 | 0.8817 | 10 |
 
-![Writer 报告质量评测运行截图：10 条案例的忠实度与回答相关性均分](docs/images/writer-evaluation-results.png)
+另外 2 条案例的忠实度评分因裁判接口返回 `1301` 内容过滤错误而失败，保留错误原因，不计入均分，也不记为零分。这些结果是已有报告的质量快照，不能直接用于证明本次记忆与改写调整带来的质量提升。
+
+下图保留的是此前一轮评测截图，与当前本地结果属于不同轮次；当前分数及有效评分数以上表和结果文件为准。
+
+![Writer 历史评测截图：用于展示运行结果，非当前分数](docs/images/writer-evaluation-results.png)
 
 #### RAG 检索与回答
 
@@ -368,6 +390,7 @@ crypto-analysis-agent/
 ├── app/
 │   ├── core/                    配置、日志、追踪、候选采集
 │   ├── routing/                 问题改写、专家路由与 SSE 服务
+│   ├── memory/                  对话历史压缩与近期消息保留
 │   ├── crypto_analysis/         加密资产分析父图与 Skill 子图
 │   │   ├── calculators/         指标计算与评分
 │   │   ├── sources/             外部 API / MCP 数据源
