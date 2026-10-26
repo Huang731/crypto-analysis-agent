@@ -20,7 +20,6 @@ def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[st
 _NODE_LABELS = {
     "rewrite": "理解问题",
     "router": "识别研究方向",
-    "finalize": "整理最终报告",
     "crypto_analysis_agent": "加密货币研究",
     "topic_research_agent": "主题研究",
     "plan": "识别币种与规划工具",
@@ -31,7 +30,7 @@ _NODE_LABELS = {
     "split": "拆解研究主题",
     "researcher": "并行分析子问题",
     "summarize": "汇总发现",
-    "summarize_history": "更新对话摘要",
+    "summarize_history": "保存对话记忆",
 }
 
 
@@ -189,8 +188,6 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
     info = {"node": node, "label": _NODE_LABELS[node]}
     if node == "router":
         info["status"] = _NODE_LABELS[delta["route"]]
-    elif node == "finalize":
-        info["status"] = "报告整理完成"
     elif node == "topic_research_agent":  # 显示通用研究完成进度。
         info["status"] = "主题研究已完成"  # 与技能分开展示。
     elif node == "crypto_analysis_agent":  # 显示技能分析完成进度。
@@ -216,7 +213,7 @@ def _summarize_update(node: str, delta: dict[str, Any]) -> dict[str, Any]:
         info["status"] = f"审稿：{delta.get('review_decision', '?')}"
         info["review_count"] = delta.get("review_count", 0)  # 展示当前审稿轮次。
     elif node == "summarize_history":
-        info["status"] = "对话摘要已更新"
+        info["status"] = "对话记忆已保存"
     else:
         info["status"] = "完成"
         info["keys"] = list(delta.keys())

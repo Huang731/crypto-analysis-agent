@@ -1,7 +1,7 @@
 """分派前用 LLM 把口语化问题改写为意图明确的完整问题。"""
 
 from langchain_core.language_models.chat_models import BaseChatModel  # 标注模型接口。
-from langchain_core.messages import BaseMessage, messages_to_dict
+from langchain_core.messages import BaseMessage, HumanMessage, messages_to_dict
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
@@ -13,14 +13,10 @@ from prompts.query_rewriter import query_rewriter_messages
 
 async def rewrite_question(
     glm_4_flash_llm: BaseChatModel,
-    question: str,
-    previous_question: str,
-    previous_answer_summary: str = "",
+    messages: list[HumanMessage],
 ) -> str:
-    """结合上一轮问题与回答摘要改写本轮原话，失败时向上报告。"""
-    messages = query_rewriter_messages(
-        question, previous_question, previous_answer_summary
-    )
+    """结合消息列表中的全部用户消息改写本轮原话，失败时向上报告。"""
+    messages = query_rewriter_messages(messages)
     rewritten = await _rewrite_messages(glm_4_flash_llm, messages)
     if settings.rewrite_capture_enabled:
         append_node_candidate(

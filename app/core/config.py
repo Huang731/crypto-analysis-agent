@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     rewrite_capture_path: str = str(
         PROJECT_ROOT / "eval_agent" / "candidates" / "rewrite_candidates.jsonl"
     )
+    summarize_history_capture_enabled: bool = True
+    summarize_history_capture_path: str = str(
+        PROJECT_ROOT
+        / "eval_agent"
+        / "candidates"
+        / "summarize_history_candidates.jsonl"
+    )
     calculate_metrics_capture_enabled: bool = True
     calculate_metrics_capture_path: str = str(
         PROJECT_ROOT

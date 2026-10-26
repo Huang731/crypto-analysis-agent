@@ -311,7 +311,6 @@
           case "summarize_history":
           case "crypto_analysis_agent":
           case "topic_research_agent":
-          case "finalize":
             setReportStatus("正在整理报告", "running", 2);
             break;
         }
@@ -335,9 +334,6 @@
             state.outputNode = "writer";
             state.writerComplete = false;
           }
-        } else if (data.node === "finalize") {
-          if (state.outputNode === "writer" || state.writerComplete) return;
-          state.outputNode = "finalize";
         } else {
           return;
         }
