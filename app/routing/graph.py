@@ -118,7 +118,7 @@ def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
 
     @timed_node(label=lambda state: state["scope"]["original_question"])
     async def rewrite(state: RoutingState) -> dict[str, Any]:
-        """追加本轮原话后筛选全部用户消息改写，完整消息列表仍整体保存。"""
+        """筛选全部用户消息改写，用改写结果替换本轮消息后整体保存。"""
         messages = [
             *state.get("messages", []),
             HumanMessage(content=state["scope"]["original_question"]),
@@ -130,6 +130,7 @@ def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
             glm_4_flash_llm,
             user_messages,
         )
+        messages[-1] = HumanMessage(content=question)
         return {
             "messages": messages,
             "resolved_question": question,
