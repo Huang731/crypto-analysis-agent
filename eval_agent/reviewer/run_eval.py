@@ -107,9 +107,6 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             else None,
             "after_mean": sum(after for _, after in pairs) / count if count else None,
             "mean_delta": sum(deltas) / count if count else None,
-            "improved_cases": sum(value > 0 for value in deltas),
-            "unchanged_cases": sum(value == 0 for value in deltas),
-            "regressed_cases": sum(value < 0 for value in deltas),
         }
     return summary
 
@@ -132,7 +129,7 @@ async def score_samples(cases: list[ReviewerCase]) -> list[dict[str, Any]]:
 
 
 def run_eval(cases: list[ReviewerCase]) -> dict[str, Any]:
-    """对已保存的报告对评分，输出两项指标前后均分与提升、下降数量。"""
+    """对已保存的报告对评分，输出两项指标前后均分与平均变化。"""
     if not cases:
         raise ValueError("没有审核前后报告配对案例")
     print(f"开始 {len(cases)} 条审核前后报告对比评测...", flush=True)
