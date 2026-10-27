@@ -11,7 +11,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar
 
-import httpx
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, messages_from_dict
 from pydantic import BaseModel, ConfigDict, Field, RootModel
@@ -21,8 +20,7 @@ from app.core.config import PROJECT_ROOT, settings
 from app.llm.model import (
     ainvoke_structured,
     get_embeddings,
-    make_glm_5_3_flash_llm,
-    model_session,
+    make_qwen3_max_llm,
 )
 
 _Schema = TypeVar("_Schema", bound=BaseModel)
@@ -193,10 +191,9 @@ def load_cases(path: Path) -> list[WriterCase]:
     return cases
 
 
-def  create_metrics(
-    judge_model: str,
+def create_metrics(
+    judge_model: list[str],
     *,
-    http: httpx.AsyncClient,
     callbacks: list[BaseCallbackHandler] | None = None,
 ) -> dict[str, Any]:
     """仅实际评测时加载 RAGAS，离线案例校验不依赖模型框架。"""
@@ -204,14 +201,14 @@ def  create_metrics(
     from ragas.llms.base import InstructorBaseRagasLLM
     from ragas.metrics.collections import AnswerRelevancy, Faithfulness
 
-    if judge_model != settings.glm_5_3_flash_model:
-        raise ValueError(f"未配置的智谱裁判模型：{judge_model}")
-    model = make_glm_5_3_flash_llm(async_client=http).bind(reasoning_effort="low")
+    if judge_model != settings.qwen3_max_model:
+        raise ValueError(f"未配置的千问 Max 裁判模型：{judge_model}")
+    model = make_qwen3_max_llm()
     if callbacks is not None:
         model = model.with_config(callbacks=callbacks)
 
-    class GLMJudge(InstructorBaseRagasLLM):
-        """将智谱 5 系列结构化调用接入 RAGAS 原生指标。"""
+    class QwenJudge(InstructorBaseRagasLLM):
+        """将千问 Max 结构化调用接入 RAGAS 原生指标。"""
 
         def generate(self, prompt: str, response_model: type[_Schema]) -> _Schema:
             raise NotImplementedError("评测只使用异步 agenerate")
@@ -259,7 +256,7 @@ def  create_metrics(
                 embeddings.aembed_documents(texts), timeout=120
             )
 
-    judge = GLMJudge()
+    judge = QwenJudge()
     return {
         "faithfulness": Faithfulness(llm=judge),
         "answer_relevancy": AnswerRelevancy(
@@ -282,7 +279,7 @@ def error_message(exc: Exception) -> str:
     return f"{type(exc).__name__}: {message[:600]}"
 
 
-async def evaluate(case: WriterCase, judge_model: str) -> dict[str, Any]:
+async def evaluate(case: WriterCase, judge_model: list[str]) -> dict[str, Any]:
     """直接评分案例中的报告，不重新调用 writer，结果仅保存在本地。"""
     evidence = build_evidence(case)
     output: dict[str, Any] = {
@@ -292,22 +289,21 @@ async def evaluate(case: WriterCase, judge_model: str) -> dict[str, Any]:
         "answer_relevancy": None,
         "errors": {},
     }
-    async with model_session() as http:
-        for name, metric in create_metrics(judge_model, http=http).items():
-            if name == "faithfulness" and not evidence.retrieved_contexts:
-                continue
-            arguments: dict[str, Any] = {
-                "user_input": evidence.user_input,
-                "response": case.actual_output,
-            }
-            if name == "faithfulness":
-                arguments["retrieved_contexts"] = evidence.retrieved_contexts
-            try:
-                result = await asyncio.wait_for(metric.ascore(**arguments), timeout=600)
-                if math.isfinite(result.value):
-                    output[name] = result.value
-            except Exception as exc:  # noqa: BLE001 - 指标失败不抹掉另一项得分。
-                output["errors"][name] = error_message(exc)
+    for name, metric in create_metrics(judge_model).items():
+        if name == "faithfulness" and not evidence.retrieved_contexts:
+            continue
+        arguments: dict[str, Any] = {
+            "user_input": evidence.user_input,
+            "response": case.actual_output,
+        }
+        if name == "faithfulness":
+            arguments["retrieved_contexts"] = evidence.retrieved_contexts
+        try:
+            result = await asyncio.wait_for(metric.ascore(**arguments), timeout=600)
+            if math.isfinite(result.value):
+                output[name] = result.value
+        except Exception as exc:  # noqa: BLE001 - 指标失败不抹掉另一项得分。
+            output["errors"][name] = error_message(exc)
     return output
 
 
@@ -330,7 +326,7 @@ async def score_samples(cases: list[WriterCase]) -> list[dict[str, Any]]:
 
     async def one(case: WriterCase) -> dict[str, Any]:
         async with semaphore:
-            output = await evaluate(case, settings.glm_5_3_flash_model)
+            output = await evaluate(case, settings.qwen3_max_model)
         print(
             f"案例第{case.source_line}行：faithfulness={output['faithfulness']}，answer_relevancy={output['answer_relevancy']}",
             flush=True,

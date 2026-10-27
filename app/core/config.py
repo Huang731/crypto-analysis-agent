@@ -34,6 +34,9 @@ class Settings(BaseSettings):
 
     # 百炼连接：聊天与视觉共用；密钥只从环境变量或 .env 读取。
     dashscope_api_key: str = Field(default="", description="百炼 API Key")
+    qwen3_max_model: list[str] = Field(
+        default_factory=lambda: ["qwen3-max"], min_length=1
+    )
     bailian_fast_models: list[str] = Field(
         default_factory=lambda: [
             "qwen3.6-flash",

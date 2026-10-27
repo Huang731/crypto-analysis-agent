@@ -63,7 +63,7 @@ def load_cases(path: Path) -> list[ReviewerCase]:
     return cases
 
 
-async def evaluate(case: ReviewerCase, judge_model: str) -> dict[str, Any]:
+async def evaluate(case: ReviewerCase, judge_model: list[str]) -> dict[str, Any]:
     """用同一裁判配置分别评分报告正文，仅对有效配对计算变化。"""
     before = await evaluate_report(
         as_writer_case(case, case.before_report), judge_model
@@ -120,7 +120,7 @@ async def score_samples(cases: list[ReviewerCase]) -> list[dict[str, Any]]:
 
     async def one(case: ReviewerCase) -> dict[str, Any]:
         async with semaphore:
-            output = await evaluate(case, settings.glm_5_3_flash_model)
+            output = await evaluate(case, settings.qwen3_max_model)
         print(
             f"案例第 {case.source_line} 行：审核前={output['before']}，"
             f"审核后={output['after']}，变化={output['delta']}",

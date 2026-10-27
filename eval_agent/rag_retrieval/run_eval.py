@@ -14,7 +14,6 @@ import time
 from pathlib import Path
 from typing import Any, TypeVar
 
-import httpx
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langfuse import Langfuse
@@ -37,8 +36,7 @@ from app.core.config import PROJECT_ROOT, _env_files, settings
 from app.llm.model import (
     ainvoke_structured,
     get_embeddings,
-    make_glm_5_3_flash_llm,
-    model_session,
+    make_qwen3_max_llm,
 )
 from app.rag.generate import stream_answer
 from app.rag.retriever import KBRetriever
@@ -60,18 +58,14 @@ class EvalSettings(BaseSettings):
     langfuse_base_url: str = "https://cloud.langfuse.com"
 
 
-def create_metrics(judge_model: str, *, http: httpx.AsyncClient) -> dict[str, Any]:
-    """独立构建 RAG 四项指标，共用 GLM 裁判和项目向量模型。"""
-    if judge_model != settings.glm_5_3_flash_model:
+def create_metrics(judge_model: list[str]) -> dict[str, Any]:
+    """独立构建 RAG 四项指标，共用千问 Max 裁判和项目向量模型。"""
+    if judge_model != settings.qwen3_max_model:
         raise ValueError(f"未配置的 RAG 裁判模型：{judge_model}")
-    model = (
-        make_glm_5_3_flash_llm(async_client=http)
-        .bind(reasoning_effort="low")
-        .with_config(callbacks=[CallbackHandler()])
-    )
+    model = make_qwen3_max_llm().with_config(callbacks=[CallbackHandler()])
 
     class RAGJudge(InstructorBaseRagasLLM):
-        """将 GLM 的异步结构化调用接入 RAGAS。"""
+        """将千问 Max 的异步结构化调用接入 RAGAS。"""
 
         def generate(self, prompt: str, response_model: type[_Schema]) -> _Schema:
             raise NotImplementedError("评测只使用异步 agenerate")
@@ -167,43 +161,42 @@ async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
         base_url=config.langfuse_base_url,
     )
     try:
-        async with model_session() as http:
-            metrics = create_metrics(settings.glm_5_3_flash_model, http=http)
-            sem = asyncio.Semaphore(_CONCURRENCY)
+        metrics = create_metrics(settings.qwen3_max_model)
+        sem = asyncio.Semaphore(_CONCURRENCY)
 
-            @experiment()
-            async def run_evaluation(sample: dict[str, Any]) -> dict[str, Any]:
-                async with sem:
-                    faithfulness = await metrics["faithfulness"].ascore(
-                        user_input=sample["user_input"],
-                        response=sample["response"],
-                        retrieved_contexts=sample["retrieved_contexts"],
-                    )
-                    answer_relevancy = await metrics["answer_relevancy"].ascore(
-                        user_input=sample["user_input"],
-                        response=sample["response"],
-                    )
-                    context_precision = await metrics["context_precision"].ascore(
-                        user_input=sample["user_input"],
-                        reference=sample["reference"],
-                        retrieved_contexts=sample["retrieved_contexts"],
-                    )
-                    context_recall = await metrics["context_recall"].ascore(
-                        user_input=sample["user_input"],
-                        reference=sample["reference"],
-                        retrieved_contexts=sample["retrieved_contexts"],
-                    )
-                    return {
-                        "question": sample["user_input"],
-                        "faithfulness": faithfulness.value,
-                        "answer_relevancy": answer_relevancy.value,
-                        "context_precision": context_precision.value,
-                        "context_recall": context_recall.value,
-                    }
+        @experiment()
+        async def run_evaluation(sample: dict[str, Any]) -> dict[str, Any]:
+            async with sem:
+                faithfulness = await metrics["faithfulness"].ascore(
+                    user_input=sample["user_input"],
+                    response=sample["response"],
+                    retrieved_contexts=sample["retrieved_contexts"],
+                )
+                answer_relevancy = await metrics["answer_relevancy"].ascore(
+                    user_input=sample["user_input"],
+                    response=sample["response"],
+                )
+                context_precision = await metrics["context_precision"].ascore(
+                    user_input=sample["user_input"],
+                    reference=sample["reference"],
+                    retrieved_contexts=sample["retrieved_contexts"],
+                )
+                context_recall = await metrics["context_recall"].ascore(
+                    user_input=sample["user_input"],
+                    reference=sample["reference"],
+                    retrieved_contexts=sample["retrieved_contexts"],
+                )
+                return {
+                    "question": sample["user_input"],
+                    "faithfulness": faithfulness.value,
+                    "answer_relevancy": answer_relevancy.value,
+                    "context_precision": context_precision.value,
+                    "context_recall": context_recall.value,
+                }
 
-            dataset = Dataset("rag_evaluation", backend=InMemoryBackend(), data=samples)
-            result = await run_evaluation.arun(dataset)
-            return list(result)
+        dataset = Dataset("rag_evaluation", backend=InMemoryBackend(), data=samples)
+        result = await run_evaluation.arun(dataset)
+        return list(result)
     finally:
         client.flush()
 

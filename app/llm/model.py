@@ -80,6 +80,15 @@ def make_bailian_fast_llm() -> Runnable[LanguageModelInput, AIMessage]:
     return _make_bailian_llm_with_fallbacks(settings.bailian_fast_models)
 
 
+def make_qwen3_max_llm() -> Runnable[LanguageModelInput, AIMessage]:
+    """按列表创建百炼评测裁判，仅免费额度耗尽时切换下一项。"""
+    return _make_bailian_llm_with_fallbacks(
+        settings.qwen3_max_model,
+        max_retries=0,
+        extra_body={"enable_thinking": False},
+    )
+
+
 def make_qwen3_8b_llm(
     *,
     async_client: httpx.AsyncClient | None = None,
