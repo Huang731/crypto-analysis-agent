@@ -13,7 +13,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 from app.core.candidate_capture import append_node_candidate
 from app.core.config import settings
 from app.core.observability import timed_node
-from app.core.tracing import trace_generation_call
+from app.core.tracing import trace_model_call
 from app.crypto_analysis.crypto_analysis_state import (
     CryptoAnalysisParentGraphState,
     CryptoAnalysisSubGraphState,
@@ -38,14 +38,7 @@ from prompts.crypto_analysis_reviewer import ReportReview, analysis_review_messa
 from prompts.crypto_analysis_writer import analysis_report_messages
 
 
-@trace_generation_call(
-    name="crypto_analysis_writer",
-    model=settings.bailian_smart_models[0],
-    input_arg="messages",
-    input_format="messages",
-    record_io=True,
-    kind="generation",
-)
+@trace_model_call(name="crypto_analysis_writer", model=settings.bailian_smart_models[0])
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -66,15 +59,7 @@ async def _invoke_report_text(
 # 请求规划模型
 
 
-@trace_generation_call(
-    name="crypto_report_review",
-    model=settings.bailian_smart_models[0],
-    input_arg="messages",
-    input_format="messages",
-    output_format="json",
-    record_io=True,
-    kind="generation",
-)
+@trace_model_call(name="crypto_report_review", model=settings.bailian_smart_models[0])
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -90,15 +75,7 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
     return review
 
 
-@trace_generation_call(
-    name="crypto_analysis_plan",
-    model=settings.glm_smart_model,
-    input_arg="messages",
-    input_format="messages",
-    output_format="json",
-    record_io=True,
-    kind="generation",
-)
+@trace_model_call(name="crypto_analysis_plan", model=settings.glm_smart_model)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -287,7 +264,7 @@ def make_reviewer() -> Callable[
     bailian_smart_llm = make_bailian_smart_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
-    @trace_generation_call(name="crypto.reviewer", kind="span")
+    @trace_model_call(name="crypto.reviewer")
     async def reviewer(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
         """审核本轮报告，沿用两轮审核上限和不通过时的修改意见。"""
         review_count = state["review_count"] + 1

@@ -20,7 +20,7 @@ from typing_extensions import TypedDict
 from app.core.candidate_capture import append_node_candidate
 from app.core.config import settings
 from app.core.observability import timed_node
-from app.core.tracing import trace_generation_call
+from app.core.tracing import trace_model_call
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
@@ -32,14 +32,7 @@ from app.topic_research.topic_research_agent import build_topic_research_agent
 from prompts.router import routing_messages
 
 
-@trace_generation_call(
-    name="routing_decision",
-    model=settings.glm_4_flash_model,
-    input_arg="messages",
-    input_format="messages",
-    output_format="text",
-    kind="generation",
-)
+@trace_model_call(name="routing_decision", model=settings.glm_4_flash_model)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -90,7 +83,7 @@ def make_summarize_history() -> Callable[
     memory_manager = MemoryManager(3, 2)
 
     @timed_node(label=lambda state: state["resolved_question"])
-    @trace_generation_call(name="routing.summarize_history", kind="span")
+    @trace_model_call(name="routing.summarize_history")
     async def summarize_history(state: RoutingState) -> dict[str, list[AnyMessage]]:
         report = state["report"]
         if not isinstance(report, str) or not report.strip():

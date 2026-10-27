@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator, Iterator
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,7 +11,7 @@ from langchain_core.messages import BaseMessage
 
 from api.schemas import AskRequest
 from app.core.observability import get_logger, log_event
-from app.core.tracing import trace_span
+from app.core.tracing import trace_model_call
 
 
 def _event(name: str, payload: dict[str, Any] | list[dict[str, Any]]) -> dict[str, str]:
@@ -154,6 +155,7 @@ class RoutingService:
     def __init__(self, routing_graph: Any) -> None:
         self._routing_graph = routing_graph
 
+    @trace_model_call(name="routing_graph")
     async def stream_ask(
         self,
         request: AskRequest | None,
@@ -181,15 +183,16 @@ class RoutingService:
             }
         yield _event("progress", progress)
 
-        with trace_span("routing_graph"):
-            # 节点更新保留进度和最终状态，模型消息只转发写作节点的正文。
-            async for part in self._routing_graph.astream(
+        async with aclosing(
+            self._routing_graph.astream(
                 graph_input,
                 stream_mode=["updates", "messages"],
                 subgraphs=True,
                 version="v2",
                 config=config,
-            ):
+            )
+        ) as stream:
+            async for part in stream:
                 if part["type"] == "updates":
                     for node, delta in part["data"].items():
                         for event in result.apply_update(part["ns"], node, delta):

@@ -18,7 +18,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 from app.core.candidate_capture import append_node_candidate
 from app.core.config import settings
 from app.core.observability import get_logger, log_event, timed_node
-from app.core.tracing import trace_generation_call, trace_span
+from app.core.tracing import trace_model_call
 from app.crypto_analysis.crypto_analysis_state import (
     CryptoAnalysisSubGraphState,
     MetricAgentContext,
@@ -94,45 +94,46 @@ def aggregate_skill_results(
     }
 
 
+@trace_model_call(name="analysis.skill.thought_retrieval")
 async def _retrieve_thought_context(
-    retriever: KBRetriever, query: str
+    retriever: KBRetriever, query: str, *, trace: Any
 ) -> dict[str, Any]:
     """用生成的检索问题查找理论材料，检索失败仍保留指标与失败状态。"""
-    with trace_span("analysis.skill.thought_retrieval", query=query) as span:
-        try:
-            documents = await retriever.aretrieve(query)
-        except Exception:  # noqa: BLE001 - 沿用原检索错误处理，不替换已计算指标。
-            span.metadata["status"] = "error"
-            log_event(
-                get_logger("crypto_analysis.skill_worker"),
-                "思想材料检索失败",
-                exception=format_exc(),
-                query=query,
-            )
-            result = {"query": query, "status": "error", "documents": []}
-        else:
-            # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
-            span.output = {"document_count": len(documents)}
-            result = {
-                "query": query,
-                "status": "ok" if documents else "no_results",
-                "documents": [
-                    {
-                        "id": doc.id,
-                        "content": doc.page_content,
-                        "metadata": doc.metadata,
-                    }
-                    for doc in documents
-                ],
-            }
-        if settings.thought_retrieval_capture_enabled:
-            append_node_candidate(
-                node="thought_retrieval",
-                input=query,
-                actual_output=result,
-                path=settings.thought_retrieval_capture_path,
-            )
-        return result
+    trace.metadata.update(query=query)
+    try:
+        documents = await retriever.aretrieve(query)
+    except Exception:  # noqa: BLE001 - 沿用原检索错误处理，不替换已计算指标。
+        trace.metadata["status"] = "error"
+        log_event(
+            get_logger("crypto_analysis.skill_worker"),
+            "思想材料检索失败",
+            exception=format_exc(),
+            query=query,
+        )
+        result = {"query": query, "status": "error", "documents": []}
+    else:
+        # 空检索结果明确保留，不生成思想材料或替换已有指标结果。
+        trace.output = {"document_count": len(documents)}
+        result = {
+            "query": query,
+            "status": "ok" if documents else "no_results",
+            "documents": [
+                {
+                    "id": doc.id,
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                }
+                for doc in documents
+            ],
+        }
+    if settings.thought_retrieval_capture_enabled:
+        append_node_candidate(
+            node="thought_retrieval",
+            input=query,
+            actual_output=result,
+            path=settings.thought_retrieval_capture_path,
+        )
+    return result
 
 
 @retry(
@@ -154,12 +155,8 @@ async def _invoke_skill_retrieval_query(
         indicators=indicators,
     )
 
-    @trace_generation_call(
-        name="crypto_skill_retrieval_query",
-        model=settings.glm_4_flash_model,
-        input_arg="messages",
-        input_format="messages",
-        kind="generation",
+    @trace_model_call(
+        name="crypto_skill_retrieval_query", model=settings.glm_4_flash_model
     )
     async def invoke(messages: list[BaseMessage]) -> str:
         """追踪实际发送的完整消息，避免遗漏提示词用量。"""
@@ -231,7 +228,7 @@ def route_cache(state: CryptoAnalysisSubGraphState) -> Literal["hit", "miss"]:
     return "hit" if state["cached_memory"] is not None else "miss"
 
 
-@trace_generation_call(name="crypto.metric_agent", kind="span")
+@trace_model_call(name="crypto.metric_agent")
 async def _invoke_metric_agent(
     agent: CompiledStateGraph, state: CryptoAnalysisSubGraphState
 ) -> MetricAgentState:

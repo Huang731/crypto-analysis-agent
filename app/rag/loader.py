@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_text_splitters import (
@@ -16,7 +17,7 @@ from langchain_text_splitters import (
 )
 
 from app.core.config import settings
-from app.core.tracing import trace_span
+from app.core.tracing import trace_model_call
 from app.rag.cleaner import CleanProcessor
 
 SUPPORTED_SUFFIXES = (".md", ".txt", ".pdf")
@@ -68,7 +69,10 @@ def split_plain_text(text: str) -> list[Document]:
     return _text_splitter().create_documents([text])
 
 
-def load_and_split(path: Path, *, src_hash: str | None = None) -> list[Document]:
+@trace_model_call(name="rag.document.load_split")
+def load_and_split(
+    path: Path, *, src_hash: str | None = None, trace: Any
+) -> list[Document]:
     """加载单个文档并分块，为每个 chunk 打上溯源 metadata。
 
     metadata 约定（检索层/生成层依赖）：
@@ -79,29 +83,29 @@ def load_and_split(path: Path, *, src_hash: str | None = None) -> list[Document]
 
     入库流程可传入已计算的 src_hash，避免重复读取文件计算 hash。
     """
-    with trace_span("rag.document.load_split", source=path.name) as node_span:
-        try:
-            text = path.read_text(encoding="utf-8")
-            # 在结构感知分块前清洗，章节与切片均基于同一份正文。
-            text = CleanProcessor.clean(text)
-            if path.suffix.lower() == ".md":
-                chunks = split_markdown(text)
-            else:
-                chunks = split_plain_text(text)
+    trace.metadata.update(source=path.name)
+    try:
+        text = path.read_text(encoding="utf-8")
+        # 在结构感知分块前清洗，章节与切片均基于同一份正文。
+        text = CleanProcessor.clean(text)
+        if path.suffix.lower() == ".md":
+            chunks = split_markdown(text)
+        else:
+            chunks = split_plain_text(text)
 
-            fhash = file_md5(path) if src_hash is None else src_hash
-            return [
-                Document(
-                    page_content=c.page_content,
-                    metadata={
-                        "source": path.name,
-                        "section": _breadcrumb(c.metadata),
-                        "src_hash": fhash,
-                        "chunk_idx": f"{fhash}:{i}",
-                    },
-                )
-                for i, c in enumerate(chunks)
-            ]
-        except Exception:
-            node_span.metadata["status"] = "error"
-            raise
+        fhash = file_md5(path) if src_hash is None else src_hash
+        return [
+            Document(
+                page_content=c.page_content,
+                metadata={
+                    "source": path.name,
+                    "section": _breadcrumb(c.metadata),
+                    "src_hash": fhash,
+                    "chunk_idx": f"{fhash}:{i}",
+                },
+            )
+            for i, c in enumerate(chunks)
+        ]
+    except Exception:
+        trace.metadata["status"] = "error"
+        raise

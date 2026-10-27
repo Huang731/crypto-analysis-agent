@@ -17,7 +17,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
 from app.core.observability import get_logger, log_event
-from app.core.tracing import trace_span
+from app.core.tracing import trace_model_call
 from app.crypto_analysis.calculators.derivatives_calculator import (
     FUNDING_FIELD_LABELS,
     OI_FIELD_LABELS,
@@ -191,6 +191,7 @@ def _normalize_result(
 # 工具证据处理
 
 
+@trace_model_call(name="analysis.metric.fetch")
 async def _fetch_evidence(
     runtime: ToolRuntime[dict[str, Any]],
     evidence_id: str,
@@ -198,6 +199,8 @@ async def _fetch_evidence(
     source_action: str,
     source_function: Callable[..., Awaitable[dict[str, Any]]],
     arguments: dict[str, Any],
+    *,
+    trace: Any,
 ) -> dict[str, Any]:
     """取得原始响应或真实失败记录，供同一次调用直接计算。"""
     started = time.perf_counter()
@@ -206,51 +209,52 @@ async def _fetch_evidence(
         "source_action": source_action,
         "arguments": dict(arguments),
     }
-    with trace_span(
-        "analysis.metric.fetch", data_kind=data_kind, source_action=source_action
-    ) as span:
-        try:
-            raw = await source_function(**arguments)
-        except Exception as exc:  # noqa: BLE001 - 取数失败类型不固定，作为缺失证据交还 Agent。
-            # 取数失败作为真实缺失证据交还 Agent，不返回其他来源或缓存数据。
-            reason = (
-                str(exc)
-                if isinstance(exc, (RuntimeError, TypeError, ValueError))
-                else type(exc).__name__
-            )
-            record.update(status="data_missing", reason=reason)
-            span.output = {"evidence_id": evidence_id, **record}
-            span.metadata["status"] = "error"
-            log_event(
-                get_logger("crypto_analysis.metrics"),
-                "metric.fetch.failed",
-                skill_name=runtime.context["skill"].name,
-                source_action=source_action,
-                data_kind=data_kind,
-                evidence_id=evidence_id,
-                status="data_missing",
-                error_type=type(exc).__name__,
-                error_message=_log_reason(str(exc)),
-                reason=_log_reason(reason),
-                duration_ms=round((time.perf_counter() - started) * 1000),
-            )
-        else:
-            record.update(status="ok", raw=raw)
-            span.output = {
-                "evidence_id": evidence_id,
-                "data_kind": data_kind,
-                "status": "ok",
-                "source": raw["source"],
-            }
+    trace.metadata.update(data_kind=data_kind, source_action=source_action)
+    try:
+        raw = await source_function(**arguments)
+    except Exception as exc:  # noqa: BLE001 - 取数失败类型不固定，作为缺失证据交还 Agent。
+        # 取数失败作为真实缺失证据交还 Agent，不返回其他来源或缓存数据。
+        reason = (
+            str(exc)
+            if isinstance(exc, (RuntimeError, TypeError, ValueError))
+            else type(exc).__name__
+        )
+        record.update(status="data_missing", reason=reason)
+        trace.output = {"evidence_id": evidence_id, **record}
+        trace.metadata["status"] = "error"
+        log_event(
+            get_logger("crypto_analysis.metrics"),
+            "metric.fetch.failed",
+            skill_name=runtime.context["skill"].name,
+            source_action=source_action,
+            data_kind=data_kind,
+            evidence_id=evidence_id,
+            status="data_missing",
+            error_type=type(exc).__name__,
+            error_message=_log_reason(str(exc)),
+            reason=_log_reason(reason),
+            duration_ms=round((time.perf_counter() - started) * 1000),
+        )
+    else:
+        record.update(status="ok", raw=raw)
+        trace.output = {
+            "evidence_id": evidence_id,
+            "data_kind": data_kind,
+            "status": "ok",
+            "source": raw["source"],
+        }
     return record
 
 
+@trace_model_call(name="analysis.metric.calculate")
 def _compute_metric(
     runtime: ToolRuntime[dict[str, Any]],
     evidence_id: str,
     metric_id: str,
     evidence: dict[str, Any],
     calculator: Callable[[dict[str, Any]], dict[str, Any]],
+    *,
+    trace: Any,
 ) -> dict[str, Any]:
     """直接计算本次取得的原始数据，并按 Skill 字段标准化。"""
     skill = runtime.context["skill"]
@@ -258,61 +262,59 @@ def _compute_metric(
     stage = "fetch"
     error_type: str | None = None
     traceback: str | None = None
-    with trace_span(
-        "analysis.metric.calculate", metric_id=metric_id, evidence_id=evidence_id
-    ) as span:
-        if evidence["status"] != "ok":
+    trace.metadata.update(metric_id=metric_id, evidence_id=evidence_id)
+    if evidence["status"] != "ok":
+        result = missing_metric(
+            skill.name, metric_id, "data_missing", evidence["reason"]
+        )
+    else:
+        try:
+            stage = "calculate"
+            calculated = calculator(evidence["raw"])
+            stage = "normalize"
+            result = _normalize_result(
+                skill.name,
+                metric_id,
+                calculated,
+            )
+            if result["status"] != "ok":
+                stage = "calculate"
+        except (TypeError, ValueError) as exc:
+            error_type = type(exc).__name__
+            result = missing_metric(skill.name, metric_id, "data_missing", str(exc))
+        except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断技能。
+            error_type = type(exc).__name__
+            # 只记录栈帧；异常消息单独处理，避免完整请求地址进入日志。
+            traceback = _log_reason("".join(format_tb(exc.__traceback__)))
             result = missing_metric(
-                skill.name, metric_id, "data_missing", evidence["reason"]
+                skill.name, metric_id, "calculation_error", str(exc)
+            )
+    trace.output = {"status": result["status"], "score": result["score"]}
+    if result["status"] != "ok":
+        fields = {
+            "skill_name": skill.name,
+            "indicator_id": metric_id,
+            "evidence_id": evidence_id,
+            "source_action": evidence["source_action"],
+            "stage": stage,
+            "status": result["status"],
+            "reason": _log_reason(result["reason"]),
+            "error_type": error_type,
+            "duration_ms": round((time.perf_counter() - started) * 1000),
+        }
+        if traceback is not None:
+            log_event(
+                get_logger("crypto_analysis.metrics"),
+                "metric.result.unavailable",
+                traceback=traceback,
+                **fields,
             )
         else:
-            try:
-                stage = "calculate"
-                calculated = calculator(evidence["raw"])
-                stage = "normalize"
-                result = _normalize_result(
-                    skill.name,
-                    metric_id,
-                    calculated,
-                )
-                if result["status"] != "ok":
-                    stage = "calculate"
-            except (TypeError, ValueError) as exc:
-                error_type = type(exc).__name__
-                result = missing_metric(skill.name, metric_id, "data_missing", str(exc))
-            except Exception as exc:  # noqa: BLE001 - 计算器未预期错误记为 calculation_error，不中断技能。
-                error_type = type(exc).__name__
-                # 只记录栈帧；异常消息单独处理，避免完整请求地址进入日志。
-                traceback = _log_reason("".join(format_tb(exc.__traceback__)))
-                result = missing_metric(
-                    skill.name, metric_id, "calculation_error", str(exc)
-                )
-        span.output = {"status": result["status"], "score": result["score"]}
-        if result["status"] != "ok":
-            fields = {
-                "skill_name": skill.name,
-                "indicator_id": metric_id,
-                "evidence_id": evidence_id,
-                "source_action": evidence["source_action"],
-                "stage": stage,
-                "status": result["status"],
-                "reason": _log_reason(result["reason"]),
-                "error_type": error_type,
-                "duration_ms": round((time.perf_counter() - started) * 1000),
-            }
-            if traceback is not None:
-                log_event(
-                    get_logger("crypto_analysis.metrics"),
-                    "metric.result.unavailable",
-                    traceback=traceback,
-                    **fields,
-                )
-            else:
-                log_event(
-                    get_logger("crypto_analysis.metrics"),
-                    "metric.result.unavailable",
-                    **fields,
-                )
+            log_event(
+                get_logger("crypto_analysis.metrics"),
+                "metric.result.unavailable",
+                **fields,
+            )
     return result
 
 

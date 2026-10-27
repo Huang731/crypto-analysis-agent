@@ -23,7 +23,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.config import settings  # 读取模型配置用于成本估算。
 from app.core.observability import timed_node  # 保留节点耗时观测。
-from app.core.tracing import trace_generation_call
+from app.core.tracing import trace_model_call
 from app.llm.model import (
     ainvoke_model,
     make_glm_4_5_air_llm,
@@ -76,7 +76,7 @@ def make_split() -> Callable[
     glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["question"])  # 沿用现有节点耗时和失败日志。
-    @trace_generation_call(name="topic.split", kind="span")
+    @trace_model_call(name="topic.split")
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_random_exponential(min=1, max=2),
@@ -112,14 +112,9 @@ async def _invoke_model(llm: Any, messages: list[BaseMessage]) -> Any:
     return await ainvoke_model(llm, messages)
 
 
-@trace_generation_call(
+@trace_model_call(
     name=lambda arguments: arguments.arguments["trace_name"],
     model=lambda arguments: arguments.arguments["model_name"],
-    input_arg="messages",
-    input_format="messages",
-    output_attr="content",
-    skip_non_text_output=True,
-    kind="generation",
 )
 async def _invoke_traced_model(
     llm: Any, messages: list[BaseMessage], trace_name: str, model_name: str
@@ -131,15 +126,6 @@ async def _invoke_traced_model(
 class ResearchModelTrace(AgentMiddleware):
     """逐轮记录模型调用，并限制单轮等待时间。"""
 
-    @trace_generation_call(
-        name="topic_researcher",
-        model=settings.glm_smart_model,
-        input_arg="request",
-        input_format="model_request",
-        output_attr="result",
-        output_format="messages",
-        kind="generation",
-    )
     async def awrap_model_call(
         self,
         request: ModelRequest,
@@ -150,9 +136,10 @@ class ResearchModelTrace(AgentMiddleware):
             wait=wait_random_exponential(min=1, max=2),
             reraise=True,
         )
-        async def invoke(current_request: ModelRequest) -> ModelResponse:
+        @trace_model_call(name="topic_researcher", model=settings.glm_smart_model)
+        async def invoke(messages: ModelRequest) -> ModelResponse:
             """只重试当前模型请求，不重发工具调用或研究流程。"""
-            return await asyncio.wait_for(handler(current_request), timeout=60)
+            return await asyncio.wait_for(handler(messages), timeout=60)
 
         # 仅研究模型调用关闭深度思考，不修改共享 Air 模型。
         request = request.override(
@@ -207,7 +194,7 @@ def make_researcher() -> Callable[
     research_agent = build_research_agent()
 
     @timed_node(label=lambda state: state["subquestion"])
-    @trace_generation_call(name="topic.researcher", kind="span")
+    @trace_model_call(name="topic.researcher")
     async def researcher(state: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         subquestion = state["subquestion"]
         messages = research_messages(
@@ -309,7 +296,7 @@ def make_summarize() -> Callable[
     glm_4_flash_llm = make_glm_4_flash_llm()
 
     @timed_node(label=lambda state: state["question"])  # 延续原图的节点观测。
-    @trace_generation_call(name="topic.summarize", kind="span")
+    @trace_model_call(name="topic.summarize")
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_random_exponential(min=1, max=2),
@@ -356,7 +343,7 @@ def make_research_team(
 ]:  # 保留原有父图对子图的调用边界。
     """从本轮请求范围取得主题，并把子图结果回写父图。"""
 
-    @trace_generation_call(name="topic.research_subgraph", kind="span")
+    @trace_model_call(name="topic.research_subgraph")
     async def invoke_subgraph(state: AnalysisState) -> dict[str, Any]:
         """记录子图执行过程，模型用量由子图内部的调用记录。"""
         return await sub_graph.ainvoke(state)
@@ -364,7 +351,7 @@ def make_research_team(
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
     )  # 记录并行研究整体耗时。
-    @trace_generation_call(name="topic.research_team", kind="span")
+    @trace_model_call(name="topic.research_team")
     async def research_team(state: SystemState) -> dict[str, Any]:  # 返回摘要和发现。
         question = _latest_question(state["scope"])
         result = await invoke_subgraph(
@@ -392,7 +379,7 @@ def make_writer() -> Callable[
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
     )  # 保留原有写作节点观测。
-    @trace_generation_call(name="topic.writer", kind="span")
+    @trace_model_call(name="topic.writer")
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_random_exponential(min=1, max=2),
@@ -433,7 +420,7 @@ def make_reviewer() -> Callable[
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
     )  # 保留审稿耗时日志。
-    @trace_generation_call(name="topic.reviewer", kind="span")
+    @trace_model_call(name="topic.reviewer")
     @retry(
         stop=stop_after_attempt(2),
         wait=wait_random_exponential(min=1, max=2),

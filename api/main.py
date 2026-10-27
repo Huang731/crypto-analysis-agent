@@ -7,10 +7,10 @@ import sys
 import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import aclosing, asynccontextmanager, contextmanager
 from pathlib import Path
 from traceback import format_exc
-from typing import Annotated
+from typing import Annotated, Any
 
 if __package__ in (None, ""):
     # 以 `python api/main.py` 直接运行时，sys.path[0] 是 api/ 而非项目根目录。
@@ -32,7 +32,7 @@ from app.core.observability import (
     new_trace_id,
     reset_request_context,
 )
-from app.core.tracing import start_trace
+from app.core.tracing import trace_model_call
 from app.crypto_analysis.crypto_analysis_parent_agent import create_request_scope
 from app.rag.retriever import KBRetriever
 from app.routing.graph import build_routing_graph
@@ -46,8 +46,7 @@ _ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """启动时加载知识库和会话存储，退出时释放连接并等待检索结束。"""
-    with start_trace("app.startup"):
-        retriever = await asyncio.to_thread(KBRetriever)
+    retriever = await _load_retriever()
     try:
         checkpoint_path = Path(settings.checkpoint_db_path).expanduser()
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,6 +62,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await retriever.aclose()
         if hasattr(app.state, "routing_service"):
             del app.state.routing_service
+
+
+@trace_model_call(name="app.startup")
+async def _load_retriever() -> KBRetriever:
+    """沿用启动时在线程池加载检索器的方式，记录实际初始化耗时。"""
+    return await asyncio.to_thread(KBRetriever)
 
 
 app = FastAPI(title="研究分析 Agent", version="0.1.0", lifespan=lifespan)
@@ -162,32 +167,33 @@ def _ask_response(
     # 在请求入口固定一次 UTC 截止时间，保证各个分析技能使用同一时间点的数据。
     scope = create_request_scope(req.question, thread_id, trace_id) if req else None
 
-    async def event_generator() -> AsyncIterator[dict[str, str]]:
+    @trace_model_call(name="api.ask" if req else "api.resume")
+    async def event_generator(*, trace: Any) -> AsyncIterator[dict[str, str]]:
         # 生成器在响应阶段才执行，需要在这里重新绑定日志上下文。
-        with (
-            start_trace(
-                "api.ask" if req else "api.resume",
-                trace_id=trace_id,
-                thread_id=thread_id,
-                question_chars=len(req.question) if req else 0,
-            ) as trace,
-            _request_context(trace_id, thread_id),
-        ):
+        trace.metadata.update(
+            trace_id=trace_id,
+            thread_id=thread_id,
+            question_chars=len(req.question) if req else 0,
+        )
+        with _request_context(trace_id, thread_id):
             started = time.perf_counter()
             try:
-                async for item in service.stream_ask(req, thread_id, scope):
-                    # 客户端断开后立即停止，避免继续消耗 LLM 调用。
-                    if await request.is_disconnected():
-                        trace.output = {"status": "disconnected"}
-                        return
-                    if item.get("event") == "done":
-                        payload = json.loads(item["data"])
-                        trace.output = {
-                            "status": "done",
-                            "kind": payload.get("kind"),
-                            "report_chars": len(payload.get("report", "")),
-                        }
-                    yield item
+                async with aclosing(
+                    service.stream_ask(req, thread_id, scope)
+                ) as stream:
+                    async for item in stream:
+                        # 客户端断开后立即停止，避免继续消耗 LLM 调用。
+                        if await request.is_disconnected():
+                            trace.output = {"status": "disconnected"}
+                            return
+                        if item.get("event") == "done":
+                            payload = json.loads(item["data"])
+                            trace.output = {
+                                "status": "done",
+                                "kind": payload.get("kind"),
+                                "report_chars": len(payload.get("report", "")),
+                            }
+                        yield item
                 if trace.output is None:
                     trace.output = {"status": "done"}
             except Exception as exc:  # noqa: BLE001 - SSE 已开始推送，任何异常都必须转成 error 事件返回给前端。

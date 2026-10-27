@@ -31,7 +31,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.documents import Document
 
 from app.core.config import settings
-from app.core.tracing import start_trace, trace_generation_call, trace_span
+from app.core.tracing import trace_model_call
 from app.llm.model import get_embeddings
 from app.rag.cleaner import CleanProcessor
 from app.rag.loader import file_md5, list_documents, load_and_split
@@ -52,50 +52,48 @@ def _ignore_ip_normalize_warning() -> Iterator[None]:
         yield
 
 
-def get_vectorstore() -> FAISS:
+@trace_model_call(name="rag.vectorstore.load")
+def get_vectorstore(*, trace: Any) -> FAISS:
     """加载已有索引，首次入库时创建空库。
 
     文档向量与查询向量均归一化，内积即 cosine 相似度，越大越相似。
     similarity_search 返回文档，similarity_search_with_score 返回原始 cosine 分数。
     """
-    with trace_span("rag.vectorstore.load") as node_span:
-        try:
-            embeddings = get_embeddings()
-            index_dir = Path(settings.faiss_path)
-            # 已有任一索引文件时执行加载；文件缺失或损坏直接报错。
-            if (index_dir / "index.faiss").exists() or (
-                index_dir / "index.pkl"
-            ).exists():
-                with _ignore_ip_normalize_warning():
-                    vs = FAISS.load_local(
-                        str(index_dir),
-                        embeddings,
-                        allow_dangerous_deserialization=True,  # 仅加载本项目生成的可信索引。
-                        normalize_L2=True,
-                        distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
-                    )
-                if vs.index.metric_type != faiss.METRIC_INNER_PRODUCT:
-                    raise ValueError(
-                        "已有 FAISS 索引不是内积索引，请使用新索引目录重新入库"
-                    )
-                if vs.index.d != settings.embedding_dimensions:
-                    raise ValueError(
-                        "已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库"
-                    )
-                return vs
-
+    try:
+        embeddings = get_embeddings()
+        index_dir = Path(settings.faiss_path)
+        # 已有任一索引文件时执行加载；文件缺失或损坏直接报错。
+        if (index_dir / "index.faiss").exists() or (index_dir / "index.pkl").exists():
             with _ignore_ip_normalize_warning():
-                return FAISS(
-                    embedding_function=embeddings,
-                    index=faiss.IndexFlatIP(settings.embedding_dimensions),
-                    docstore=InMemoryDocstore(),
-                    index_to_docstore_id={},
+                vs = FAISS.load_local(
+                    str(index_dir),
+                    embeddings,
+                    allow_dangerous_deserialization=True,  # 仅加载本项目生成的可信索引。
                     normalize_L2=True,
                     distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
                 )
-        except Exception:
-            node_span.metadata["status"] = "error"
-            raise
+            if vs.index.metric_type != faiss.METRIC_INNER_PRODUCT:
+                raise ValueError(
+                    "已有 FAISS 索引不是内积索引，请使用新索引目录重新入库"
+                )
+            if vs.index.d != settings.embedding_dimensions:
+                raise ValueError(
+                    "已有 FAISS 索引的维度与向量模型不一致，请使用新索引目录重新入库"
+                )
+            return vs
+
+        with _ignore_ip_normalize_warning():
+            return FAISS(
+                embedding_function=embeddings,
+                index=faiss.IndexFlatIP(settings.embedding_dimensions),
+                docstore=InMemoryDocstore(),
+                index_to_docstore_id={},
+                normalize_L2=True,
+                distance_strategy=DistanceStrategy.MAX_INNER_PRODUCT,
+            )
+    except Exception:
+        trace.metadata["status"] = "error"
+        raise
 
 
 @dataclass(frozen=True)
@@ -153,118 +151,112 @@ def _add_in_batches(vs: FAISS, docs: list[Document], ids: list[str]) -> None:
         _embed_batch(vs, batch, ids[i : i + step], i // step + 1)
 
 
-@trace_generation_call(
-    name="ingest.embedding",
-    model=settings.embedding_model,
-    input_arg="batch",
-    input_format="documents",
-    output_format="none",
-    metadata=lambda arguments: {
-        "batch_index": arguments.arguments["batch_index"],
-        "chunk_count": len(arguments.arguments["batch"]),
-    },
-    generation_arg="generation",
-    unit="TOKENS",
-    kind="generation",
-)
+@trace_model_call(name="ingest.embedding", model=settings.embedding_model)
 def _embed_batch(
     vs: FAISS,
-    batch: list[Document],
+    messages: list[Document],
     ids: list[str],
     batch_index: int,
     *,
-    generation: Any,
+    trace: Any,
 ) -> None:
     """沿用批次入库与异常标记，输入用量由装饰器逐条估算。"""
+    trace.metadata.update(batch_index=batch_index, chunk_count=len(messages))
     try:
-        vs.add_documents(batch, ids=ids)
+        vs.add_documents(messages, ids=ids)
     except Exception as exc:
-        generation.metadata.update(status="error", error_type=type(exc).__name__)
+        trace.metadata.update(status="error", error_type=type(exc).__name__)
         raise
-    generation.metadata["status"] = "done"
+    trace.metadata["status"] = "done"
 
 
+@trace_model_call(name="rag.ingest")
 def ingest_directory(
-    docs_dir: str | Path | None = None, prune: bool = True
+    docs_dir: str | Path | None = None, prune: bool = True, *, trace: Any
 ) -> IngestReport:
     """同步文档目录，并用本地 tracing 记录入库和向量模型调用。"""
     directory = Path(settings.docs_dir if docs_dir is None else docs_dir)
-    with start_trace("rag.ingest", docs_dir=str(directory), prune=prune) as trace:
-        try:
-            report = _ingest_directory(directory, prune=prune)
-        except Exception as exc:
-            trace.output = {"status": "error", "error_type": type(exc).__name__}
-            raise
-        trace.output = {"status": "done", **asdict(report)}
-        return report
+    trace.metadata.update(docs_dir=str(directory), prune=prune)
+    try:
+        report = _ingest_directory(directory, prune=prune)
+    except Exception as exc:
+        trace.output = {"status": "error", "error_type": type(exc).__name__}
+        raise
+    trace.output = {"status": "done", **asdict(report)}
+    return report
 
 
-def _ingest_directory(docs_dir: Path, prune: bool) -> IngestReport:
+@trace_model_call(name="rag.ingest.sync")
+def _ingest_directory(docs_dir: Path, prune: bool, *, trace: Any) -> IngestReport:
     """把目录下所有文档同步进向量库，返回统计报告。幂等：重复跑不产生变化。"""
-    with trace_span("rag.ingest.sync") as node_span:
-        try:
-            files = list_documents(docs_dir)
-            vs = get_vectorstore()
-            source_ids, source_hashes = _existing_sources(vs)
+    try:
+        files = list_documents(docs_dir)
+        vs = get_vectorstore()
+        source_ids, source_hashes = _existing_sources(vs)
 
-            on_disk = {p.name for p in files}
+        on_disk = {p.name for p in files}
 
-            added: list[str] = []
-            updated: list[str] = []
-            skipped: list[str] = []
-            added_chunks = 0
+        added: list[str] = []
+        updated: list[str] = []
+        skipped: list[str] = []
+        added_chunks = 0
 
-            for path in files:
-                fname = path.name
-                fhash = file_md5(path)
-                if source_hashes.get(fname) == fhash:
-                    skipped.append(fname)
-                    continue
+        for path in files:
+            fname = path.name
+            fhash = file_md5(path)
+            if source_hashes.get(fname) == fhash:
+                skipped.append(fname)
+                continue
 
-                is_update = fname in source_ids
-                if is_update:
-                    # 文件改过：先清旧块，避免新旧版本混存
-                    _delete_source(vs, fname, source_ids, source_hashes)
-                # PDF 走版面感知解析；md/txt 走老路
-                if path.suffix.lower() == ".pdf":
-                    chunks = _load_pdf_as_documents(path)
-                else:
-                    chunks = load_and_split(path, src_hash=fhash)
-                ids = [f"{fname}:{fhash[:8]}:{c.metadata['chunk_idx']}" for c in chunks]
-                _add_in_batches(vs, chunks, ids)
-                # 入库成功后更新映射，空文件不记录切片 ID。
-                if ids:
-                    source_ids[fname] = ids
-                    source_hashes[fname] = fhash
-                added_chunks += len(chunks)
-                if is_update:
-                    updated.append(fname)
-                else:
-                    added.append(fname)
+            is_update = fname in source_ids
+            if is_update:
+                # 文件改过：先清旧块，避免新旧版本混存
+                _delete_source(vs, fname, source_ids, source_hashes)
+            # PDF 走版面感知解析；md/txt 走老路
+            if path.suffix.lower() == ".pdf":
+                chunks = _load_pdf_as_documents(path)
+            else:
+                chunks = load_and_split(path, src_hash=fhash)
+            ids = [f"{fname}:{fhash[:8]}:{c.metadata['chunk_idx']}" for c in chunks]
+            _add_in_batches(vs, chunks, ids)
+            # 入库成功后更新映射，空文件不记录切片 ID。
+            if ids:
+                source_ids[fname] = ids
+                source_hashes[fname] = fhash
+            added_chunks += len(chunks)
+            if is_update:
+                updated.append(fname)
+            else:
+                added.append(fname)
 
-            # 目录里已删除的文件，库里的孤儿块一并清掉
-            pruned: list[str] = []
-            if prune:
-                # 先收集待清理文件，避免遍历字典时修改字典。
-                pruned = [source for source in source_ids if source not in on_disk]
-                for fname in pruned:
-                    _delete_source(vs, fname, source_ids, source_hashes)
+        # 目录里已删除的文件，库里的孤儿块一并清掉
+        pruned: list[str] = []
+        if prune:
+            # 先收集待清理文件，避免遍历字典时修改字典。
+            pruned = [source for source in source_ids if source not in on_disk]
+            for fname in pruned:
+                _delete_source(vs, fname, source_ids, source_hashes)
 
-            # 映射来自文档及 ID 关联，下次加载时重建，无需额外保存 JSON。
-            with trace_span("rag.vectorstore.save"):
-                vs.save_local(settings.faiss_path)
+        # 映射来自文档及 ID 关联，下次加载时重建，无需额外保存 JSON。
+        _save_vectorstore(vs)
 
-            return IngestReport(
-                added_files=tuple(added),
-                updated_files=tuple(updated),
-                skipped_files=tuple(skipped),
-                pruned_files=tuple(pruned),
-                added_chunks=added_chunks,
-                total_chunks=vs.index.ntotal,
-            )
-        except Exception:
-            node_span.metadata["status"] = "error"
-            raise
+        return IngestReport(
+            added_files=tuple(added),
+            updated_files=tuple(updated),
+            skipped_files=tuple(skipped),
+            pruned_files=tuple(pruned),
+            added_chunks=added_chunks,
+            total_chunks=vs.index.ntotal,
+        )
+    except Exception:
+        trace.metadata["status"] = "error"
+        raise
+
+
+@trace_model_call(name="rag.vectorstore.save")
+def _save_vectorstore(vs: FAISS) -> None:
+    """沿用原索引保存路径，单独记录保存耗时。"""
+    vs.save_local(settings.faiss_path)
 
 
 def _load_pdf_as_documents(path: Path) -> list[Document]:

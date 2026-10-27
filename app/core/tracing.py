@@ -1,22 +1,34 @@
 """自写的控制台追踪器，用于记录 trace、span、generation 和估算成本。
 
 当前实现只包含本地数据结构与控制台输出，不调用 Langfuse 或其他追踪服务。
-``start_trace`` 会在上下文退出时打印 trace；``trace_span`` 和
-``trace_generation`` 会加入当前异步上下文中的 trace，并按父子关系组织。
+``trace_model_call`` 统一记录模型调用与普通节点，按父子关系组织，
+最外层调用结束时打印 trace。业务代码无需手工管理追踪上下文。
 """
 
 from __future__ import annotations
 
-import json
 import sys
 import time
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import ExitStack, aclosing, closing, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
-from inspect import BoundArguments, iscoroutinefunction, signature
-from typing import Any, Literal, TypeVar, cast
+from inspect import (
+    BoundArguments,
+    isasyncgenfunction,
+    iscoroutinefunction,
+    isgeneratorfunction,
+    signature,
+)
+from typing import Any, TypeVar, cast
+
+from langchain.agents.middleware.types import ModelRequest, ModelResponse
+from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
+from langchain_core.utils.function_calling import convert_to_openai_tool
+from pydantic import BaseModel
+from pydantic_core import to_json
 
 from app.core.config import settings
 
@@ -206,186 +218,176 @@ class _ConsoleBackend:
         pass  # 控制台即时打印，无需 flush
 
 
-@contextmanager
-def trace_span(name: str, **meta: Any) -> Iterator[Any]:
-    """创建普通 span，并自动挂到当前 trace 或父 span 下。"""
-    with _ConsoleBackend().span(name, **meta) as s:
-        yield s
-
-
-@contextmanager
-def trace_generation(name: str, model: str, **meta: Any) -> Iterator[Any]:
-    """创建并返回一个本地 generation span，记录模型名及可选 token 用量。
-
-    退出上下文时，如果 ``usage`` 已设置，会按配置中的模型单价估算成本；
-    当前结果保存在 span 对象中，不会上报到外部服务。
-    """
-    with _ConsoleBackend().generation(name, model=model, **meta) as g:
-        yield g
-
-
 _TraceFunction = TypeVar("_TraceFunction", bound=Callable[..., Any])
 _TraceLabel = str | Callable[[BoundArguments], str]
-_TraceFormat = Literal["text", "messages", "json", "model_request"]
 
 
-def _trace_text(value: Any, value_format: _TraceFormat) -> str:
-    """按明确配置序列化，不猜测输入或输出的类型。"""
-    if value_format == "text":
-        if not isinstance(value, str):
-            raise TypeError("Trace 文本统计要求字符串")
-        return value
-    if value_format == "json":
-        return value.model_dump_json()
-    if value_format == "model_request":
+def _estimate_model_tokens(value: Any) -> int:
+    """按实际消息字段或结构化结果估算，不计入响应元数据。"""
+    if isinstance(value, str):
+        return estimate_tokens(value)
+    if isinstance(value, BaseMessage):
+        payload = value.model_dump(
+            mode="python",
+            include={"content", "name", "tool_calls", "tool_call_id"},
+            exclude_none=True,
+            exclude_defaults=True,
+        )
+        payload["role"] = {"human": "user", "ai": "assistant"}.get(
+            value.type, value.type
+        )
+        for field_name in ("function_call", "reasoning_content"):
+            if field_name in value.additional_kwargs:
+                payload[field_name] = value.additional_kwargs[field_name]
+        return sum(
+            estimate_tokens(
+                item
+                if isinstance(item, str)
+                else to_json(item, bytes_mode="base64").decode("utf-8")
+            )
+            for item in payload.values()
+        )
+    if isinstance(value, Document):
+        return estimate_tokens(value.page_content)
+    if isinstance(value, ModelRequest):
         messages = [*value.messages]
         if value.system_message is not None:
             messages.insert(0, value.system_message)
-        value = messages
-    elif value_format != "messages":
-        raise ValueError(f"不支持的 Trace 序列化格式：{value_format}")
-    return json.dumps(
-        [message.model_dump(mode="json") for message in value],
-        ensure_ascii=False,
-    )
+        tools = [convert_to_openai_tool(tool) for tool in value.tools]
+        return _estimate_model_tokens(messages) + (
+            estimate_tokens(to_json(tools).decode("utf-8")) if tools else 0
+        )
+    if isinstance(value, ModelResponse):
+        return _estimate_model_tokens(value.result)
+    if isinstance(value, list):
+        if not all(isinstance(message, (BaseMessage, Document)) for message in value):
+            raise TypeError("模型追踪的列表只能包含消息或文档")
+        return sum(_estimate_model_tokens(message) for message in value)
+    if isinstance(value, BaseModel):
+        return estimate_tokens(value.model_dump_json())
+    raise TypeError(f"模型追踪不支持此输入或输出类型：{type(value).__name__}")
 
 
-def _trace_attribute(value: Any, path: str) -> Any:
-    """按配置读取字段路径，缺失字段直接报错。"""
-    for name in path.split("."):
-        value = getattr(value, name)
-    return value
-
-
-def trace_generation_call(
+def trace_model_call(
     name: _TraceLabel,
     model: _TraceLabel | None = None,
-    *,
-    kind: Literal["span", "generation"] = "generation",
-    input_arg: str = "prompt",
-    input_format: _TraceFormat | Literal["documents"] = "text",
-    output_attr: str | None = None,
-    output_format: _TraceFormat | Literal["none"] = "text",
-    usage_attr: str | None = None,
-    metadata: Callable[[BoundArguments], dict[str, Any]] | None = None,
-    generation_arg: str | None = None,
-    skip_non_text_output: bool = False,
-    unit: str | None = None,
-    record_io: bool = False,
 ) -> Callable[[_TraceFunction], _TraceFunction]:
-    """统一追踪与用量估算，模型输入输出按调用方配置记录。"""
-    if kind not in {"span", "generation"}:
-        raise ValueError(f"不支持的追踪类型：{kind}")
-    if kind == "generation" and model is None:
-        raise ValueError("模型调用追踪必须指定 model")
+    """统一追踪调用；指定模型时估算 token，省略模型时只记录普通节点。
+
+    模型函数必须声明 messages，支持文本、消息、文档及 Agent 模型请求。
+    文档输入只统计输入 token；其余输出支持消息或 Pydantic 结构化结果。
+    需要补充追踪元数据或结果摘要的函数可声明仅限关键字的 trace 参数。
+    最外层自动创建 trace；同步、异步和生成器均在实际执行结束时退出追踪。
+    """
 
     def decorate(func: _TraceFunction) -> _TraceFunction:
         func_signature = signature(func)
-
-        def prepare(args: tuple[Any, ...], kwargs: dict[str, Any]) -> BoundArguments:
-            # 仅 SDK 边界注入 generation，保留原有元数据和结果摘要写入。
-            if generation_arg is not None:
-                kwargs = {**kwargs, generation_arg: None}
-            arguments = func_signature.bind(*args, **kwargs)
-            arguments.apply_defaults()
-            return arguments
-
-        def finish(generation: _Span, arguments: BoundArguments, output: Any) -> None:
-            if kind == "span":
-                return
-            if usage_attr is not None:
-                generation.usage = {
-                    "input": _trace_attribute(output, usage_attr),
-                    "output": 0,
-                }
-                return
-            output_value = (
-                _trace_attribute(output, output_attr)
-                if output_attr is not None
-                else output
-            )
-            # 主题研究原本只统计文本响应，非文本保持用量未知，由调用方校验。
-            if skip_non_text_output and not isinstance(output_value, str):
-                return
-            if record_io and output_format != "none":
-                generation.output = _trace_text(output_value, output_format)
-            input_value = arguments.arguments[input_arg]
-            input_tokens = (
-                sum(estimate_tokens(doc.page_content) for doc in input_value)
-                if input_format == "documents"
-                else estimate_tokens(_trace_text(input_value, input_format))
-            )
-            generation.usage = {
-                "input": input_tokens,
-                "output": (
-                    0
-                    if output_format == "none"
-                    else estimate_tokens(_trace_text(output_value, output_format))
-                ),
-            }
-            if unit is not None:
-                generation.usage["unit"] = unit
+        if model is not None and "messages" not in func_signature.parameters:
+            raise TypeError("被追踪的模型函数必须声明 messages 参数")
+        inject_trace = "trace" in func_signature.parameters
+        is_generator = isasyncgenfunction(func) or isgeneratorfunction(func)
+        if model is not None and is_generator:
+            raise TypeError("模型 token 估算要求完整返回结果，不能装饰生成器")
 
         @contextmanager
-        def context(arguments: BoundArguments) -> Iterator[_Span]:
+        def context(
+            args: tuple[Any, ...], kwargs: dict[str, Any]
+        ) -> Iterator[tuple[BoundArguments, _Trace | _Span, int | None, bool]]:
+            if inject_trace:
+                kwargs = {**kwargs, "trace": None}
+            arguments = func_signature.bind(*args, **kwargs)
+            arguments.apply_defaults()
             trace_name = name(arguments) if callable(name) else name
-            meta = metadata(arguments) if metadata is not None else {}
-            if kind == "span":
-                with trace_span(trace_name, **meta) as span:
-                    try:
-                        yield span
-                    except Exception:
-                        span.metadata["status"] = "error"
-                        raise
-                return
-            model_name = model(arguments) if callable(model) else model
-            with trace_generation(trace_name, model=cast(str, model_name), **meta) as g:
-                if record_io:
-                    input_value = arguments.arguments[input_arg]
-                    g.input = (
-                        json.dumps(
-                            [doc.page_content for doc in input_value],
-                            ensure_ascii=False,
-                        )
-                        if input_format == "documents"
-                        else _trace_text(input_value, input_format)
+            backend = _ConsoleBackend()
+            with ExitStack() as stack:
+                root = (
+                    stack.enter_context(backend.trace(trace_name))
+                    if _current_trace.get() is None
+                    else None
+                )
+                if model is not None:
+                    model_name = model(arguments) if callable(model) else model
+                    record = stack.enter_context(
+                        backend.generation(trace_name, model=model_name)
                     )
-                yield g
+                elif root is not None:
+                    record = root
+                else:
+                    record = stack.enter_context(backend.span(trace_name))
+                if inject_trace:
+                    arguments.arguments["trace"] = record
+                try:
+                    input_tokens = None
+                    documents = False
+                    if model is not None:
+                        messages = arguments.arguments["messages"]
+                        input_tokens = _estimate_model_tokens(messages)
+                        documents = (
+                            isinstance(messages, list)
+                            and bool(messages)
+                            and all(isinstance(item, Document) for item in messages)
+                        )
+                    yield arguments, record, input_tokens, documents
+                except BaseException:
+                    record.metadata["status"] = "error"
+                    raise
+
+        def finish(
+            record: _Trace | _Span, tokens: int | None, docs: bool, output: Any
+        ) -> None:
+            if tokens is not None:
+                generation = cast(_Span, record)
+                generation.usage = {
+                    "input": tokens,
+                    "output": 0 if docs else _estimate_model_tokens(output),
+                }
+
+        if isasyncgenfunction(func):
+
+            @wraps(func)
+            async def async_generator(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+                with context(args, kwargs) as (arguments, _, _, _):
+                    async with aclosing(
+                        func(*arguments.args, **arguments.kwargs)
+                    ) as stream:
+                        async for item in stream:
+                            yield item
+
+            return cast(_TraceFunction, async_generator)
+
+        if isgeneratorfunction(func):
+
+            @wraps(func)
+            def generator(*args: Any, **kwargs: Any) -> Iterator[Any]:
+                with (
+                    context(args, kwargs) as (arguments, _, _, _),
+                    closing(func(*arguments.args, **arguments.kwargs)) as stream,
+                ):
+                    return (yield from stream)
+
+            return cast(_TraceFunction, generator)
 
         if iscoroutinefunction(func):
 
             @wraps(func)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                arguments = prepare(args, kwargs)
-                with context(arguments) as generation:
-                    if generation_arg is not None:
-                        arguments.arguments[generation_arg] = generation
+                with context(args, kwargs) as (arguments, record, tokens, docs):
                     output = await func(*arguments.args, **arguments.kwargs)
-                    finish(generation, arguments, output)
+                    finish(record, tokens, docs, output)
                     return output
 
             return cast(_TraceFunction, async_wrapper)
 
         @wraps(func)
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            arguments = prepare(args, kwargs)
-            with context(arguments) as generation:
-                if generation_arg is not None:
-                    arguments.arguments[generation_arg] = generation
+            with context(args, kwargs) as (arguments, record, tokens, docs):
                 output = func(*arguments.args, **arguments.kwargs)
-                finish(generation, arguments, output)
+                finish(record, tokens, docs, output)
                 return output
 
         return cast(_TraceFunction, sync_wrapper)
 
     return decorate
-
-
-@contextmanager
-def start_trace(name: str, **meta: Any) -> Iterator[Any]:
-    """创建本地 trace，并在上下文退出时打印它当前包含的 span 树。"""
-    with _ConsoleBackend().trace(name, **meta) as t:
-        yield t
 
 
 def flush() -> None:

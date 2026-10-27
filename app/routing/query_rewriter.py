@@ -6,7 +6,7 @@ from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
 from app.core.config import settings
-from app.core.tracing import trace_generation_call
+from app.core.tracing import trace_model_call
 from app.llm.model import ainvoke_model
 from prompts.query_rewriter import query_rewriter_messages
 
@@ -28,13 +28,7 @@ async def rewrite_question(
     return rewritten
 
 
-@trace_generation_call(
-    name="question_rewriter",
-    model=settings.glm_4_flash_model,
-    input_arg="messages",
-    input_format="messages",
-    kind="generation",
-)
+@trace_model_call(name="question_rewriter", model=settings.glm_4_flash_model)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),

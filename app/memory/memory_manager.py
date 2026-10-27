@@ -7,7 +7,7 @@ from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, Syste
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.config import settings
-from app.core.tracing import trace_generation_call
+from app.core.tracing import trace_model_call
 from app.llm.model import ainvoke_model
 from prompts.summarize_history import history_summary_messages
 
@@ -52,14 +52,7 @@ async def compress_with_summary(
     return [*system_msgs, summary_msg, *recent]
 
 
-@trace_generation_call(
-    name="conversation_summary",
-    model=settings.glm_4_flash_model,
-    input_arg="messages",
-    input_format="messages",
-    record_io=True,
-    kind="generation",
-)
+@trace_model_call(name="conversation_summary", model=settings.glm_4_flash_model)
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
