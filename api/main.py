@@ -150,19 +150,26 @@ async def ask(
 
     事件类型：progress / route / token / done / error。
     """
+    return _ask_response(req, request, service)
+
+
+def _ask_response(
+    req: AskRequest | None, request: Request, service: RoutingService
+) -> EventSourceResponse:
+    """问答和续跑共用原有 SSE 转发、日志与错误处理。"""
     thread_id: str = request.state.thread_id
     trace_id: str = request.state.trace_id
     # 在请求入口固定一次 UTC 截止时间，保证各个分析技能使用同一时间点的数据。
-    scope = create_request_scope(req.question, thread_id, trace_id)
+    scope = create_request_scope(req.question, thread_id, trace_id) if req else None
 
     async def event_generator() -> AsyncIterator[dict[str, str]]:
         # 生成器在响应阶段才执行，需要在这里重新绑定日志上下文。
         with (
             start_trace(
-                "api.ask",
+                "api.ask" if req else "api.resume",
                 trace_id=trace_id,
                 thread_id=thread_id,
-                question_chars=len(req.question),
+                question_chars=len(req.question) if req else 0,
             ) as trace,
             _request_context(trace_id, thread_id),
         ):
@@ -193,7 +200,11 @@ async def ask(
                 trace.output = {"status": "error", "error_type": type(exc).__name__}
                 error = {
                     "code": "routing_failed",
-                    "message": "问答执行失败，请根据 trace_id 检查服务日志。",
+                    "message": (
+                        exc.detail
+                        if isinstance(exc, HTTPException)
+                        else "问答执行失败，请根据 trace_id 检查服务日志。"
+                    ),
                     "thread_id": thread_id,
                     "trace_id": trace_id,
                 }
@@ -202,6 +213,17 @@ async def ask(
     return EventSourceResponse(
         event_generator(), headers=_id_headers(trace_id, thread_id)
     )
+
+
+@app.post("/api/resume")
+async def resume(
+    request: Request,
+    service: Annotated[RoutingService, Depends(get_routing_service)],
+) -> EventSourceResponse:
+    """继续原任务并沿用问答的 SSE 进度与报告输出。"""
+    if not request.headers.get("X-Thread-Id"):
+        raise HTTPException(status_code=400, detail="必须提供原任务的 X-Thread-Id")
+    return _ask_response(None, request, service)
 
 
 def main() -> None:

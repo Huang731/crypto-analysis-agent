@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from fastapi import HTTPException
 from langchain_core.messages import BaseMessage
 
 from api.schemas import AskRequest
@@ -154,19 +155,36 @@ class RoutingService:
         self._routing_graph = routing_graph
 
     async def stream_ask(
-        self, request: AskRequest, thread_id: str, scope: dict[str, str]
+        self,
+        request: AskRequest | None,
+        thread_id: str,
+        scope: dict[str, str] | None,
     ) -> AsyncIterator[dict[str, str]]:
-        """依次完成问题改写、图事件转发和最终 SSE 回答。"""
-        scope = {**scope, "original_question": request.question}
-        yield _event("progress", {"detail": "正在理解问题"})
+        """新问题和检查点续跑共用进度、正文流及最终结果处理。"""
         result = _RoutingStreamState()
-        config = {
-            "configurable": {"thread_id": thread_id},
-        }
+        config = {"configurable": {"thread_id": thread_id}}
+        if request is not None:
+            if scope is None:
+                raise ValueError("新问题缺少请求范围")
+            graph_input = {"scope": {**scope, "original_question": request.question}}
+            progress = {"detail": "正在理解问题"}
+        else:
+            graph_input = None
+            snapshot = await self._routing_graph.aget_state(config)
+            if snapshot.created_at is None:
+                raise HTTPException(
+                    status_code=404, detail="当前会话没有可继续的任务，请先开始分析。"
+                )
+            progress = {
+                "detail": "正在继续上次任务",
+                "question": snapshot.values["scope"]["original_question"],
+            }
+        yield _event("progress", progress)
+
         with trace_span("routing_graph"):
             # 节点更新保留进度和最终状态，模型消息只转发写作节点的正文。
             async for part in self._routing_graph.astream(
-                {"scope": scope},
+                graph_input,
                 stream_mode=["updates", "messages"],
                 subgraphs=True,
                 version="v2",
@@ -180,6 +198,23 @@ class RoutingService:
                     message, metadata = part["data"]
                     for event in result.apply_message(message, metadata):
                         yield event
+        if request is None:
+            # 成功分支可能不再发事件，结束时从专家检查点补齐完整结果。
+            snapshot = await self._routing_graph.aget_state(config)
+            route = snapshot.values["route"]
+            expert = await self._routing_graph.aget_state(
+                {"configurable": {"thread_id": thread_id, "checkpoint_ns": route}}
+            )
+            if snapshot.next or expert.next or expert.created_at is None:
+                raise ValueError("恢复任务尚未完整结束")
+            for key in ("trace_id", "as_of"):
+                value = snapshot.values["scope"].get(key)
+                if not value or value != expert.values["scope"].get(key):
+                    raise ValueError("专家结果与本轮任务不一致")
+            result.final_state = {**expert.values, **snapshot.values}
+            event = result.route(route, "恢复任务的专家不一致")
+            if event is not None:
+                yield event
         yield result.completion_event()
 
 

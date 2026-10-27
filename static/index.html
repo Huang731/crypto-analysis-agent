@@ -34,6 +34,7 @@
               placeholder="例如：分析 BTC 当前趋势，或人工智能对教育的影响">
             <button id="submit" type="submit">开始分析 <span aria-hidden="true">→</span></button>
             <button id="cancel" type="button" hidden>中断</button>
+            <button id="resume" type="button">继续上次任务</button>
           </div>
           <p class="input-hint">描述具体问题，也可以继续追问本次会话。</p>
         </form>
@@ -99,6 +100,7 @@
     const questionInput = document.getElementById("question");
     const submitButton = document.getElementById("submit");
     const cancelButton = document.getElementById("cancel");
+    const resumeButton = document.getElementById("resume");
     const connectionEl = document.getElementById("connection");
     const progressEl = document.getElementById("progress");
     const progressList = document.getElementById("progress-list");
@@ -275,7 +277,8 @@
       if (name === "progress") {
         // 节点事件只更新当前阶段，维度和子问题结果保留在折叠详情里。
         if (!data.node && data.detail) {
-          setReportStatus("正在理解问题", "running", 0);
+          setReportStatus(data.detail, "running");
+          if (data.question) reportQuestionEl.textContent = data.question;
         }
         switch (data.node) {
           case "plan":
@@ -413,30 +416,34 @@
       }
     }
 
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
+    async function runRequest(resume = false) {
       const question = questionInput.value.trim();
-      if (!question || controller) return;
+      if ((!resume && !question) || controller) return;
 
       controller = new AbortController();
       submitButton.disabled = true;
-      cancelButton.hidden = false;
+      resumeButton.disabled = true;
+      cancelButton.hidden = resume;
       progressEl.hidden = false;
-      progressList.textContent = "";
-      progressSummaryEl.textContent = "查看详情";
+      if (!resume) {
+        progressList.textContent = "";
+        progressSummaryEl.textContent = "查看详情";
+      }
       requestIdsEl.textContent = "会话 ID：" + threadId;
       reportEl.className = "report blink";
       reportEl.textContent = "";
       findingsEl.hidden = true;
       findingsList.textContent = "";
       findingsEl.open = false;
-      progressEl.open = false;
-      reportQuestionEl.textContent = question;
+      if (!resume) progressEl.open = false;
+      reportQuestionEl.textContent = resume ? "继续上次任务" : question;
       reportQuestionEl.hidden = false;
       reportContextEl.textContent = "";
       reportContextEl.hidden = true;
       reportEl.setAttribute("aria-busy", "true");
-      setReportStatus("正在理解问题", "running", 0);
+      setReportStatus(
+        resume ? "正在继续上次任务" : "正在理解问题", "running", resume ? null : 0
+      );
       const state = {
         agents: [], finished: false, outputNode: null, writerComplete: false,
         report: "", renderFrame: null,
@@ -447,14 +454,14 @@
       state.timerId = setInterval(() => updateElapsedTime(state), 100);
 
       try {
-        const response = await fetch("/api/ask", {
+        const response = await fetch(resume ? "/api/resume" : "/api/ask", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "Accept": "text/event-stream",
             "X-Thread-Id": threadId
           },
-          body: JSON.stringify({ question }),
+          body: resume ? undefined : JSON.stringify({ question }),
           signal: controller.signal
         });
         const traceId = response.headers.get("X-Trace-Id");
@@ -462,6 +469,9 @@
         requestIdsEl.textContent = "会话 ID：" + responseThreadId
           + (traceId ? " · 追踪 ID：" + traceId : "");
         if (!response.ok) {
+          if (!response.headers.get("content-type")?.includes("application/json")) {
+            throw new Error("请求失败（HTTP " + response.status + "），请查看后端日志。");
+          }
           const data = await response.json();
           throw new Error(data.detail || "HTTP " + response.status);
         }
@@ -486,10 +496,17 @@
         reportEl.setAttribute("aria-busy", "false");
         reportEl.classList.remove("blink");
         submitButton.disabled = false;
+        resumeButton.disabled = false;
         cancelButton.hidden = true;
         controller = null;
       }
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void runRequest();
     });
+    resumeButton.addEventListener("click", () => { void runRequest(true); });
 
     cancelButton.addEventListener("click", () => {
       if (controller) controller.abort();
