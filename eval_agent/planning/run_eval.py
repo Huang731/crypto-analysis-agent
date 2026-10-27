@@ -1,22 +1,54 @@
-"""RAGAS 规划评测：固定问题 → 生产规划 → 三项规则指标 → 结果落盘。"""
+"""RAGAS 规划评测：历史规划输出 → 预期标注比对 → 三项规则评分。"""
 
 import asyncio
 import json
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from langchain_core.messages import messages_from_dict
+from pydantic import BaseModel, ConfigDict, Field
 from ragas import Dataset, experiment
 from ragas.backends import InMemoryBackend
 from ragas.metrics import numeric_metric
 
 from app.core.config import PROJECT_ROOT
-from app.crypto_analysis.crypto_analysis_parent_agent import create_analysis_plan
-from app.crypto_analysis.skill_loader import get_skill_loader
-from app.llm.model import make_glm_4_5_air_llm, model_session
 from prompts.crypto_analysis_plan import AnalysisPlan
 
 METRICS = ("target_asset_correct", "skill_selection_correct", "refresh_correct")
+
+
+class ExpectedPlan(AnalysisPlan):
+    """标注三项规划字段并记录判断依据，与历史输出分别保存。"""
+
+    label_reason: str = Field(min_length=1)
+
+
+class PlanningCase(BaseModel):
+    """保留用户消息、技能目录、采集时间与历史规划，不保存系统提示词。"""
+
+    model_config = ConfigDict(extra="forbid")
+    node: Literal["plan"]
+    ts: datetime
+    input: list[dict[str, Any]] = Field(min_length=1, max_length=1)
+    actual_output: AnalysisPlan
+    expected_output: ExpectedPlan
+    source_line: int = Field(ge=1)
+
+
+def load_cases(path: Path) -> list[PlanningCase]:
+    """读取带预期标注的历史案例，缺少标注或字段不合法时直接报错。"""
+    cases = [
+        PlanningCase.model_validate({**json.loads(line), "source_line": number})
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if line.strip()
+    ]
+    if not cases:
+        raise ValueError("没有规划评测案例")
+    return cases
 
 
 @numeric_metric(name="target_asset_correct", allowed_values=(0, 1))
@@ -37,25 +69,43 @@ def refresh_correct(actual: bool, expected: bool) -> int:
     return int(actual == expected)
 
 
-async def build_samples(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """直接调用生产规划函数，沿用其结构化输出、重试和超时。"""
-    skill_descriptions = get_skill_loader().format_skill_descriptions()
+def build_samples(cases: list[PlanningCase]) -> list[dict[str, Any]]:
+    """使用历史规划构建评分样本，技能范围按案例中的目录校验。"""
     samples = []
-    async with model_session() as http:
-        llm = make_glm_4_5_air_llm(async_client=http)
-        for case in cases:
-            question = case["input"]["resolved_question"]
-            expected = AnalysisPlan.model_validate(case["expected_output"])
-            actual = await create_analysis_plan(llm, question, skill_descriptions)
-            samples.append(
-                {
-                    "user_input": question,
-                    "response": AnalysisPlan.model_validate(actual).model_dump(),
-                    "reference": expected.model_dump(),
-                    "metadata": case["metadata"],
-                }
-            )
-            print(f"已生成规划：{question}", flush=True)
+    for case in cases:
+        messages = messages_from_dict(case.input)
+        if [message.type for message in messages] != ["human"]:
+            raise ValueError(f"第 {case.source_line} 行必须只保留一条 human 消息")
+        content = messages[0].content
+        if not isinstance(content, str):
+            raise ValueError(f"第 {case.source_line} 行的用户消息必须为文本")
+        catalog, separator, question = content.partition("用户问题：")
+        if not separator or not question.strip():
+            raise ValueError(f"第 {case.source_line} 行缺少用户问题")
+        available_skills = {
+            line.strip()[2:].partition(":")[0]
+            for line in catalog.splitlines()
+            if line.strip().startswith("- ")
+        }
+        expected = case.expected_output
+        if (
+            not expected.skill_names
+            or expected.skill_names != sorted(set(expected.skill_names))
+            or not set(expected.skill_names) <= available_skills
+        ):
+            raise ValueError(f"第 {case.source_line} 行的预期技能必须来自目录并排序去重")
+        samples.append(
+            {
+                "user_input": question.strip(),
+                "response": case.actual_output.model_dump(),
+                "reference": expected.model_dump(exclude={"label_reason"}),
+                "metadata": {
+                    "source_line": case.source_line,
+                    "ts": case.ts.isoformat(),
+                    "label_reason": expected.label_reason,
+                },
+            }
+        )
     return samples
 
 
@@ -86,13 +136,13 @@ async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(result)
 
 
-def run_eval(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """生成规划，执行三项指标评测并汇总平均正确率。"""
+def run_eval(cases: list[PlanningCase]) -> dict[str, Any]:
+    """对历史规划执行三项规则评分，重复记录逐条计分。"""
     if not cases:
         raise ValueError("没有规划评测案例")
     started = time.perf_counter()
-    print(f"生成 {len(cases)} 题的规划...", flush=True)
-    samples = asyncio.run(build_samples(cases))
+    print(f"读取 {len(cases)} 条历史规划输出...", flush=True)
+    samples = build_samples(cases)
     print("RAGAS 三项规则指标评测中...", flush=True)
     rows = asyncio.run(score_samples(samples))
     aggregate = {
@@ -106,9 +156,7 @@ def main() -> None:
     cases_path = Path(__file__).with_name("planning_cases.jsonl")
     output_path = PROJECT_ROOT / "eval_agent/outputs/planning_eval/results.json"
 
-    cases = [
-        json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines()
-    ]
+    cases = load_cases(cases_path)
     result = run_eval(cases)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(

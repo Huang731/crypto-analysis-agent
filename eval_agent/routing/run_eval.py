@@ -1,19 +1,55 @@
-"""RAGAS 路由评测：固定问题 → 生产路由 → 路由正确率 → 结果落盘。"""
+"""RAGAS 路由评测：历史路由输出 → 人工预期比对 → 结果落盘。"""
 
 import asyncio
 import json
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from langchain_core.messages import messages_from_dict
+from pydantic import BaseModel, ConfigDict, Field
 from ragas import Dataset, experiment
 from ragas.backends import InMemoryBackend
 from ragas.metrics import numeric_metric
 
 from app.core.config import PROJECT_ROOT
-from app.llm.model import make_glm_4_flash_llm, model_session
-from app.routing.graph import _invoke_route_decision
-from prompts.router import routing_messages
+
+Route = Literal["crypto_analysis_agent", "topic_research_agent"]
+
+
+class ExpectedRoute(BaseModel):
+    """独立标注预期路由和判断依据，不从历史输出推导答案。"""
+
+    model_config = ConfigDict(extra="forbid")
+    route: Route
+    label_reason: str = Field(min_length=1)
+
+
+class RoutingCase(BaseModel):
+    """保留真实路由消息、历史输出和采集时间，并记录来源行号。"""
+
+    model_config = ConfigDict(extra="forbid")
+    node: Literal["router"]
+    ts: datetime
+    input: list[dict[str, Any]] = Field(min_length=2, max_length=2)
+    actual_output: Route
+    expected_output: ExpectedRoute
+    source_line: int = Field(ge=1)
+
+
+def load_cases(path: Path) -> list[RoutingCase]:
+    """读取带人工标注的历史记录，缺少预期路由时直接报告错误。"""
+    cases = [
+        RoutingCase.model_validate({**json.loads(line), "source_line": number})
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if line.strip()
+    ]
+    if not cases:
+        raise ValueError("没有路由评测案例")
+    return cases
 
 
 @numeric_metric(name="route_correct", allowed_values=(0, 1))
@@ -22,23 +58,28 @@ def route_correct(actual: str, expected: str) -> int:
     return int(actual == expected)
 
 
-async def build_samples(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """直接调用生产路由函数，沿用其名称校验、重试和超时。"""
+def build_samples(cases: list[RoutingCase]) -> list[dict[str, Any]]:
+    """直接使用已保存的路由输出，不重新调用模型或改写原始输入。"""
     samples = []
-    async with model_session() as http:
-        llm = make_glm_4_flash_llm(async_client=http)
-        for case in cases:
-            question = case["input"]["resolved_question"]
-            actual = await _invoke_route_decision(llm, routing_messages(question))
-            samples.append(
-                {
-                    "user_input": question,
-                    "response": actual,
-                    "reference": case["expected_output"]["route"],
-                    "metadata": case["metadata"],
-                }
-            )
-            print(f"已生成路由：{question} → {actual}", flush=True)
+    for case in cases:
+        messages = messages_from_dict(case.input)
+        if [message.type for message in messages] != ["system", "human"]:
+            raise ValueError(f"第 {case.source_line} 行必须保留一条 system 和 human 消息")
+        question = messages[1].content
+        if not isinstance(question, str) or not question.strip():
+            raise ValueError(f"第 {case.source_line} 行的用户问题必须为非空文本")
+        samples.append(
+            {
+                "user_input": question,
+                "response": case.actual_output,
+                "reference": case.expected_output.route,
+                "metadata": {
+                    "source_line": case.source_line,
+                    "ts": case.ts.isoformat(),
+                    "label_reason": case.expected_output.label_reason,
+                },
+            }
+        )
     return samples
 
 
@@ -62,13 +103,13 @@ async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(result)
 
 
-def run_eval(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """生成路由，执行规则评测并汇总平均正确率。"""
+def run_eval(cases: list[RoutingCase]) -> dict[str, Any]:
+    """对历史路由执行规则评测并汇总平均正确率，重复记录逐条计分。"""
     if not cases:
         raise ValueError("没有路由评测案例")
     started = time.perf_counter()
-    print(f"生成 {len(cases)} 题的路由...", flush=True)
-    samples = asyncio.run(build_samples(cases))
+    print(f"读取 {len(cases)} 条历史路由输出...", flush=True)
+    samples = build_samples(cases)
     print("RAGAS 路由正确率评测中...", flush=True)
     rows = asyncio.run(score_samples(samples))
     aggregate = {
@@ -82,9 +123,7 @@ def main() -> None:
     cases_path = Path(__file__).with_name("routing_cases.jsonl")
     output_path = PROJECT_ROOT / "eval_agent/outputs/routing_eval/results.json"
 
-    cases = [
-        json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines()
-    ]
+    cases = load_cases(cases_path)
     result = run_eval(cases)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(

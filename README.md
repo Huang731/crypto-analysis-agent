@@ -284,16 +284,16 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 | 评测范围 | 评测方式 | 入口 |
 | --- | --- | --- |
-| 路由 | RAGAS 自定义规则指标：路由正确率 | [routing](eval_agent/routing/run_eval.py) |
-| 分析规划 | 资产、Skill 选择及规划规则 | [planning](eval_agent/planning/run_eval.py) |
-| 指标计算（calculate_metrics） | RAGAS 规则评测工具名称、参数、证据关联和指标结果契约 | [calculate_metrics](eval_agent/calculate_metrics/run_eval.py) |
+| 路由 | 对历史路由输出进行 RAGAS 规则评分，不重新调用模型 | [routing](eval_agent/routing/run_eval.py) |
+| 分析规划 | 对历史规划输出进行资产、Skill 选择和刷新标志的规则评分 | [planning](eval_agent/planning/run_eval.py) |
+| 指标计算（calculate_metrics） | 对历史指标输出进行工具名称、参数、证据关联和结果契约的规则评分 | [calculate_metrics](eval_agent/calculate_metrics/run_eval.py) |
 | Writer | RAGAS 忠实度与回答相关性 | [writer](eval_agent/writer/run_eval.py) |
 | Reviewer | 审核案例与 RAGAS 指标 | [reviewer](eval_agent/reviewer/run_eval.py) |
 | RAG | 忠实度、回答相关性、上下文精确率与召回率 | [rag_retrieval](eval_agent/rag_retrieval/run_eval.py) |
 
 ### 运行方式
 
-实际评分需要配置对应模型服务，写入 Langfuse 的评测还需要其连接配置。例如：
+路由、分析规划和指标计算评测直接读取历史输出与预期标注，无需调用模型或重新取数。涉及模型调用的其他评测需要配置对应模型服务，写入 Langfuse 的评测还需要其连接配置。例如：
 
 ```bash
 .venv-eval/bin/python -m eval_agent.routing.run_eval
@@ -312,48 +312,48 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 
 | 评测环节 | 用例数 | 本次结果 | 全流程耗时 |
 | --- | --- | --- | --- |
-| [路由](#路由) | 27 | 路由正确率 1.0 | 约 22 秒 |
-| [分析规划](#分析规划) | 24 | 三项规则指标均为 1.0 | 约 28 秒 |
-| [指标计算](#指标计算) | 6 | 四项规则指标均为 1.0 | 约 19 秒 |
+| [路由](#路由) | 104 | 路由正确率 98.08%（102/104） | 0 秒（日志按整数秒显示） |
+| [分析规划](#分析规划) | 114 | 资产识别 100%，Skill 选择 78.07%，刷新判断 100% | 0 秒（日志按整数秒显示） |
+| [指标计算](#指标计算) | 116 | 四项规则指标均为 100% | 0 秒（日志按整数秒显示） |
 | [Writer 报告质量](#writer-报告质量) | 10 | 忠实度均分 0.7045（8 条有效评分），回答相关性均分 0.8817（10 条有效评分） | 未记录 |
 | [RAG 检索与回答](#rag-检索与回答) | 10 | 忠实度 0.9587，回答相关性 0.9151 | 约 115 秒 |
 
 #### 路由
 
-以下为一次 27 道题的路由评测结果，路由生成与规则评分全流程耗时约 22 秒。通过 RAGAS 自定义规则指标，将路由输出与人工标注进行比对，本次用例的路由正确率为 1.0。分数与本地结果文件 `eval_agent/outputs/routing_eval/results.json` 一致。
+本次读取 104 条历史路由记录（保留重复记录），通过 RAGAS 自定义规则指标，将已保存的 `actual_output` 与独立标注的 `expected_output.route` 逐条比对，不重新调用路由模型。预期路由由 AI 标注助手依据路由规则逐条复核，并保存判断依据。
 
-| 指标 | 含义 | 分数 |
+其中 102 条与预期一致，2 条不一致，路由正确率为 98.08%。控制台耗时显示为 0 秒，采用整数秒显示，不代表实际耗时为零。结果与本地结果文件 `eval_agent/outputs/routing_eval/results.json` 一致，文档将原始比例转换为百分比展示。
+
+| 指标 | 含义 | 正确率 |
 | --- | --- | --- |
-| `route_correct` | 路由正确率 | 1.0 |
-
-![路由评测运行截图：27 道题的路由正确率与运行耗时](docs/images/routing-evaluation-results.png)
+| `route_correct` | 历史路由输出与预期标注的一致率 | 98.08% |
 
 #### 分析规划
 
-以下为一次 24 道题的分析规划评测结果，规划生成与规则评分全流程耗时约 28 秒。通过 RAGAS 自定义规则指标，将规划输出与人工标注进行比对，三项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/planning_eval/results.json` 一致。
+本次读取 114 条历史规划记录（保留重复记录），通过 RAGAS 自定义规则指标，将已保存的规划输出与预期标注逐项比对，不重新调用规划模型。预期值由 AI 标注助手依据规划规则和案例中的技能目录逐条标注，并保存判断依据。
 
-| 指标 | 含义 | 分数 |
+目标资产和刷新标志均有 114 条与预期一致；Skill 选择有 89 条与预期一致，25 条不一致。控制台耗时显示为 0 秒，采用整数秒显示。结果与本地结果文件 `eval_agent/outputs/planning_eval/results.json` 一致，文档将原始比例转换为百分比展示。
+
+| 指标 | 含义 | 正确率 |
 | --- | --- | --- |
-| `target_asset_correct` | 目标资产识别正确率 | 1.0 |
-| `skill_selection_correct` | Skill 选择正确率 | 1.0 |
-| `refresh_correct` | 刷新标志判断正确率 | 1.0 |
-
-![分析规划评测运行截图：24 道题的三项规则指标与运行耗时](docs/images/planning-evaluation-results.png)
+| `target_asset_correct` | 目标资产识别正确率 | 100% |
+| `skill_selection_correct` | Skill 选择正确率 | 78.07% |
+| `refresh_correct` | 刷新标志判断正确率 | 100% |
 
 #### 指标计算
 
-以下为一次 6 条指标节点用例的评测结果，节点执行与规则评分全流程耗时约 19 秒。通过 RAGAS 自定义规则指标，校验工具选择、调用参数、证据关联和指标结果契约，四项指标在本次用例中均为 1.0。分数与本地结果文件 `eval_agent/outputs/calculate_metrics_eval/results.json` 一致。
+本次读取 116 条历史指标节点记录（保留重复记录），通过 RAGAS 自定义规则指标，校验已保存输出中的工具选择、调用参数、证据关联和指标结果契约，不重新调用模型、执行工具或获取数据。预期契约由 AI 标注助手依据技能、工具及数据源定义独立标注，并保存判断依据。
+
+四项规则指标均有 116 条通过，比例均为 100%。控制台耗时显示为 0 秒，采用整数秒显示。结果与本地结果文件 `eval_agent/outputs/calculate_metrics_eval/results.json` 一致，文档将原始比例转换为百分比展示。
 
 其中 `indicator_results_valid` 检查结果字段、状态和元数据契约，不代表已经逐项验证所有指标公式与数值的正确性。
 
-| 指标 | 含义 | 分数 |
+| 指标 | 含义 | 比例 |
 | --- | --- | --- |
-| `tool_selection_correct` | 工具选择正确率 | 1.0 |
-| `tool_arguments_correct` | 工具调用参数正确率 | 1.0 |
-| `evidence_valid` | 证据与关联校验通过率 | 1.0 |
-| `indicator_results_valid` | 指标结果校验通过率 | 1.0 |
-
-![指标节点评测运行截图：6 条用例的四项规则指标与运行耗时](docs/images/calculate-metrics-evaluation-results.png)
+| `tool_selection_correct` | 工具选择正确率 | 100% |
+| `tool_arguments_correct` | 工具调用参数正确率 | 100% |
+| `evidence_valid` | 证据与关联校验通过率 | 100% |
+| `indicator_results_valid` | 指标结果校验通过率 | 100% |
 
 #### Writer 报告质量
 

@@ -1,23 +1,21 @@
-"""RAGAS 指标节点评测：真实节点输入 → 工具执行 → 四项规则评分。"""
+"""RAGAS 指标节点评测：历史工具输出 → 预期契约比对 → 四项规则评分。"""
 
 import asyncio
 import json
 import time
 from collections import Counter
-from copy import deepcopy
+from datetime import datetime
 from math import isclose
 from pathlib import Path
 from typing import Any, Literal
 
-from langchain_core.messages import messages_from_dict, messages_to_dict
+from langchain_core.messages import messages_from_dict
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ragas import Dataset, experiment
 from ragas.backends import InMemoryBackend
 from ragas.metrics import numeric_metric
 
 from app.core.config import PROJECT_ROOT
-from app.crypto_analysis.crypto_analysis_state import SkillWorkerGraphState
-from app.crypto_analysis.crypto_analysis_sub_agent import make_calculate_metrics
 from app.crypto_analysis.skill_loader import LoadedSkill
 
 METRICS = (
@@ -39,6 +37,84 @@ METRIC_DATA_KINDS = {
     "Fed_Balance": "walcl",
     "ETF_Flows": "etf",
 }
+
+
+class MetricSnapshot(BaseModel):
+    """保留历史消息、证据及指标结果，具体输出合法性由评分规则检查。"""
+
+    model_config = ConfigDict(extra="forbid")
+    messages: list[dict[str, Any]]
+    evidence: dict[str, dict[str, Any]]
+    indicator_results: dict[str, dict[str, Any]]
+
+
+class MetricInput(MetricSnapshot):
+    """节点输入使用采集时的技能定义和分析范围。"""
+
+    skill: LoadedSkill
+    scope: dict[str, str]
+
+
+class ExpectedToolCall(BaseModel):
+    """独立标注应调用的工具及显式参数，不包含运行时注入的上下文。"""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    args: dict[str, Any]
+
+
+class ExpectedEvidence(BaseModel):
+    """标注证据类型、来源动作及取数参数，不复制历史原始数据。"""
+
+    model_config = ConfigDict(extra="forbid")
+    data_kind: str = Field(min_length=1)
+    source_action: str = Field(min_length=1)
+    arguments: dict[str, Any]
+
+
+class ExpectedIndicator(BaseModel):
+    """标注成功结果的元数据契约，不将历史计算数值作为标准答案。"""
+
+    model_config = ConfigDict(extra="forbid")
+    unit: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+
+
+class ExpectedMetrics(BaseModel):
+    """四项规则评分所需的预期契约及标注依据。"""
+
+    model_config = ConfigDict(extra="forbid")
+    tool_calls: list[ExpectedToolCall]
+    evidence: dict[str, ExpectedEvidence]
+    indicator_results: dict[str, ExpectedIndicator]
+    label_reason: str = Field(min_length=1)
+
+
+class MetricCase(BaseModel):
+    """保存历史指标节点记录、独立标注和案例来源行号。"""
+
+    model_config = ConfigDict(extra="forbid")
+    node: Literal["calculate_metrics"]
+    ts: datetime
+    input: MetricInput
+    actual_output: MetricSnapshot
+    expected_output: ExpectedMetrics
+    source_line: int = Field(ge=1)
+
+
+def load_cases(path: Path) -> list[MetricCase]:
+    """读取已标注的历史案例，缺少预期或字段不合法时直接报错。"""
+    cases = [
+        MetricCase.model_validate({**json.loads(line), "source_line": number})
+        for number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        )
+        if line.strip()
+    ]
+    if not cases:
+        raise ValueError("没有指标节点评测案例")
+    return cases
 
 
 class IndicatorResult(BaseModel):
@@ -294,32 +370,43 @@ def indicator_results_valid(
         return 0
 
 
-async def build_samples(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """直接运行生产 calculate_metrics 节点，保留已有状态和节点内部重试。"""
+def build_samples(cases: list[MetricCase]) -> list[dict[str, Any]]:
+    """从历史输出构建样本，仅校验标注范围，不调用模型、工具或数据源。"""
     samples = []
-    node = make_calculate_metrics()
     for case in cases:
-        inputs = deepcopy(case["input"])
-        state: SkillWorkerGraphState = {
-            **inputs,
-            "skill_name": inputs["skill"]["name"],
-            "skill": LoadedSkill.model_validate(inputs["skill"]),
-            "messages": messages_from_dict(inputs["messages"]),
-        }
-        output = await asyncio.wait_for(node(state), timeout=600)
-        response = {
-            "messages": messages_to_dict(output["messages"]),
-            "evidence": output["evidence"],
-            "indicator_results": output["indicator_results"],
-        }
+        if any(
+            message["type"] == "system"
+            for snapshot in (case.input, case.actual_output)
+            for message in snapshot.messages
+        ):
+            raise ValueError(f"第 {case.source_line} 行应删除系统提示词消息")
+        inputs = case.input.model_dump(mode="json")
+        expected = case.expected_output
+        metric_ids = {metric.id for metric in case.input.skill.scoring.metrics}
+        pending = metric_ids - case.input.indicator_results.keys()
+        if set(expected.indicator_results) != metric_ids:
+            raise ValueError(f"第 {case.source_line} 行的预期指标与技能定义不一致")
+        if any(call.name not in case.input.skill.tools for call in expected.tool_calls):
+            raise ValueError(f"第 {case.source_line} 行的预期工具不属于当前技能")
+        kinds = [record.data_kind for record in expected.evidence.values()]
+        if len(kinds) != len(set(kinds)) or set(kinds) != {
+            METRIC_DATA_KINDS[metric_id] for metric_id in pending
+        }:
+            raise ValueError(f"第 {case.source_line} 行的预期证据与待计算指标不一致")
         samples.append(
             {
-                "input": case["input"],
-                "response": response,
-                "reference": case["expected_output"],
+                "input": inputs,
+                "response": case.actual_output.model_dump(mode="json"),
+                "reference": expected.model_dump(
+                    mode="json", exclude={"label_reason"}
+                ),
+                "metadata": {
+                    "source_line": case.source_line,
+                    "ts": case.ts.isoformat(),
+                    "label_reason": expected.label_reason,
+                },
             }
         )
-        print(f"已执行指标节点：{state['skill_name']}", flush=True)
     return samples
 
 
@@ -356,13 +443,14 @@ async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(result)
 
 
-def run_eval(cases: list[dict[str, Any]]) -> dict[str, Any]:
-    """执行节点并汇总四项规则指标，数值正确性需另用完整原始数据验证。"""
+def run_eval(cases: list[MetricCase]) -> dict[str, Any]:
+    """对历史输出执行四项规则评分，保留原有契约校验范围。"""
     if not cases:
         raise ValueError("没有指标节点评测案例")
     started = time.perf_counter()
-    print(f"开始 {len(cases)} 条指标节点评测...", flush=True)
-    samples = asyncio.run(build_samples(cases))
+    print(f"读取 {len(cases)} 条历史指标输出...", flush=True)
+    samples = build_samples(cases)
+    print("RAGAS 四项规则指标评测中...", flush=True)
     rows = asyncio.run(score_samples(samples))
     aggregate = {
         name: round(sum(row[name] for row in rows) / len(rows), 4) for name in METRICS
@@ -376,9 +464,7 @@ def main() -> None:
     output_path = (
         PROJECT_ROOT / "eval_agent/outputs/calculate_metrics_eval/results.json"
     )
-    cases = [
-        json.loads(line) for line in cases_path.read_text(encoding="utf-8").splitlines()
-    ]
+    cases = load_cases(cases_path)
     result = run_eval(cases)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
