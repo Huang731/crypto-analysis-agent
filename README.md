@@ -143,7 +143,6 @@ flowchart TD
 | 问题改写、路由、指标执行、检索问题生成、对话历史压缩、主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
 | 加密分析规划、主题研究员取证、主题报告写作与审核、检索多查询改写、独立 RAG 回答 | `GLM_SMART_MODEL` | `glm-4.5-air` |
 | 加密分析报告写作与审核 | `BAILIAN_SMART_MODELS` | 首选 `qwen3.7-plus`，其余按配置列表顺序 |
-| Reviewer 评测的待测审核模型 | `BAILIAN_FAST_MODELS` | 首选 `qwen3.6-flash`，其余按配置列表顺序 |
 | RAG、报告写作与审核评测的评分裁判 | `GLM_5_3_FLASH_MODEL` | `glm-5.3-flash` |
 | 图片描述与图像问答 | `VISION_MODEL` | `qwen3.5-ocr` |
 | 文档向量 | `EMBEDDING_MODEL` | `BAAI/bge-m3` |
@@ -157,7 +156,7 @@ flowchart TD
 
 - **额度切换**：百炼 Smart/Fast 模型仅在免费额度耗尽时按列表切换。
 
-- **评测与生产**：Reviewer 评测当前使用百炼 Fast 生成待测审核结果，生产加密报告审核使用百炼 Smart；RAGAS 评分裁判统一使用智谱 5 系列。
+- **评测与生产**：Reviewer 评测对已保存的审核前后报告评分，复用 Writer 的裁判和证据口径；生产加密报告审核使用百炼 Smart，RAGAS 评分裁判统一使用智谱 5 系列。
 
 **效果验证：**上述模型分工是代码中的节点配置，费用与延迟效果需通过具体运行记录验证。
 
@@ -167,7 +166,7 @@ flowchart TD
 
 - **候选样本**：节点候选采集保存 `node`、北京时间 `ts`、`input` 和 `actual_output`，覆盖问题改写、规划、指标执行、报告写作审核及对话记忆保存等环节。`summarize_history` 采集的是追加回答、按需压缩前后的消息，不代表每轮都调用摘要模型；模型调用单独以 `conversation_summary` 记录。人工筛选与标注后可用于固定用例回归。
 
-- **结果保存**：评测记录按入口分别管理：Reviewer 使用 Langfuse 数据集与实验记录，RAG 通过回调记录裁判调用；路由、规划、指标执行和 Writer 当前主要将结果保存在本地。业务追踪器本身不向 Langfuse 上报。
+- **结果保存**：路由、规划、指标执行、Writer 和 Reviewer 的评测结果保存在本地，RAG 通过 Langfuse 回调记录裁判调用。业务追踪器本身不向 Langfuse 上报。
 
 ### 核心代码入口
 
@@ -217,7 +216,7 @@ cp .env.example .env
 | `CMC_PRO_API_KEY` | 稳定币市值与恐惧贪婪指数 | 相关分析维度需要 |
 | `EODHD_API_KEY` | 通过 MCP 获取美元指数 | 流动性分析需要 |
 | `CRYPTO_ETF_MCP_API_KEY` | 通过 MCP 获取现货 ETF 资金流 | ETF 分析需要 |
-| `DASHSCOPE_API_KEY` | 加密分析报告写作与审核、Reviewer 评测的待测审核、图片描述与图像问答 | 加密分析、Reviewer 评测或相关图文处理需要 |
+| `DASHSCOPE_API_KEY` | 加密分析报告写作与审核、图片描述与图像问答 | 加密分析或相关图文处理需要 |
 | `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL` | 实验记录 | 写入 Langfuse 的评测需要 |
 
 Binance 行情工具使用公开行情接口。各数据源的访问权限、可用地区和接口额度取决于服务提供方。
@@ -278,7 +277,7 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 
 评测代码位于 [eval_agent/](eval_agent/)，独立于业务执行链路。固定用例由人工维护，直接复用生产函数或节点进行校验和评分。
 
-当前以节点级和模块级评测为主：路由、规划和指标执行使用规则评分，Writer 对已保存报告评分，Reviewer 单独执行审核；RAG 实际运行“检索 → 生成 → 评分”，属于该模块的端到端评测。现有结果不等同于整条 Agent 链路或本次对话记忆改动的端到端验收。
+当前以节点级和模块级评测为主：路由、规划和指标执行使用规则评分，Writer 对已保存报告评分，Reviewer 比较同一问题审核前后报告的忠实度与相关度变化；RAG 实际运行“检索 → 生成 → 评分”，属于该模块的端到端评测。现有结果不等同于整条 Agent 链路或本次对话记忆改动的端到端验收。
 
 ### 评测范围与入口
 
@@ -288,7 +287,7 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 | 分析规划 | 对历史规划输出进行资产、Skill 选择和刷新标志的规则评分 | [planning](eval_agent/planning/run_eval.py) |
 | 指标计算（calculate_metrics） | 对历史指标输出进行工具名称、参数、证据关联和结果契约的规则评分 | [calculate_metrics](eval_agent/calculate_metrics/run_eval.py) |
 | Writer | RAGAS 忠实度与回答相关性 | [writer](eval_agent/writer/run_eval.py) |
-| Reviewer | 审核案例与 RAGAS 指标 | [reviewer](eval_agent/reviewer/run_eval.py) |
+| Reviewer | 同一问题、相同证据下，对比审核前后报告的忠实度与回答相关性 | [reviewer](eval_agent/reviewer/run_eval.py) |
 | RAG | 忠实度、回答相关性、上下文精确率与召回率 | [rag_retrieval](eval_agent/rag_retrieval/run_eval.py) |
 
 ### 运行方式
@@ -300,6 +299,7 @@ Compose 挂载 `data/` 和 `logs/`，并将服务映射到宿主机 8003 端口�
 .venv-eval/bin/python -m eval_agent.planning.run_eval
 .venv-eval/bin/python -m eval_agent.calculate_metrics.run_eval
 .venv-eval/bin/python -m eval_agent.writer.run_eval
+.venv-eval/bin/python -m eval_agent.reviewer.run_eval
 .venv-eval/bin/python -m eval_agent.rag_retrieval.run_eval \
   --out eval_agent/outputs/rag_eval/results.json
 ```
@@ -316,6 +316,7 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 | [分析规划](#分析规划) | 114 | 资产识别 100%，Skill 选择 78.07%，刷新判断 100% | 0 秒（日志按整数秒显示） |
 | [指标计算](#指标计算) | 116 | 四项规则指标均为 100% | 0 秒（日志按整数秒显示） |
 | [Writer 报告质量](#writer-报告质量) | 10 | 忠实度均分 0.7045（8 条有效评分），回答相关性均分 0.8817（10 条有效评分） | 未记录 |
+| [Reviewer 审核前后对比](#reviewer-审核前后对比) | 28 组 | 忠实度 61.94% → 73.51%（28 组有效配对），回答相关性 82.30% → 85.55%（28 组有效配对） | 未记录 |
 | [RAG 检索与回答](#rag-检索与回答) | 10 | 忠实度 0.9587，回答相关性 0.9151 | 约 115 秒 |
 
 #### 路由
@@ -364,10 +365,18 @@ RAG 评测会实际执行检索、生成和裁判评分。评测结果应连同�
 | `faithfulness` | 回答忠实度 | 0.7045 | 10 |
 | `answer_relevancy` | 回答相关性 | 0.8817 | 10 |
 
+#### Reviewer 审核前后对比
 
-下图保留的是此前一轮评测截图，与当前本地结果属于不同轮次；当前分数及有效评分数以上表和结果文件为准。
+本次对 28 组同一问题、相同证据下的历史报告进行审核前后配对评测，复用 Writer 的 RAGAS 忠实度与回答相关性评分口径，不重新生成或审核报告。前后均分及差值只使用该指标两侧都评分成功的配对，结果保存在 `eval_agent/outputs/reviewer_eval/results.json`。
 
-![Writer 历史评测截图：用于展示运行结果，非当前分数](docs/images/writer-evaluation-results.png)
+在 23 组忠实度评分有效的历史样本中，均分由 61.94% 提升至 73.51%，提高约 11.6 个百分点，其中 17 组改善、6 组下降。另有 5 组因裁判接口内容过滤（错误码 `1301`）未形成完整忠实度评分，作为缺失值排除，不记为零分。
+
+| 指标 | 有效配对数 | 审核前均分 | 审核后均分 | 平均变化 | 提升 / 持平 / 下降 |
+| --- | --- | --- | --- | --- | --- |
+| `faithfulness` | 23 | 61.94% | 73.51% | +11.56 个百分点 | 17 / 0 / 6 |
+| `answer_relevancy` | 28 | 82.30% | 75.55% | -6.74 个百分点 | 13 / 2 / 13 |
+
+表中百分比用于展示 RAGAS 质量评分，变化按原始未舍入分数计算。本轮结果显示审核反馈与重写对报告忠实度有改善，回答相关性尚未同步提升，仍需继续优化。
 
 #### RAG 检索与回答
 

@@ -193,7 +193,7 @@ def load_cases(path: Path) -> list[WriterCase]:
     return cases
 
 
-def create_metrics(
+def  create_metrics(
     judge_model: str,
     *,
     http: httpx.AsyncClient,

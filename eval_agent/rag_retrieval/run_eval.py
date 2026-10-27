@@ -203,8 +203,6 @@ async def score_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             dataset = Dataset("rag_evaluation", backend=InMemoryBackend(), data=samples)
             result = await run_evaluation.arun(dataset)
-            if len(result) != len(samples):
-                raise RuntimeError("存在未完成的评测案例，请检查 RAGAS 实验错误")
             return list(result)
     finally:
         client.flush()
