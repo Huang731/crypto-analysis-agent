@@ -34,7 +34,7 @@
 
 ### Web 工作台
 
-工作台支持输入研究问题、查看执行进度、接收流式报告和查看数据来源。前端保留会话标识；后端保存对话消息，并压缩较早的问答，供连续追问使用。
+工作台支持输入研究问题、查看执行进度、接收流式报告和查看数据来源。前端保留会话标识；后端保存对话消息，并压缩较早的问答，供连续追问使用。任务中断后，可点击“继续上次任务”，从当前会话已保存的检查点继续执行。
 
 #### 加密资产分析示例
 
@@ -105,7 +105,7 @@ flowchart TD
 
 ### RAG 与增量入库
 
-- **文档处理与增量同步**：Markdown 文档按标题结构与长度分块，保留文件名、章节路径、内容哈希和切片序号。入库时按文件哈希识别新增与修改，默认同步清理已删除文档对应的切片。
+- **文档处理与增量同步**：Markdown/TXT 在分块前统一清洗正文，PDF 在解析后按元素清洗再入库。Markdown 文档按标题结构与长度分块，保留文件名、章节路径、内容哈希和切片序号。入库时按文件哈希识别新增与修改，默认同步清理已删除文档对应的切片。
 
 - **混合检索与材料使用**：检索使用中文分词 BM25 和 FAISS 向量召回，通过加权融合及重排选择材料。加密分析中的知识材料用于支持指标解读；实时行情由数据源工具获取。
 
@@ -134,7 +134,7 @@ flowchart TD
 | 问题改写、路由、指标执行、检索问题生成、对话历史压缩、主题拆题与研究汇总 | `GLM_4_FLASH_MODEL` | `glm-4-flash` |
 | 加密分析规划、主题研究员取证、主题报告写作与审核、检索多查询改写、独立 RAG 回答 | `GLM_SMART_MODEL` | `glm-4.5-air` |
 | 加密分析报告写作与审核 | `BAILIAN_SMART_MODELS` | 首选 `qwen3.7-plus`，其余按配置列表顺序 |
-| RAG、报告写作与审核评测的评分裁判 | `GLM_5_3_FLASH_MODEL` | `glm-5.3-flash` |
+| RAG、报告写作与审核评测的评分裁判 | `QWEN3_MAX_MODEL` | 首选 `qwen3-max`，其余按配置列表顺序 |
 | 图片描述与图像问答 | `VISION_MODEL` | `qwen3.5-ocr` |
 | 文档向量 | `EMBEDDING_MODEL` | `BAAI/bge-m3` |
 | 检索重排 | `RERANK_MODEL` | `BAAI/bge-reranker-v2-m3` |
@@ -143,11 +143,11 @@ flowchart TD
 
 - **实例复用**：业务图中的模型由各节点工厂在构图时创建，通过闭包在后续请求中复用。API 层负责注入共享检索器和 Checkpointer，不再逐层传递模型实例。
 
-- **思考配置**：加密分析规划、主题研究员取证和检索多查询改写显式关闭 Air 的深度思考；报告写作与审核保留模型默认思考配置。GLM 5.3 Flash 评分裁判使用 `reasoning_effort="low"`。
+- **思考配置**：加密分析规划、主题研究员取证和检索多查询改写显式关闭 Air 的深度思考；报告写作与审核保留模型默认思考配置。Qwen3 Max 评分裁判使用 `enable_thinking=False`。
 
-- **额度切换**：百炼 Smart/Fast 模型仅在免费额度耗尽时按列表切换。
+- **额度切换**：百炼 Smart/Fast 模型和 Qwen3 Max 评分裁判仅在免费额度耗尽时按各自配置列表切换。
 
-- **评测与生产**：Reviewer 评测对已保存的审核前后报告评分，复用 Writer 的裁判和证据口径；生产加密报告审核使用百炼 Smart，RAGAS 评分裁判统一使用智谱 5 系列。
+- **评测与生产**：Reviewer 评测对已保存的审核前后报告评分，复用 Writer 的裁判和证据口径；生产加密报告审核使用百炼 Smart，Writer、Reviewer 和 RAG 的 RAGAS 评分裁判统一使用百炼 Qwen3 Max。
 
 **效果验证：**上述模型分工是代码中的节点配置，费用与延迟效果需通过具体运行记录验证。
 
@@ -199,13 +199,13 @@ cp .env.example .env
 | --- | --- | --- |
 | `SILICONFLOW_API_KEY` | 文档向量、检索重排 | 当前服务与知识入库需要 |
 | `ZHIPUAI_4_API_KEY` | GLM 4 系列：问题改写、路由、加密分析规划与指标执行、主题研究、独立 RAG 回答 | 当前服务需要 |
-| `ZHIPUAI_5_API_KEY` | GLM 5 系列评测裁判 | 执行裁判评分时需要 |
 | `BOCHA_API_KEY` | 网页搜索 | 通用主题研究需要 |
 | `FRED_API_KEY` | 美联储政策及宏观序列 | 相关分析维度需要 |
 | `CMC_PRO_API_KEY` | 稳定币市值与恐惧贪婪指数 | 相关分析维度需要 |
 | `EODHD_API_KEY` | 通过 MCP 获取美元指数 | 流动性分析需要 |
 | `CRYPTO_ETF_MCP_API_KEY` | 通过 MCP 获取现货 ETF 资金流 | ETF 分析需要 |
-| `DASHSCOPE_API_KEY` | 加密分析报告写作与审核、图片描述与图像问答 | 加密分析或相关图文处理需要 |
+| `DASHSCOPE_API_KEY` | 加密分析报告写作与审核、图片描述与图像问答、Qwen3 Max 评测裁判 | 加密分析、相关图文处理或模型裁判评分需要 |
+| `QWEN3_MAX_MODEL` | 评测裁判模型列表，默认 `["qwen3-max"]` | 按需覆盖默认模型列表 |
 | `LANGFUSE_PUBLIC_KEY`、`LANGFUSE_SECRET_KEY`、`LANGFUSE_BASE_URL` | 实验记录 | 写入 Langfuse 的评测需要 |
 
 Binance 行情工具使用公开行情接口。各数据源的访问权限、可用地区和接口额度取决于服务提供方。
@@ -248,7 +248,16 @@ curl -N http://127.0.0.1:8003/api/ask \
   -d '{"question":"分析 BTC 的趋势和衍生品指标，并说明信号分歧。"}'
 ```
 
-响应包含 `progress`、`route`、`token`、`done` 或 `error` 等 SSE 事件。连续追问时复用 `X-Thread-Id`。
+响应包含 `progress`、`route`、`report_start`、`token`、`done` 或 `error` 等 SSE 事件。`report_start` 表示一次报告生成开始，客户端应清空旧稿，再接收后续 `token`；模型重试或审核重写时会重新发送该事件。连续追问时复用 `X-Thread-Id`。
+
+任务中断后，使用原任务的 `X-Thread-Id` 调用续跑接口，无需重新提交问题：
+
+```bash
+curl -N -X POST http://127.0.0.1:8003/api/resume \
+  -H 'X-Thread-Id: readme-demo'
+```
+
+续跑沿用同一会话的检查点与问答接口的 SSE 事件格式；该会话需要已有保存的任务状态。
 
 ### 5. Docker Compose
 
