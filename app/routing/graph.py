@@ -62,7 +62,7 @@ async def _invoke_route_decision(
     return route
 
 
-class RoutingState(TypedDict, total=False):
+class RoutingState(TypedDict):
     """外层保存会话消息、路由和报告，研究明细由专家子图持有。"""
 
     # 节点返回完整消息列表，超过阈值后由摘要和近期原话覆盖旧历史。

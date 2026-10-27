@@ -12,12 +12,17 @@ from app.crypto_analysis.skill_loader import LoadedSkill
 from app.crypto_analysis.skill_memory import merge_skill_memory
 
 
+def add_int(left: int, right: int) -> int:
+    """累加节点返回的整数增量。"""
+    return (left or 0) + (right or 0)
+
+
 def _merge_records(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
     """合并并行工具记录，同一指标以后续真实计算结果为准。"""
     return {**left, **right}
 
 
-class DynamicAnalysisState(TypedDict, total=False):
+class CryptoAnalysisParentGraphState(TypedDict):
     scope: dict[str, str]
     plan: dict[str, Any]
     skill_results: Annotated[list[dict[str, Any]], operator.add]
@@ -42,7 +47,7 @@ class MetricAgentContext(TypedDict):
     scope: dict[str, str]
 
 
-class SkillWorkerGraphState(TypedDict, total=False):
+class CryptoAnalysisSubGraphState(TypedDict):
     """技能子图的输入及内部状态，工具消息和原始证据不进入父图。"""
 
     messages: Annotated[list[AnyMessage], add_messages]

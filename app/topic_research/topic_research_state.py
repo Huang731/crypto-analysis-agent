@@ -9,7 +9,7 @@ from typing_extensions import TypedDict
 RESEARCH_EVIDENCE_TARGET = 1  # 每个子问题至少取得一条网页原文证据。
 
 
-class SystemState(TypedDict, total=False):
+class SystemState(TypedDict):
     scope: dict[str, str]
     # 外层由 research_team 每轮整体替换，并行结果仍在 AnalysisState 中合并。
     findings: list[dict[str, Any]]
@@ -20,7 +20,7 @@ class SystemState(TypedDict, total=False):
     feedback: str
 
 
-class AnalysisState(TypedDict, total=False):
+class AnalysisState(TypedDict):
     question: str
     subquestions: list[str]
     findings: Annotated[list[dict[str, Any]], operator.add]

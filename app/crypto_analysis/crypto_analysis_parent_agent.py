@@ -7,7 +7,7 @@ from typing import Any
 from langchain_core.messages import BaseMessage, messages_to_dict
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-from langgraph.types import Overwrite, Send
+from langgraph.types import Overwrite, RetryPolicy, Send
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
 from app.core.candidate_capture import append_node_candidate
@@ -15,12 +15,11 @@ from app.core.config import settings
 from app.core.observability import timed_node
 from app.core.tracing import trace_generation_call
 from app.crypto_analysis.crypto_analysis_state import (
-    DynamicAnalysisState,
-    SkillWorkerGraphState,
+    CryptoAnalysisParentGraphState,
+    CryptoAnalysisSubGraphState,
 )
 from app.crypto_analysis.crypto_analysis_sub_agent import (
     build_crypto_analysis_sub_agent,
-    skill_worker_step_limit,
 )
 from app.crypto_analysis.skill_loader import get_skill_loader
 from app.crypto_analysis.skill_memory import (
@@ -156,17 +155,8 @@ def make_skill_worker(
 ) -> Callable[..., Awaitable[dict[str, Any]]]:
     """沿用父图调用边界，转交技能子图执行。"""
 
-    async def skill_worker(state: SkillWorkerGraphState) -> dict[str, Any]:
-        name = state["skill_name"]
-        skill_loader = get_skill_loader()
-        skill = skill_loader.load_definition(name)
-        # 按指标数量限制子图步数，避免缺失结果时无限循环。
-        result = await sub_graph.ainvoke(
-            state,
-            config={
-                "recursion_limit": skill_worker_step_limit(len(skill.scoring.metrics)),
-            },
-        )
+    async def skill_worker(state: CryptoAnalysisSubGraphState) -> dict[str, Any]:
+        result = await sub_graph.ainvoke(state)
         update = {"skill_results": [result["skill_result"]]}
         if "skill_memory" in result:
             update["skill_memory"] = result["skill_memory"]
@@ -178,12 +168,14 @@ def make_skill_worker(
 # 分析父图：规划、并行技能、报告
 
 
-def make_plan() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_plan() -> Callable[
+    [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
+]:
     """创建本轮技能规划节点。"""
     glm_4_5_air_llm = make_glm_4_5_air_llm()
 
     @timed_node(label=lambda state: state["scope"]["resolved_question"])
-    async def plan(state: DynamicAnalysisState) -> dict[str, Any]:
+    async def plan(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
         skill_loader = get_skill_loader()
         question = state["scope"].get("resolved_question")
         if not isinstance(question, str) or not question.strip():
@@ -217,7 +209,7 @@ def make_plan() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
 
 
 @timed_node(label=lambda state: state["scope"]["target_asset"])
-def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
+def send_skills(state: CryptoAnalysisParentGraphState) -> list[Send] | str:
     names = state["plan"]["skill_names"]
     if not names:
         return "writer"
@@ -241,12 +233,14 @@ def send_skills(state: DynamicAnalysisState) -> list[Send] | str:
     ]
 
 
-def make_writer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_writer() -> Callable[
+    [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
+]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
     bailian_smart_llm = make_bailian_smart_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
-    async def writer(state: DynamicAnalysisState) -> dict[str, Any]:
+    async def writer(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
         """依据本轮技能证据撰写结论，报告只包含结论正文。"""
         ordered = sorted(state["skill_results"], key=lambda item: item["skill_name"])
         # 只传入本轮技能证据和审稿反馈。
@@ -286,13 +280,15 @@ def make_writer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]
     return writer
 
 
-def make_reviewer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]]]:
+def make_reviewer() -> Callable[
+    [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
+]:
     """创建报告审核节点，保留原有审核规则。"""
     bailian_smart_llm = make_bailian_smart_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
     @trace_generation_call(name="crypto.reviewer", kind="span")
-    async def reviewer(state: DynamicAnalysisState) -> dict[str, Any]:
+    async def reviewer(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
         """审核本轮报告，沿用两轮审核上限和不通过时的修改意见。"""
         review_count = state["review_count"] + 1
         messages = analysis_review_messages(
@@ -330,7 +326,7 @@ def make_reviewer() -> Callable[[DynamicAnalysisState], Awaitable[dict[str, Any]
     return reviewer
 
 
-def route_after_review(state: DynamicAnalysisState) -> str:
+def route_after_review(state: CryptoAnalysisParentGraphState) -> str:
     """审核通过后结束，失败时保留证据并重写。"""
     if state["review_decision"] == "pass":
         return END
@@ -342,9 +338,18 @@ def build_crypto_analysis_parent_agent(
 ) -> CompiledStateGraph:
     """以节点工厂组装规划、技能子图和报告父图。"""
     sub_graph = build_crypto_analysis_sub_agent(retriever)
-    builder = StateGraph(DynamicAnalysisState)
+    builder = StateGraph(CryptoAnalysisParentGraphState)
     builder.add_node("plan", make_plan())
-    builder.add_node("skill_worker", make_skill_worker(sub_graph))
+    builder.add_node(
+        "skill_worker",
+        make_skill_worker(sub_graph),
+        retry_policy=RetryPolicy(
+            max_attempts=2,  # 包含首次执行，失败后最多重试一次。
+            initial_interval=0.5,  # 首次重试的基础等待时间，单位为秒。
+            backoff_factor=2.0,  # 多次重试时，基础等待时间逐次翻倍。
+            jitter=True,  # 在基础等待时间上加入随机抖动。
+        ),
+    )
     builder.add_node("writer", make_writer())
     builder.add_node("reviewer", make_reviewer())
     builder.add_edge(START, "plan")

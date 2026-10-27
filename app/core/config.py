@@ -121,6 +121,9 @@ class Settings(BaseSettings):
     skills_dir: str = str(PROJECT_ROOT / "skills")
     checkpoint_db_path: str = str(PROJECT_ROOT / "data" / "checkpoints.sqlite")
 
+    # 每个 Skill 单次执行允许的工具调用总次数上限。
+    max_tool_calls_per_skill: int = Field(default=4, ge=1)
+
     # LLM 候选采集：保存节点名称及模型输入输出，按配置路径写入。
     routing_capture_enabled: bool = True
     routing_capture_path: str = str(
