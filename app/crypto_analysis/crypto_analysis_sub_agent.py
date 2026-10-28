@@ -228,11 +228,7 @@ async def _invoke_metric_agent(
         for metric in pending["scoring"]["metrics"]
         if metric["id"] not in state["indicator_results"]
     ]
-    system_message, task_message = calculate_metrics_messages(pending)
-    messages = list(state["messages"])
-    if not messages:
-        messages.append(system_message)
-    messages.append(task_message)
+    messages = calculate_metrics_messages(pending, history=state["messages"])
     return await agent.ainvoke(
         {
             "messages": messages,

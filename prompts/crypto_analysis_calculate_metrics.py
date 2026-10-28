@@ -3,7 +3,7 @@
 from typing import Any
 
 from langchain_core.messages import BaseMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from prompts.common import build_system_prompt
 
@@ -40,15 +40,24 @@ class CalculateMetricsPrompt:
     system_prompt = build_system_prompt(instruction, example)
     prompt = ChatPromptTemplate.from_messages(
         [
-            SystemMessage(content=system_prompt),
+            MessagesPlaceholder("history"),
             ("human", user_prompt),
         ]
     )
 
 
-def calculate_metrics_messages(skill_config: dict[str, Any]) -> list[BaseMessage]:
-    """组装工具执行规则和本轮指标清单。"""
+def calculate_metrics_messages(
+    skill_config: dict[str, Any],
+    *,
+    history: list[BaseMessage] | None = None,
+) -> list[BaseMessage]:
+    """保留历史消息并追加本轮指标清单，仅在历史为空时加入系统规则。"""
     indicator_list = "\n".join(
         f"- {metric['id']}" for metric in skill_config["scoring"]["metrics"]
     )
-    return CalculateMetricsPrompt.prompt.format_messages(indicator_list=indicator_list)
+    if not history:
+        history = [SystemMessage(content=CalculateMetricsPrompt.system_prompt)]
+    return CalculateMetricsPrompt.prompt.format_messages(
+        history=history,
+        indicator_list=indicator_list,
+    )
