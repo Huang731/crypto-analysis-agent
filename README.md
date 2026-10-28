@@ -6,7 +6,7 @@
 
 **技术栈：** Python · FastAPI · LangChain · LangGraph · Pydantic · MCP · FAISS · SQLite · SSE
 
-[工程亮点](#工程亮点) · [功能演示](#功能演示) · [系统架构](#系统架构) · [评测结果](#评测结果) · [项目目录](#项目目录)
+[工程亮点](#工程亮点) · [功能演示](#功能演示) · [系统架构](#系统架构) · [模型配置](#模型配置) · [评测结果](#评测结果) · [项目目录](#项目目录)
 
 ## 工程亮点
 
@@ -68,7 +68,23 @@ flowchart TD
 
 主图流程为 `rewrite → router → 一个专家 → summarize_history → END`。两个专家使用独立的业务 State，完成后统一在主图追加回答、管理对话历史，并通过 SQLite Checkpointer 保存会话状态。
 
+## 模型配置
+
+业务节点与评测裁判通过百炼调用千问系列，按职责配置模型列表：
+
+| 分类 | 模型系列 | 使用场景 | 环境变量 |
+| --- | --- | --- | --- |
+| `quick_think_llm` | Flash | 路由、问题改写、历史摘要、分析规划、主题拆解与汇总、指标工具执行、技能检索问题生成 | `QUICK_THINK_MODELS` |
+| `deep_think_llm` | Plus | 主题研究、报告写作与审核、RAG 回答与多查询改写 | `DEEP_THINK_MODELS` |
+| 独立评测模型 | Max | Writer / Reviewer 报告评分、RAG 质量评分 | `QWEN3_MAX_MODEL` |
+
+三类入口分别为 `make_quick_think_llm()`、`make_deep_think_llm()` 和 `make_qwen3_max_llm()`，实现见 [模型工厂](app/llm/model.py)。快思考模型默认关闭思考；深思考模型保留模型默认配置，研究工具调用和多查询改写节点显式关闭思考。
+
+复制 [.env.example](.env.example) 为 `.env` 后填写密钥：`DASHSCOPE_API_KEY` 用于百炼聊天、评测与视觉模型，`SILICONFLOW_API_KEY` 用于向量和重排服务。模型列表使用 JSON 数组，按顺序调用，仅在免费额度耗尽时切换下一项；默认列表及其他运行参数见 [配置文件](app/core/config.py)。
+
 ## 评测结果
+
+以下为历史运行结果；业务模型统一为千问后尚未重新评测。
 
 ### 节点与模块评测
 
@@ -170,7 +186,7 @@ crypto-analysis-agent/
 │   ├── writer/                  报告质量评分
 │   ├── reviewer/                审核前后配对评分
 │   ├── rag_retrieval/           检索与回答评测
-│   ├── end_to_end/              三轮 10 题浏览器端到端评测报告
+│   ├── end_to_end/              四轮 10 题浏览器端到端评测报告
 │   ├── candidates/              运行时采集的候选样本
 │   ├── outputs/                 评测输出与结果
 │   └── requirements.txt         独立评测环境依赖

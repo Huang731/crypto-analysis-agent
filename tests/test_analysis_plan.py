@@ -1,4 +1,4 @@
-"""使用固定采集案例测试真实 Plan，需要配置 ZHIPUAI_4_API_KEY。
+"""使用固定采集案例测试真实 Plan，需要配置 DASHSCOPE_API_KEY。
 
 运行：python -m pytest tests/test_analysis_plan.py -v -s
 问题和技能目录固定自采集记录，测试运行时不读取采集文件。
@@ -7,7 +7,7 @@
 import pytest
 
 from app.crypto_analysis.crypto_analysis_parent_agent import create_analysis_plan
-from app.llm.model import make_glm_4_5_air_llm
+from app.llm.model import make_quick_think_llm
 from prompts.crypto_analysis_plan import AnalysisPlan
 
 
@@ -62,7 +62,7 @@ class TestAnalysisPlan:
             ["【可用技能 Skills】"]
             + [f"  - {name}: {description}" for name, description in skills.items()]
         )
-        llm = make_glm_4_5_air_llm()
+        llm = make_quick_think_llm()
         result = await create_analysis_plan(llm, question, skill_descriptions)
         plan = AnalysisPlan.model_validate(result)
 

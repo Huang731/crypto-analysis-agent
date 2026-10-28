@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     qwen3_max_model: list[str] = Field(
         default_factory=lambda: ["qwen3-max"], min_length=1
     )
-    bailian_fast_models: list[str] = Field(
+    # 快思考模型使用 Flash 系列。
+    quick_think_models: list[str] = Field(
         default_factory=lambda: [
             "qwen3.6-flash",
             "qwen3.7-flash-2026-07-15",
@@ -50,7 +51,8 @@ class Settings(BaseSettings):
         ],
         min_length=1,
     )
-    bailian_smart_models: list[str] = Field(
+    # 深思考模型使用 Plus 系列，Max 单独用于评测。
+    deep_think_models: list[str] = Field(
         default_factory=lambda: [
             "qwen3.7-plus-2026-05-26",
             "qwen3.6-plus",
@@ -62,30 +64,18 @@ class Settings(BaseSettings):
         min_length=1,
     )
 
-    # 向量、重排与 Qwen 聊天模型共用硅基流动密钥。
+    # 向量与重排模型共用硅基流动密钥。
     siliconflow_api_key: str = Field(default="", description="硅基流动 API Key")
-    qwen3_8b_model: str = "Qwen/Qwen3-8B"
 
-    # GLM 模型使用智谱兼容接口，与百炼模型独立配置。
-    zhipuai_4_api_key: str = Field(default="", description="智谱 4 系列 API Key")
-    zhipuai_5_api_key: str = Field(default="", description="智谱 5 系列 API Key")
-    glm_smart_model: str = "glm-4.5-air"
-    glm_4_flash_model: str = "glm-4-flash"
-    glm_5_3_flash_model: str = "glm-5.3-flash"
-
-    # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
-    # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
+    # 仅保留当前追踪使用的模型，input/output 单位为元/百万 Token。
+    # 快慢模型标签按默认首选模型的北京区输入不超过 256K 的原价估算：
+    # quick-model 对应 qwen3.6-flash，deep-model 对应 qwen3.7-plus-2026-05-26。
+    # 未计入缓存、Batch、免费额度和模型切换带来的价格差异。
     model_price_table: dict[str, dict[str, float]] = {
-        "qwen3.7-plus-2026-05-26": {"input": 50.0, "output": 50.0},
-        "qwen3.6-flash": {"input": 0.5, "output": 0.5},
+        "quick-model": {"input": 1.2, "output": 7.2},
+        "deep-model": {"input": 2.0, "output": 8.0},
         "BAAI/bge-m3": {"input": 0.0, "output": 0.0},
         "BAAI/bge-reranker-v2-m3": {"input": 0.0, "output": 0.0},
-        "Qwen/Qwen3.5-4B": {"input": 0.0, "output": 0.0},
-        "gte-rerank-v2": {"input": 0.5, "output": 0.0},
-        "glm-4.5-air": {"input": 50.0, "output": 50.0},
-        "glm-4.7-flash": {"input": 0.0, "output": 0.0},
-        "glm-5.3-Flash": {"input": 0.8, "output": 2.8},
-        "glm-4-flash": {"input": 0.0, "output": 0.0},
     }
 
     # 文档入库：源文档目录、切片长度与重叠字符数。

@@ -11,7 +11,7 @@ from langchain_core.tools import BaseTool
 
 from app.core.config import settings
 from app.crypto_analysis.skill_loader import get_skill_loader
-from app.llm.model import make_glm_4_5_air_llm
+from app.llm.model import make_deep_think_llm
 
 
 class SkillAnalyst:
@@ -27,7 +27,7 @@ class SkillAnalyst:
         system_prompt = get_skill_loader().load_skill(skill_name)
         # 模型工厂已设置单次请求超时为 120 秒，重试仅作用于模型请求。
         self.agent = create_agent(
-            model=make_glm_4_5_air_llm(),
+            model=make_deep_think_llm(),
             system_prompt=system_prompt,
             tools=list(tools),
             state_schema=AgentState,

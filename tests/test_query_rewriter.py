@@ -1,4 +1,4 @@
-"""使用固定上下文测试真实改写节点，需要配置 ZHIPUAI_4_API_KEY。
+"""使用固定上下文测试真实改写节点，需要配置 DASHSCOPE_API_KEY。
 
 运行：python -m pytest tests/test_query_rewriter.py -v -s
 使用当前改写提示词，验证切换到工资话题后不再继承历史币种。

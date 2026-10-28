@@ -269,13 +269,9 @@ def create_metrics(
 
 def error_message(exc: Exception) -> str:
     message = str(exc)
-    for key in (
-        settings.dashscope_api_key,
-        settings.zhipuai_4_api_key,
-        settings.zhipuai_5_api_key,
-    ):
-        if key:
-            message = message.replace(key, "[已隐藏]")
+    key = settings.dashscope_api_key
+    if key:
+        message = message.replace(key, "[已隐藏]")
     return f"{type(exc).__name__}: {message[:600]}"
 
 

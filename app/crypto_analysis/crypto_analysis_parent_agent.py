@@ -29,8 +29,8 @@ from app.crypto_analysis.skill_memory import (
 from app.llm.model import (
     ainvoke_model,
     ainvoke_structured,
-    make_bailian_smart_llm,
-    make_glm_4_5_air_llm,
+    make_deep_think_llm,
+    make_quick_think_llm,
 )
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_plan import AnalysisPlan, analysis_plan_messages
@@ -38,7 +38,7 @@ from prompts.crypto_analysis_reviewer import ReportReview, analysis_review_messa
 from prompts.crypto_analysis_writer import analysis_report_messages
 
 
-@trace_model_call(name="crypto_analysis_writer", model=settings.bailian_smart_models[0])
+@trace_model_call(name="crypto_analysis_writer", model="deep-model")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -59,7 +59,7 @@ async def _invoke_report_text(
 # 请求规划模型
 
 
-@trace_model_call(name="crypto_report_review", model=settings.bailian_smart_models[0])
+@trace_model_call(name="crypto_report_review", model="deep-model")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -75,7 +75,7 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
     return review
 
 
-@trace_model_call(name="crypto_analysis_plan", model=settings.glm_smart_model)
+@trace_model_call(name="crypto_analysis_plan", model="quick-model")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
@@ -84,7 +84,7 @@ async def _invoke_report_review(llm: Any, messages: list[BaseMessage]) -> Report
 async def _invoke_analysis_plan(llm: Any, messages: list[BaseMessage]) -> AnalysisPlan:
     """记录规划用量，对结构化调用和校验整体重试。"""
     plan = await ainvoke_structured(
-        llm.bind(extra_body={"thinking": {"type": "disabled"}}),
+        llm.bind(extra_body={"enable_thinking": False}),
         messages,
         schema=AnalysisPlan,
     )
@@ -149,7 +149,7 @@ def make_plan() -> Callable[
     [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
 ]:
     """创建本轮技能规划节点。"""
-    glm_4_5_air_llm = make_glm_4_5_air_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["scope"]["resolved_question"])
     async def plan(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
@@ -158,7 +158,7 @@ def make_plan() -> Callable[
         if not isinstance(question, str) or not question.strip():
             raise ValueError("技能分析缺少有效用户问题")
         selection = await create_analysis_plan(
-            glm_4_5_air_llm,
+            quick_think_llm,
             question,
             skill_loader.format_skill_descriptions(),
         )
@@ -214,7 +214,7 @@ def make_writer() -> Callable[
     [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
 ]:
     """创建投研报告写作节点，保留原证据和重写逻辑。"""
-    bailian_smart_llm = make_bailian_smart_llm()
+    deep_think_llm = make_deep_think_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
     async def writer(state: CryptoAnalysisParentGraphState) -> dict[str, Any]:
@@ -240,7 +240,7 @@ def make_writer() -> Callable[
             previous_report=state["report"],
         )
         report = await _invoke_report_text(
-            bailian_smart_llm.bind(temperature=0.2),
+            deep_think_llm.bind(temperature=0.2),
             messages,
         )
         if settings.writer_capture_enabled:
@@ -261,7 +261,7 @@ def make_reviewer() -> Callable[
     [CryptoAnalysisParentGraphState], Awaitable[dict[str, Any]]
 ]:
     """创建报告审核节点，保留原有审核规则。"""
-    bailian_smart_llm = make_bailian_smart_llm()
+    deep_think_llm = make_deep_think_llm()
 
     @timed_node(label=lambda state: state["scope"]["target_asset"])
     @trace_model_call(name="crypto.reviewer")
@@ -277,7 +277,7 @@ def make_reviewer() -> Callable[
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
         review = await _invoke_report_review(
-            bailian_smart_llm.bind(temperature=0.1),
+            deep_think_llm.bind(temperature=0.2),
             messages,
         )
         if settings.reviewer_capture_enabled:

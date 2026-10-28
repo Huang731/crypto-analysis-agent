@@ -70,14 +70,14 @@ def _make_bailian_llm_with_fallbacks(
     )
 
 
-def make_bailian_smart_llm() -> Runnable[LanguageModelInput, AIMessage]:
-    """创建决策和写作模型，保留模型自身的默认思考配置。"""
-    return _make_bailian_llm_with_fallbacks(settings.bailian_smart_models)
+def make_deep_think_llm() -> Runnable[LanguageModelInput, AIMessage]:
+    """创建千问深思考模型，保留模型自身的默认思考配置。"""
+    return _make_bailian_llm_with_fallbacks(settings.deep_think_models)
 
 
-def make_bailian_fast_llm() -> Runnable[LanguageModelInput, AIMessage]:
-    """创建执行模型，思考开关由调用方设置。"""
-    return _make_bailian_llm_with_fallbacks(settings.bailian_fast_models)
+def make_quick_think_llm() -> Runnable[LanguageModelInput, AIMessage]:
+    """创建千问快思考模型，调用方仍可显式覆盖。"""
+    return _make_bailian_llm_with_fallbacks(settings.quick_think_models)
 
 
 def make_qwen3_max_llm() -> Runnable[LanguageModelInput, AIMessage]:
@@ -87,64 +87,6 @@ def make_qwen3_max_llm() -> Runnable[LanguageModelInput, AIMessage]:
         max_retries=0,
         extra_body={"enable_thinking": False},
     )
-
-
-def make_qwen3_8b_llm(*, enable_thinking: bool = False) -> ChatOpenAI:
-    """创建 Qwen3-8B，按节点配置思考开关，温度统一为 0.1。"""
-    return ChatOpenAI(
-        model=settings.qwen3_8b_model,
-        api_key=_siliconflow_api_key,
-        base_url="https://api.siliconflow.cn/v1",
-        temperature=0.1,
-        timeout=120.0,
-        max_retries=1,
-        extra_body={"enable_thinking": enable_thinking, "max_tokens": 8192},
-        use_responses_api=False,
-        stream_usage=True,
-    )
-
-
-def _zhipuai_api_key(model_name: str) -> str:
-    """请求智谱前按模型系列选择并校验对应密钥。"""
-    if model_name.lower().startswith("glm-4"):
-        key = settings.zhipuai_4_api_key.strip()
-        variable_name = "ZHIPUAI_4_API_KEY"
-    elif model_name.lower().startswith("glm-5"):
-        key = settings.zhipuai_5_api_key.strip()
-        variable_name = "ZHIPUAI_5_API_KEY"
-    else:
-        raise ValueError(f"不支持的智谱模型系列：{model_name}")
-    if not key or key.startswith("xxxx"):
-        raise ValueError(f"未配置 {variable_name}")
-    return key
-
-
-def _make_zhipuai_llm(model_name: str) -> ChatOpenAI:
-    """主题研究直连智谱，保留请求超时，重试由业务调用方负责。"""
-    return ChatOpenAI(
-        model=model_name,
-        api_key=lambda: _zhipuai_api_key(model_name),
-        base_url="https://open.bigmodel.cn/api/paas/v4/",
-        timeout=120.0,
-        max_retries=0,
-        use_responses_api=False,
-        stream_usage=True,
-    )
-
-
-def make_glm_4_5_air_llm() -> ChatOpenAI:
-    """创建配置指定的智谱 Air 模型，思考开关由调用节点设置。"""
-    return _make_zhipuai_llm(settings.glm_smart_model)
-
-
-def make_glm_4_flash_llm() -> ChatOpenAI:
-    """创建主题研究的拆题和工具执行模型。"""
-    return _make_zhipuai_llm(settings.glm_4_flash_model)
-
-
-def make_glm_5_3_flash_llm() -> ChatOpenAI:
-    """创建 RAG 评测裁判模型，沿用智谱 5 系列密钥与统一调用配置。"""
-    return _make_zhipuai_llm(settings.glm_5_3_flash_model)
 
 
 # 统一调用与结构化结果解析，重试由业务调用方负责

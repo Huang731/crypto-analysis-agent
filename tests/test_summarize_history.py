@@ -1,4 +1,4 @@
-"""使用两条固定采集案例测试真实摘要节点，需要配置 ZHIPUAI_4_API_KEY。
+"""使用两条固定采集案例测试真实摘要节点，需要配置 DASHSCOPE_API_KEY。
 
 运行：python -m pytest tests/test_summarize_history.py -v -s
 案例固定自摘要采集记录，测试运行时不读取采集文件，使用当前摘要提示词。

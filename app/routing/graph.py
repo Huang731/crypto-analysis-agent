@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.language_models import LanguageModelInput
 from langchain_core.messages import (
     AIMessage,
     AnyMessage,
@@ -11,6 +11,7 @@ from langchain_core.messages import (
     HumanMessage,
     messages_to_dict,
 )
+from langchain_core.runnables import Runnable
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
@@ -24,7 +25,7 @@ from app.core.tracing import trace_model_call
 from app.crypto_analysis.crypto_analysis_parent_agent import (
     build_crypto_analysis_parent_agent,
 )
-from app.llm.model import ainvoke_model, make_glm_4_flash_llm
+from app.llm.model import ainvoke_model, make_quick_think_llm
 from app.memory.memory_manager import MemoryManager
 from app.rag.retriever import KBRetriever
 from app.routing.query_rewriter import rewrite_question
@@ -32,14 +33,14 @@ from app.topic_research.topic_research_agent import build_topic_research_agent
 from prompts.router import routing_messages
 
 
-@trace_model_call(name="routing_decision", model=settings.glm_4_flash_model)
+@trace_model_call(name="routing_decision", model="quick-model")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
 async def _invoke_route_decision(
-    llm: BaseChatModel,
+    llm: Runnable[LanguageModelInput, AIMessage],
     messages: list[BaseMessage],
 ) -> str:
     """保留路由追踪，对文本调用和 Agent 名称校验整体重试。"""
@@ -79,7 +80,7 @@ def make_summarize_history() -> Callable[
     [RoutingState], Awaitable[dict[str, list[AnyMessage]]]
 ]:
     """追加本轮回答，超过阈值时压缩旧历史，再整体保存消息。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
     memory_manager = MemoryManager(3, 2)
 
     @timed_node(label=lambda state: state["resolved_question"])
@@ -89,7 +90,7 @@ def make_summarize_history() -> Callable[
         if not isinstance(report, str) or not report.strip():
             raise ValueError("最终报告为空")
         messages = [*state["messages"], AIMessage(content=report)]
-        messages = await memory_manager.manage(glm_4_flash_llm, messages)
+        messages = await memory_manager.manage(quick_think_llm, messages)
         if settings.summarize_history_capture_enabled:
             append_node_candidate(
                 node="summarize_history",
@@ -107,7 +108,7 @@ def make_summarize_history() -> Callable[
 
 def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
     """创建改写节点，模型仅在构建节点时初始化。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["scope"]["original_question"])
     async def rewrite(state: RoutingState) -> dict[str, Any]:
@@ -120,7 +121,7 @@ def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
             message for message in messages if isinstance(message, HumanMessage)
         ]
         question = await rewrite_question(
-            glm_4_flash_llm,
+            quick_think_llm,
             user_messages,
         )
         messages[-1] = HumanMessage(content=question)
@@ -135,14 +136,14 @@ def make_rewrite() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
 
 def make_router() -> Callable[[RoutingState], Awaitable[dict[str, Any]]]:
     """创建路由节点，模型仅在构建节点时初始化。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["resolved_question"])
     async def router(state: RoutingState) -> dict[str, Any]:
         """路由调用、解析和类型校验整体最多尝试两次，耗尽后向上报告。"""
         messages = routing_messages(state["resolved_question"])
         route = await _invoke_route_decision(
-            glm_4_flash_llm,
+            quick_think_llm,
             messages,
         )
         if settings.routing_capture_enabled:

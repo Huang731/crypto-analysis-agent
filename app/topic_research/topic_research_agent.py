@@ -21,13 +21,12 @@ from langgraph.graph.state import CompiledStateGraph  # 标注已编译研究图
 from langgraph.types import Send  # 并行分派研究子问题。
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.core.config import settings  # 读取模型配置用于成本估算。
 from app.core.observability import timed_node  # 保留节点耗时观测。
 from app.core.tracing import trace_model_call
 from app.llm.model import (
     ainvoke_model,
-    make_glm_4_5_air_llm,
-    make_glm_4_flash_llm,
+    make_deep_think_llm,
+    make_quick_think_llm,
 )
 from app.topic_research.tools.browser_tool import (
     BrowserContext,
@@ -73,7 +72,7 @@ def make_split() -> Callable[
     [AnalysisState], Awaitable[dict[str, list[str]]]
 ]:  # 创建研究主题拆解节点。
     """把用户主题拆成三个可独立分析的子问题。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["question"])  # 沿用现有节点耗时和失败日志。
     @trace_model_call(name="topic.split")
@@ -85,7 +84,7 @@ def make_split() -> Callable[
     async def split(state: AnalysisState) -> dict[str, list[str]]:  # 返回并行研究任务。
         messages = split_messages(state["question"])  # 提供原始研究主题。
         response = await _invoke_traced_model(
-            glm_4_flash_llm, messages, "topic_split", settings.glm_4_flash_model
+            quick_think_llm, messages, "topic_split", "quick-model"
         )
         if not isinstance(response.content, str):  # 消息内容必须是文本。
             raise TypeError("主题拆解模型未返回文本")  # 不猜测非文本内容。
@@ -136,16 +135,16 @@ class ResearchModelTrace(AgentMiddleware):
             wait=wait_random_exponential(min=1, max=2),
             reraise=True,
         )
-        @trace_model_call(name="topic_researcher", model=settings.glm_smart_model)
+        @trace_model_call(name="topic_researcher", model="deep-model")
         async def invoke(messages: ModelRequest) -> ModelResponse:
             """只重试当前模型请求，不重发工具调用或研究流程。"""
             return await asyncio.wait_for(handler(messages), timeout=60)
 
-        # 仅研究模型调用关闭深度思考，不修改共享 Air 模型。
+        # 仅研究模型调用关闭深度思考，不修改共享深思考模型。
         request = request.override(
             model_settings={
                 **request.model_settings,
-                "extra_body": {"thinking": {"type": "disabled"}},
+                "extra_body": {"enable_thinking": False},
             }
         )
         if len(request.state.get("research_evidence", {})) >= RESEARCH_EVIDENCE_TARGET:
@@ -174,9 +173,9 @@ class ResearchModelTrace(AgentMiddleware):
 
 def build_research_agent() -> CompiledStateGraph:
     """复用工具图，每次执行通过上下文注入独立浏览会话。"""
-    glm_4_5_air_llm = make_glm_4_5_air_llm()
+    deep_think_llm = make_deep_think_llm()
     return create_agent(
-        model=glm_4_5_air_llm,
+        model=deep_think_llm,
         tools=[*build_web_search_tools(), *build_browser_tools()],
         state_schema=ResearchAgentState,
         context_schema=BrowserContext,
@@ -293,7 +292,7 @@ def make_summarize() -> Callable[
     [AnalysisState], Awaitable[dict[str, str]]
 ]:  # 创建全部发现的汇总节点。
     """综合并行研究发现，并保留原文来源与证据不足的边界。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["question"])  # 延续原图的节点观测。
     @trace_model_call(name="topic.summarize")
@@ -310,10 +309,10 @@ def make_summarize() -> Callable[
             json.dumps(findings, ensure_ascii=False)
         )  # 提供全部并行结果。
         response = await _invoke_traced_model(
-            glm_4_flash_llm,
+            quick_think_llm,
             messages,
             "topic_summarize",
-            settings.glm_4_flash_model,
+            "quick-model",
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()
@@ -374,7 +373,7 @@ def make_writer() -> Callable[
     [SystemState], Awaitable[dict[str, Any]]
 ]:  # 创建研究报告写作节点。
     """依据研究摘要写报告，并处理审稿意见。"""
-    glm_4_5_air_llm = make_glm_4_5_air_llm()
+    deep_think_llm = make_deep_think_llm()
 
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
@@ -395,10 +394,10 @@ def make_writer() -> Callable[
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 首轮反馈为空，重写时提供具体意见。
         response = await _invoke_traced_model(
-            glm_4_5_air_llm,
+            deep_think_llm,
             messages,
             "topic_writer",
-            settings.glm_smart_model,
+            "deep-model",
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()
@@ -415,7 +414,7 @@ def make_reviewer() -> Callable[
     [SystemState], Awaitable[dict[str, Any]]
 ]:  # 创建研究报告审稿节点。
     """审查报告完整性与证据边界，最多要求重写一次。"""
-    glm_4_5_air_llm = make_glm_4_5_air_llm()
+    deep_think_llm = make_deep_think_llm()
 
     @timed_node(
         label=lambda state: state["scope"]["resolved_question"]
@@ -434,10 +433,10 @@ def make_reviewer() -> Callable[
             json.dumps(state["findings"], ensure_ascii=False),
         )  # 提供实际生成的报告。
         response = await _invoke_traced_model(
-            glm_4_5_air_llm,
+            deep_think_llm,
             messages,
             "topic_reviewer",
-            settings.glm_smart_model,
+            "deep-model",
         )
         if (
             not isinstance(response.content, str) or not response.content.strip()

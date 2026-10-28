@@ -31,7 +31,7 @@ from app.crypto_analysis.skill_memory import (
     validate_skill_memory,
 )
 from app.crypto_analysis.tools.registry import get_tool_registry
-from app.llm.model import ainvoke_model, make_glm_4_flash_llm
+from app.llm.model import ainvoke_model, make_quick_think_llm
 from app.rag.retriever import KBRetriever
 from prompts.crypto_analysis_calculate_metrics import (
     calculate_metrics_messages,
@@ -143,9 +143,7 @@ async def _invoke_skill_retrieval_query(
         indicators=indicators,
     )
 
-    @trace_model_call(
-        name="crypto_skill_retrieval_query", model=settings.glm_4_flash_model
-    )
+    @trace_model_call(name="crypto_skill_retrieval_query", model="quick-model")
     async def invoke(messages: list[BaseMessage]) -> str:
         """追踪实际发送的完整消息，避免遗漏提示词用量。"""
         response = await ainvoke_model(
@@ -241,7 +239,7 @@ async def _invoke_metric_agent(
 
 def make_calculate_metrics() -> Callable[..., Awaitable[dict[str, Any]]]:
     """使用指标 Agent 执行工具，再将已有结果交给内容节点。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["skill_name"])
     async def calculate_metrics(state: CryptoAnalysisSubGraphState) -> dict[str, Any]:
@@ -252,7 +250,7 @@ def make_calculate_metrics() -> Callable[..., Awaitable[dict[str, Any]]]:
             for name in state["skill"].tools
         ]
         agent = create_agent(
-            model=glm_4_flash_llm,
+            model=quick_think_llm,
             tools=tools,
             state_schema=MetricAgentState,
             context_schema=MetricAgentContext,
@@ -297,7 +295,7 @@ def make_skill_content(
     retriever: KBRetriever,
 ) -> Callable[[CryptoAnalysisSubGraphState], Awaitable[dict[str, Any]]]:
     """使用已有指标渲染表格，再根据成功指标检索思想材料。"""
-    glm_4_flash_llm = make_glm_4_flash_llm()
+    quick_think_llm = make_quick_think_llm()
 
     @timed_node(label=lambda state: state["skill_name"])
     async def skill_content(state: CryptoAnalysisSubGraphState) -> dict[str, Any]:
@@ -323,7 +321,7 @@ def make_skill_content(
         retrieval_query = ""
         if successful_indicators:
             retrieval_query = await _invoke_skill_retrieval_query(
-                glm_4_flash_llm,
+                quick_think_llm,
                 successful_indicators,
                 analysis_subject=analysis_subject,
                 skill_name=skill.name,

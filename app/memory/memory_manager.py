@@ -2,11 +2,17 @@
 
 import asyncio
 
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import AnyMessage, BaseMessage, HumanMessage, SystemMessage
+from langchain_core.language_models import LanguageModelInput
+from langchain_core.messages import (
+    AIMessage,
+    AnyMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+)
+from langchain_core.runnables import Runnable
 from tenacity import retry, stop_after_attempt, wait_random_exponential
 
-from app.core.config import settings
 from app.core.tracing import trace_model_call
 from app.llm.model import ainvoke_model
 from prompts.summarize_history import history_summary_messages
@@ -20,7 +26,7 @@ class MemoryManager:
         self.keep_recent = keep_recent
 
     async def manage(
-        self, llm: BaseChatModel, messages: list[AnyMessage]
+        self, llm: Runnable[LanguageModelInput, AIMessage], messages: list[AnyMessage]
     ) -> list[AnyMessage]:
         """统计非系统消息，未超过阈值时保留现有列表。"""
         other = [
@@ -32,7 +38,9 @@ class MemoryManager:
 
 
 async def compress_with_summary(
-    llm: BaseChatModel, messages: list[AnyMessage], keep_recent: int = 4
+    llm: Runnable[LanguageModelInput, AIMessage],
+    messages: list[AnyMessage],
+    keep_recent: int = 4,
 ) -> list[AnyMessage]:
     """旧历史压成一条摘要，系统消息和最近指定条数的消息原样保留。"""
     system_msgs = [
@@ -52,13 +60,15 @@ async def compress_with_summary(
     return [*system_msgs, summary_msg, *recent]
 
 
-@trace_model_call(name="conversation_summary", model=settings.glm_4_flash_model)
+@trace_model_call(name="conversation_summary", model="quick-model")
 @retry(
     stop=stop_after_attempt(2),
     wait=wait_random_exponential(min=1, max=2),
     reraise=True,
 )
-async def summarize_history(llm: BaseChatModel, messages: list[BaseMessage]) -> str:
+async def summarize_history(
+    llm: Runnable[LanguageModelInput, AIMessage], messages: list[BaseMessage]
+) -> str:
     """直接读取摘要文本，保留整体重试和每次调用的超时限制。"""
     response = await asyncio.wait_for(
         ainvoke_model(llm, messages),

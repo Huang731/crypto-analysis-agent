@@ -1,4 +1,4 @@
-"""使用边界问题测试真实 Router，需要配置 ZHIPUAI_4_API_KEY。
+"""使用边界问题测试真实 Router，需要配置 DASHSCOPE_API_KEY。
 
 运行：python -m pytest tests/test_router.py -v -s
 仅验证路由输出合法，并打印问题与本次路由结果。
