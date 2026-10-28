@@ -2,7 +2,8 @@
 
 import json
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, ConfigDict, Field
 
 from prompts.common import build_system_prompt
@@ -91,16 +92,17 @@ class AnalysisPlanPrompt:
     system_prompt_with_schema = build_system_prompt(
         instruction, example, pydantic_schema
     )
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt_with_schema),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseMessage]:
     """组装规划规则、输出结构和本轮输入。"""
-    return [
-        SystemMessage(content=AnalysisPlanPrompt.system_prompt_with_schema),
-        HumanMessage(
-            content=AnalysisPlanPrompt.user_prompt.format(
-                skill_descriptions=skill_descriptions,
-                question=question,
-            )
-        ),
-    ]
+    return AnalysisPlanPrompt.prompt.format_messages(
+        skill_descriptions=skill_descriptions,
+        question=question,
+    )

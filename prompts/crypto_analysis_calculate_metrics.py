@@ -2,7 +2,8 @@
 
 from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -37,6 +38,12 @@ class CalculateMetricsPrompt:
     user_prompt = "完成以下所有指标：\n{indicator_list}"
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def calculate_metrics_messages(skill_config: dict[str, Any]) -> list[BaseMessage]:
@@ -44,11 +51,4 @@ def calculate_metrics_messages(skill_config: dict[str, Any]) -> list[BaseMessage
     indicator_list = "\n".join(
         f"- {metric['id']}" for metric in skill_config["scoring"]["metrics"]
     )
-    return [
-        SystemMessage(content=CalculateMetricsPrompt.system_prompt),
-        HumanMessage(
-            content=CalculateMetricsPrompt.user_prompt.format(
-                indicator_list=indicator_list
-            )
-        ),
-    ]
+    return CalculateMetricsPrompt.prompt.format_messages(indicator_list=indicator_list)

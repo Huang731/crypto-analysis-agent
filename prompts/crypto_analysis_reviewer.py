@@ -3,7 +3,8 @@
 import json
 from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, ConfigDict, Field
 
 from prompts.common import build_system_prompt
@@ -84,6 +85,12 @@ class AnalysisReviewPrompt:
     system_prompt_with_schema = build_system_prompt(
         instruction, example, pydantic_schema
     )
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt_with_schema),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def analysis_review_messages(
@@ -100,17 +107,10 @@ def analysis_review_messages(
         review_feedback_section = AnalysisReviewPrompt.feedback_user_prompt.format(
             review_feedback=review_feedback
         )
-    return [
-        SystemMessage(content=AnalysisReviewPrompt.system_prompt_with_schema),
-        HumanMessage(
-            content=AnalysisReviewPrompt.user_prompt.format(
-                target_asset=target_asset,
-                original_question=original_question,
-                skill_results_json=json.dumps(
-                    skill_results, ensure_ascii=False, indent=2
-                ),
-                report=report,
-                review_feedback_section=review_feedback_section,
-            )
-        ),
-    ]
+    return AnalysisReviewPrompt.prompt.format_messages(
+        target_asset=target_asset,
+        original_question=original_question,
+        skill_results_json=json.dumps(skill_results, ensure_ascii=False, indent=2),
+        report=report,
+        review_feedback_section=review_feedback_section,
+    )

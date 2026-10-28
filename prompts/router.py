@@ -1,6 +1,7 @@
 """研究任务调度员提示词。"""
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -54,11 +55,14 @@ topic_research_agent
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def routing_messages(question: str) -> list[BaseMessage]:
     """分开路由系统规则与本轮已改写问题。"""
-    return [
-        SystemMessage(content=RoutingPrompt.system_prompt),
-        HumanMessage(content=RoutingPrompt.user_prompt.format(question=question)),
-    ]
+    return RoutingPrompt.prompt.format_messages(question=question)

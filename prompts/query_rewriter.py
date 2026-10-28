@@ -1,6 +1,7 @@
 """分派前问题改写的消息模板。"""
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -67,6 +68,12 @@ class QueryRewriterPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def query_rewriter_messages(
@@ -77,12 +84,7 @@ def query_rewriter_messages(
         f"{index}. {message.content}"
         for index, message in enumerate(messages[:-1], start=1)
     )
-    return [
-        SystemMessage(content=QueryRewriterPrompt.system_prompt),
-        HumanMessage(
-            content=QueryRewriterPrompt.user_prompt.format(
-                history=history,
-                question=messages[-1].content,
-            )
-        ),
-    ]
+    return QueryRewriterPrompt.prompt.format_messages(
+        history=history,
+        question=messages[-1].content,
+    )

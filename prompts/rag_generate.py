@@ -1,6 +1,7 @@
 """知识库流式回答提示词。"""
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -35,15 +36,14 @@ class RagGeneratePrompt:
     user_prompt = "【材料】\n{context}\n\n【问题】{question}"
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def rag_generate_messages(context: str, question: str) -> list[BaseMessage]:
     """组装知识库回答规则、检索材料和用户问题。"""
-    return [
-        SystemMessage(content=RagGeneratePrompt.system_prompt),
-        HumanMessage(
-            content=RagGeneratePrompt.user_prompt.format(
-                context=context, question=question
-            )
-        ),
-    ]
+    return RagGeneratePrompt.prompt.format_messages(context=context, question=question)

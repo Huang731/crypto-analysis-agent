@@ -1,6 +1,7 @@
 """RAG 图片提取与看图问答的提示词。"""
 
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -24,6 +25,17 @@ class DescribeImagePrompt:
     example = ""
 
     user_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "human",
+                [
+                    {"type": "image_url", "image_url": {"url": "{image_url}"}},
+                    {"type": "text", "text": user_prompt},
+                ],
+            )
+        ]
+    )
 
 
 class AnswerWithImagePrompt:
@@ -34,30 +46,26 @@ class AnswerWithImagePrompt:
 # Output Format / 输出格式
 直接给答案，简明扼要。
 """
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "human",
+                [
+                    {"type": "image_url", "image_url": {"url": "{image_url}"}},
+                    {"type": "text", "text": user_prompt},
+                ],
+            )
+        ]
+    )
 
 
 def describe_image_messages(image_url: str) -> list[BaseMessage]:
     """组装图片与描述要求，保留原有用户消息角色。"""
-    return [
-        HumanMessage(
-            content=[
-                {"type": "image_url", "image_url": {"url": image_url}},
-                {"type": "text", "text": DescribeImagePrompt.user_prompt},
-            ]
-        )
-    ]
+    return DescribeImagePrompt.prompt.format_messages(image_url=image_url)
 
 
 def answer_with_image_messages(image_url: str, question: str) -> list[BaseMessage]:
     """组装图片与用户问题，保留原有多模态内容顺序。"""
-    return [
-        HumanMessage(
-            content=[
-                {"type": "image_url", "image_url": {"url": image_url}},
-                {
-                    "type": "text",
-                    "text": AnswerWithImagePrompt.user_prompt.format(question=question),
-                },
-            ]
-        )
-    ]
+    return AnswerWithImagePrompt.prompt.format_messages(
+        image_url=image_url, question=question
+    )

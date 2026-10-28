@@ -3,7 +3,8 @@
 import json
 from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -37,19 +38,20 @@ class SkillRetrievalPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def skill_retrieval_messages(
     analysis_subject: str, skill_name: str, indicators: list[dict[str, Any]]
 ) -> list[BaseMessage]:
     """组装理论检索规则与本轮成功指标数据。"""
-    return [
-        SystemMessage(content=SkillRetrievalPrompt.system_prompt),
-        HumanMessage(
-            content=SkillRetrievalPrompt.user_prompt.format(
-                analysis_subject=analysis_subject,
-                skill_name=skill_name,
-                indicators_json=json.dumps(indicators, ensure_ascii=False, indent=2),
-            )
-        ),
-    ]
+    return SkillRetrievalPrompt.prompt.format_messages(
+        analysis_subject=analysis_subject,
+        skill_name=skill_name,
+        indicators_json=json.dumps(indicators, ensure_ascii=False, indent=2),
+    )

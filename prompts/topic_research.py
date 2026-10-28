@@ -1,6 +1,7 @@
 """专题研究的拆题、工具取证、汇总、写作和审稿提示词。"""
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage, SystemMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -35,6 +36,12 @@ class TopicSplitPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 class TopicResearchPrompt:
@@ -93,6 +100,12 @@ class TopicResearchPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 class TopicSummarizePrompt:
@@ -129,6 +142,12 @@ class TopicSummarizePrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 class TopicWriterPrompt:
@@ -169,6 +188,12 @@ class TopicWriterPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 class TopicReviewPrompt:
@@ -214,6 +239,12 @@ class TopicReviewPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 class ResearchContinuePrompt:
@@ -227,69 +258,50 @@ class ResearchContinuePrompt:
 已经使用过的搜索词：
 {queries_text}
 """
+    candidate_prompt = ChatPromptTemplate.from_messages(
+        [("human", candidate_user_prompt)]
+    )
+    prompt = ChatPromptTemplate.from_messages([("human", user_prompt)])
 
 
 def split_messages(question: str) -> list[BaseMessage]:
     """分开拆题规则与本轮研究主题。"""
-    return [
-        SystemMessage(content=TopicSplitPrompt.system_prompt),
-        HumanMessage(content=TopicSplitPrompt.user_prompt.format(question=question)),
-    ]
+    return TopicSplitPrompt.prompt.format_messages(question=question)
 
 
 def research_messages(
     question: str, subquestion: str, *, as_of: str
 ) -> list[BaseMessage]:
     """分开取证规则与研究主题、子问题和截止时间。"""
-    return [
-        SystemMessage(content=TopicResearchPrompt.system_prompt),
-        HumanMessage(
-            content=TopicResearchPrompt.user_prompt.format(
-                question=question, subquestion=subquestion, as_of=as_of
-            )
-        ),
-    ]
+    return TopicResearchPrompt.prompt.format_messages(
+        question=question, subquestion=subquestion, as_of=as_of
+    )
 
 
 def summarize_messages(findings_json: str) -> list[BaseMessage]:
     """分开汇总规则与实际研究发现。"""
-    return [
-        SystemMessage(content=TopicSummarizePrompt.system_prompt),
-        HumanMessage(
-            content=TopicSummarizePrompt.user_prompt.format(findings_json=findings_json)
-        ),
-    ]
+    return TopicSummarizePrompt.prompt.format_messages(findings_json=findings_json)
 
 
 def writer_messages(
     question: str, research_summary: str, feedback: str, findings_json: str
 ) -> list[BaseMessage]:
     """分开写作规则与主题、摘要、研究记录及审稿意见。"""
-    return [
-        SystemMessage(content=TopicWriterPrompt.system_prompt),
-        HumanMessage(
-            content=TopicWriterPrompt.user_prompt.format(
-                question=question,
-                research_summary=research_summary,
-                findings_json=findings_json,
-                feedback=feedback,
-            )
-        ),
-    ]
+    return TopicWriterPrompt.prompt.format_messages(
+        question=question,
+        research_summary=research_summary,
+        findings_json=findings_json,
+        feedback=feedback,
+    )
 
 
 def review_messages(
     report: str, question: str, findings_json: str
 ) -> list[BaseMessage]:
     """分开审稿规则与待审报告、问题和研究记录。"""
-    return [
-        SystemMessage(content=TopicReviewPrompt.system_prompt),
-        HumanMessage(
-            content=TopicReviewPrompt.user_prompt.format(
-                question=question, findings_json=findings_json, report=report
-            )
-        ),
-    ]
+    return TopicReviewPrompt.prompt.format_messages(
+        question=question, findings_json=findings_json, report=report
+    )
 
 
 def research_continue_messages(
@@ -298,16 +310,8 @@ def research_continue_messages(
     """根据剩余候选和已有搜索记录，要求继续取得网页原文。"""
     if candidate_urls:
         urls_text = "\n".join(f"- {url}" for url in candidate_urls)
-        return [
-            HumanMessage(
-                content=ResearchContinuePrompt.candidate_user_prompt.format(
-                    urls_text=urls_text
-                )
-            )
-        ]
-    queries_text = "\n".join(f"- {query}" for query in searched_queries)
-    return [
-        HumanMessage(
-            content=ResearchContinuePrompt.user_prompt.format(queries_text=queries_text)
+        return ResearchContinuePrompt.candidate_prompt.format_messages(
+            urls_text=urls_text
         )
-    ]
+    queries_text = "\n".join(f"- {query}" for query in searched_queries)
+    return ResearchContinuePrompt.prompt.format_messages(queries_text=queries_text)

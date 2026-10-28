@@ -3,7 +3,8 @@
 import json
 from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.messages import BaseMessage
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -56,6 +57,12 @@ class AnalysisReportPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            ("system", system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
     feedback_instruction = """\
 本次任务：反馈修订。
@@ -82,21 +89,11 @@ def analysis_report_messages(
         feedback_input = AnalysisReportPrompt.feedback_user_prompt.format(
             review_feedback=review_feedback
         )
-    return [
-        SystemMessage(
-            content=AnalysisReportPrompt.system_prompt.format(
-                feedback_section=feedback_section
-            )
-        ),
-        HumanMessage(
-            content=AnalysisReportPrompt.user_prompt.format(
-                feedback_input=feedback_input,
-                target_asset=target_asset,
-                original_question=original_question,
-                content_json=json.dumps(content, ensure_ascii=False, indent=2),
-                thought_context_json=json.dumps(
-                    thought_context, ensure_ascii=False, indent=2
-                ),
-            )
-        ),
-    ]
+    return AnalysisReportPrompt.prompt.format_messages(
+        feedback_section=feedback_section,
+        feedback_input=feedback_input,
+        target_asset=target_asset,
+        original_question=original_question,
+        content_json=json.dumps(content, ensure_ascii=False, indent=2),
+        thought_context_json=json.dumps(thought_context, ensure_ascii=False, indent=2),
+    )

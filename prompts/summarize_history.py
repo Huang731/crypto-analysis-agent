@@ -1,11 +1,7 @@
 """将需要压缩的旧对话整理为简短记忆的提示词。"""
 
-from langchain_core.messages import (
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    get_buffer_string,
-)
+from langchain_core.messages import BaseMessage, SystemMessage, get_buffer_string
+from langchain_core.prompts import ChatPromptTemplate
 
 from prompts.common import build_system_prompt
 
@@ -42,15 +38,16 @@ class HistorySummaryPrompt:
 """
 
     system_prompt = build_system_prompt(instruction)
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            SystemMessage(content=system_prompt),
+            ("human", user_prompt),
+        ]
+    )
 
 
 def history_summary_messages(old_messages: list[BaseMessage]) -> list[BaseMessage]:
     """将旧消息按原顺序整理为文本，只交给模型压缩这部分历史。"""
-    return [
-        SystemMessage(content=HistorySummaryPrompt.system_prompt),
-        HumanMessage(
-            content=HistorySummaryPrompt.user_prompt.format(
-                history_text=get_buffer_string(old_messages)
-            )
-        ),
-    ]
+    return HistorySummaryPrompt.prompt.format_messages(
+        history_text=get_buffer_string(old_messages)
+    )
