@@ -34,6 +34,7 @@ jieba>=0.42.1,<0.43
 httpx>=0.28,<1
 httpx-sse>=0.4,<1
 pandas>=2.2,<3
+yfinance>=1.0,<2
 
 # PDF 解析、表格抽取与本地 OCR
 PyMuPDF>=1.24,<2

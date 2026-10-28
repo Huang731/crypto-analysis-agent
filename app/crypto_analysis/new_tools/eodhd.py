@@ -8,9 +8,15 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
+import requests
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.crypto_analysis.new_tools.errors import DataSourceNotConfiguredError
+from app.crypto_analysis.new_tools.errors import (
+    DataSourceNotConfiguredError,
+    DataSourceResponseError,
+    DataSourceUnavailableError,
+    DataSourceValidationError,
+)
 from app.crypto_analysis.new_tools.net import get_with_redacted_errors
 
 EODHD_API_BASE = "https://eodhd.com/api"
@@ -59,7 +65,7 @@ def _resolve_symbol(indicator: str) -> str:
         return MARKET_SYMBOLS[key]
     candidate = indicator.strip().upper()
     if not candidate or len(candidate) > 30 or any(c.isspace() for c in candidate):
-        raise ValueError(
+        raise DataSourceValidationError(
             f"'{indicator}' 不是已知指标别名或有效的 EODHD 标的代码。"
             "请使用 'dxy' 或完整标的代码，例如 'DXY.INDX'。"
         )
@@ -69,20 +75,26 @@ def _resolve_symbol(indicator: str) -> str:
 def _request(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     """通过 GET 请求 EODHD 接口，请求无效时展示响应中的错误信息。"""
     api_key = get_api_key()
-    response = get_with_redacted_errors(
-        f"{EODHD_API_BASE}/{path}",
-        params={**params, "api_token": api_key, "fmt": "json"},
-        timeout=REQUEST_TIMEOUT,
-        secret=api_key,
-        allowed_status_codes=(400,),
-    )
+    try:
+        response = get_with_redacted_errors(
+            f"{EODHD_API_BASE}/{path}",
+            params={**params, "api_token": api_key, "fmt": "json"},
+            timeout=REQUEST_TIMEOUT,
+            secret=api_key,
+            allowed_status_codes=(400,),
+        )
+    except requests.RequestException as exc:
+        raise DataSourceUnavailableError(f"EODHD 请求失败：{exc}") from exc
     if response.status_code == 400:
         try:
             message = response.json().get("message", response.text)
         except ValueError:
             message = response.text
-        raise ValueError(f"EODHD 请求失败：{message}")
-    return response.json()
+        raise DataSourceValidationError(f"EODHD 请求失败：{message}")
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise DataSourceResponseError("EODHD 响应不是有效 JSON") from exc
 
 
 def get_market_data(

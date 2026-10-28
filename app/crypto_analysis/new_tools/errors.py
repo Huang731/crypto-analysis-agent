@@ -4,6 +4,8 @@
 请求不可用和配置缺失，无需针对 FRED、Binance 等数据源分别编写异常处理分支。
 
     DataSourceError
+    ├── DataSourceValidationError     参数或响应字段取值无效
+    ├── DataSourceResponseError       响应结构或 JSON 格式无效
     ├── DataMissingError              数据为空、过期等导致没有可用数据
     ├── DataSourceUnavailableError    数据源限流或请求失败
     └── DataSourceNotConfiguredError  缺少 API 密钥或必要配置
@@ -17,6 +19,14 @@ from __future__ import annotations
 
 class DataSourceError(Exception):
     """指标数据源无法提供可用数据时的异常基类。"""
+
+
+class DataSourceValidationError(DataSourceError, ValueError):
+    """数据源参数或响应字段取值无效，同时兼容已有的 ValueError 处理。"""
+
+
+class DataSourceResponseError(DataSourceError, TypeError):
+    """数据源响应结构或 JSON 格式无效，同时兼容已有的 TypeError 处理。"""
 
 
 class DataMissingError(DataSourceError):
