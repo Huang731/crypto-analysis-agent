@@ -89,11 +89,7 @@ def make_qwen3_max_llm() -> Runnable[LanguageModelInput, AIMessage]:
     )
 
 
-def make_qwen3_8b_llm(
-    *,
-    async_client: httpx.AsyncClient | None = None,
-    enable_thinking: bool = False,
-) -> ChatOpenAI:
+def make_qwen3_8b_llm(*, enable_thinking: bool = False) -> ChatOpenAI:
     """创建 Qwen3-8B，按节点配置思考开关，温度统一为 0.1。"""
     return ChatOpenAI(
         model=settings.qwen3_8b_model,
@@ -105,7 +101,6 @@ def make_qwen3_8b_llm(
         extra_body={"enable_thinking": enable_thinking, "max_tokens": 8192},
         use_responses_api=False,
         stream_usage=True,
-        http_async_client=async_client,
     )
 
 
@@ -124,11 +119,7 @@ def _zhipuai_api_key(model_name: str) -> str:
     return key
 
 
-def _make_zhipuai_llm(
-    model_name: str,
-    *,
-    async_client: httpx.AsyncClient | None = None,
-) -> ChatOpenAI:
+def _make_zhipuai_llm(model_name: str) -> ChatOpenAI:
     """主题研究直连智谱，保留请求超时，重试由业务调用方负责。"""
     return ChatOpenAI(
         model=model_name,
@@ -138,29 +129,22 @@ def _make_zhipuai_llm(
         max_retries=0,
         use_responses_api=False,
         stream_usage=True,
-        http_async_client=async_client,
     )
 
 
-def make_glm_4_5_air_llm(
-    *, async_client: httpx.AsyncClient | None = None
-) -> ChatOpenAI:
+def make_glm_4_5_air_llm() -> ChatOpenAI:
     """创建配置指定的智谱 Air 模型，思考开关由调用节点设置。"""
-    return _make_zhipuai_llm(settings.glm_smart_model, async_client=async_client)
+    return _make_zhipuai_llm(settings.glm_smart_model)
 
 
-def make_glm_4_flash_llm(
-    *, async_client: httpx.AsyncClient | None = None
-) -> ChatOpenAI:
+def make_glm_4_flash_llm() -> ChatOpenAI:
     """创建主题研究的拆题和工具执行模型。"""
-    return _make_zhipuai_llm(settings.glm_4_flash_model, async_client=async_client)
+    return _make_zhipuai_llm(settings.glm_4_flash_model)
 
 
-def make_glm_5_3_flash_llm(
-    *, async_client: httpx.AsyncClient | None = None
-) -> ChatOpenAI:
+def make_glm_5_3_flash_llm() -> ChatOpenAI:
     """创建 RAG 评测裁判模型，沿用智谱 5 系列密钥与统一调用配置。"""
-    return _make_zhipuai_llm(settings.glm_5_3_flash_model, async_client=async_client)
+    return _make_zhipuai_llm(settings.glm_5_3_flash_model)
 
 
 # 统一调用与结构化结果解析，重试由业务调用方负责
