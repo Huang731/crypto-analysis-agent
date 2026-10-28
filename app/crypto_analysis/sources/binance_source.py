@@ -24,7 +24,9 @@ def _fetch_derivatives(target_asset: str) -> dict[str, Any]:
     if not asset.isascii() or not asset.isalnum():
         raise ValueError("目标资产代码无效")
     symbol = f"{asset}USDT"
-    end = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # 与趋势日线使用同一 UTC 收盘边界，OI 取边界采样，现货取边界前的收盘。
+    day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = int(day.timestamp() * 1000)
     futures = DerivativesTradingUsdsFutures(
         config_rest_api=ConfigurationRestAPI(timeout=30000, retries=0)
     )
@@ -38,7 +40,11 @@ def _fetch_derivatives(target_asset: str) -> dict[str, Any]:
             page = [
                 row.to_dict()
                 for row in futures.rest_api.get_funding_rate_history(
-                    symbol=symbol, start_time=start, end_time=end, limit=1000
+                    # 包含结算时刻不足一秒的发布偏移，沿用计算器现有时间校准。
+                    symbol=symbol,
+                    start_time=start,
+                    end_time=end + 999,
+                    limit=1000,
                 ).data()
             ]
             if not isinstance(page, list):
@@ -49,7 +55,7 @@ def _fetch_derivatives(target_asset: str) -> dict[str, Any]:
             next_start = int(page[-1]["fundingTime"]) + 1
             if next_start <= start:
                 raise ValueError("Funding分页时间未推进")
-            if next_start > end:
+            if next_start > end + 999:
                 return rows
             start = next_start
 
@@ -59,7 +65,7 @@ def _fetch_derivatives(target_asset: str) -> dict[str, Any]:
         ).data(),
         "funding": funding_history,
         "klines": lambda: spot.rest_api.klines(
-            symbol=symbol, interval="1h", limit=200, end_time=end, time_zone="0"
+            symbol=symbol, interval="1h", limit=200, end_time=end - 1, time_zone="0"
         ).data(),
     }
     try:

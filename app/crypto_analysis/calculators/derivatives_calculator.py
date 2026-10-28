@@ -105,6 +105,8 @@ def _funding(payload: dict[str, Any], prices: pd.Series) -> dict[str, Any]:
     if len(rates) < 2:
         raise ValueError("Funding 缺少7日窗口记录")
     latest = int(rates.index[-1])
+    if latest != max(prices.index):
+        raise ValueError("Funding 最新结算未对齐日线收盘时点")
     start = latest - _WEEK
     # 保留开区间起点和精确基准；不重采样，不用相邻记录替代。
     window = rates.loc[rates.index > start]
@@ -175,8 +177,8 @@ def calculate_derivatives(
             if oi.empty:
                 raise ValueError("OI 最新记录缺失")
             latest = int(max(oi.index))
-            if abs(latest - max(prices.index)) > _HOUR:
-                raise ValueError("OI与现货小时线时间差超过1小时")
+            if latest != max(prices.index):
+                raise ValueError("OI 最新采样未对齐日线收盘时点")
             if latest not in prices:
                 raise ValueError("OI 最新采样与现货收盘时间无法匹配")
             oi_change = _change(oi, latest, 168)
