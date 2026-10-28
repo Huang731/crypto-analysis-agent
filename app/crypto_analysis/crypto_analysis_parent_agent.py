@@ -273,6 +273,7 @@ def make_reviewer() -> Callable[
             original_question=state["scope"]["resolved_question"],
             report=state["report"],
             skill_results=state["skill_results"],
+            review_feedback=state["review_feedback"],
         )
         # 复用结构化调用的流标记，审核内容不进入报告正文。
         review = await _invoke_report_review(
