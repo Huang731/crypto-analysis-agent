@@ -56,7 +56,7 @@ def _fed_target_values(payload: dict[str, Any]) -> dict[date, Decimal]:
 
 
 def calculate_fed_rate_change(raw: dict[str, Any]) -> dict[str, Any]:
-    """用同日上下限计算三个月中点净变化，并按五档评分。"""
+    """用同日上下限计算三个月中点净变化及政策变化方向。"""
     payload = raw["payload"]
     lower = _fed_target_values(payload["lower_payload"])
     upper = _fed_target_values(payload["upper_payload"])
@@ -89,16 +89,6 @@ def calculate_fed_rate_change(raw: dict[str, Any]) -> dict[str, Any]:
     current_midpoint = (current["lower"] + current["upper"]) / 2
     baseline_midpoint = (baseline["lower"] + baseline["upper"]) / 2
     change_bp = (current_midpoint - baseline_midpoint) * 100
-    if change_bp >= 50:
-        score = 0
-    elif change_bp > 0:
-        score = 2.5
-    elif change_bp == 0:
-        score = 5
-    elif change_bp > -50:
-        score = 7.5
-    else:
-        score = 10
     return {
         "status": "ok",
         "current_date": current_day.isoformat(),
@@ -119,5 +109,4 @@ def calculate_fed_rate_change(raw: dict[str, Any]) -> dict[str, Any]:
         "unit": "basis_points",
         "observed_at": current_day.isoformat(),
         "source": raw["source"],
-        "score": round(score, 2),
     }

@@ -7,7 +7,6 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import date
-from math import isfinite
 from traceback import format_tb
 from typing import Any
 from urllib.parse import urlsplit
@@ -105,7 +104,6 @@ def metric_field_labels(metric_id: str) -> dict[str, str]:
         "字段",
         "指标标识",
         "指标状态",
-        "指标分数",
         "单位",
         "观测日期",
         "来源链接",
@@ -129,7 +127,6 @@ def missing_metric(
         "observed_at": None,
         "source": None,
         "url": None,
-        "score": None,
     }
 
 
@@ -146,14 +143,6 @@ def _normalize_result(
         return missing_metric(skill_name, metric_id, status, reason)
     raw_fields, calculated_fields, nullable_fields = _METRIC_FIELDS[metric_id]
     metric_field_labels(metric_id)
-    score = result["score"]
-    if (
-        isinstance(score, bool)
-        or not isinstance(score, (int, float))
-        or not isfinite(score)
-        or not 0 <= score <= 10
-    ):
-        raise ValueError(f"{skill_name}.{metric_id} 分数无效")
     if not all(
         isinstance(result[field], str) and result[field]
         for field in ("unit", "observed_at", "source")
@@ -184,7 +173,6 @@ def _normalize_result(
         "observed_at": result["observed_at"],
         "source": result["source"],
         "url": _SOURCE_WEBSITES[source_host],
-        "score": score,
     }
 
 
@@ -289,7 +277,7 @@ def _compute_metric(
             result = missing_metric(
                 skill.name, metric_id, "calculation_error", str(exc)
             )
-    trace.output = {"status": result["status"], "score": result["score"]}
+    trace.output = {"status": result["status"]}
     if result["status"] != "ok":
         fields = {
             "skill_name": skill.name,

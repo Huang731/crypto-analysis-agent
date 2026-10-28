@@ -12,7 +12,7 @@ FEAR_GREED_FIELD_LABELS = (
 
 
 def calculate_fear_and_greed(raw: dict[str, Any]) -> dict[str, Any]:
-    """按指数固定分档评分，记录时间只用于展示。"""
+    """按指数固定区间生成情绪信号，记录时间只用于展示。"""
     if raw.get("status") != "ok":
         return {
             "status": "data_missing",
@@ -36,22 +36,21 @@ def calculate_fear_and_greed(raw: dict[str, Any]) -> dict[str, Any]:
     except (KeyError, TypeError, ValueError, OverflowError) as exc:
         return {"status": "data_missing", "reason": str(exc)}
     if value <= 19:
-        score, signal = 5, "买入区域"
+        signal = "买入区域"
     elif value <= 39:
-        score, signal = 4, "偏买入/等待确认"
+        signal = "偏买入/等待确认"
     elif value <= 59:
-        score, signal = 2.5, "等待时机"
+        signal = "等待时机"
     elif value <= 79:
-        score, signal = 1, "持有/准备减仓"
+        signal = "持有/准备减仓"
     else:
-        score, signal = 0, "减仓区域"
+        signal = "减仓区域"
     return {
         "status": "ok",
         "value": value,
         "value_classification": classification,
         "record_timestamp": observed.isoformat(),
         "signal_reference": signal,
-        "score": round(score, 2),
         "unit": "index (0-100)",
         "observed_at": observed.date().isoformat(),
         "source": raw["source"],

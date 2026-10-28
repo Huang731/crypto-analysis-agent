@@ -1,4 +1,4 @@
-"""按既定规则校验时间窗口，并计算OI及Funding评分。"""
+"""按既定规则校验时间窗口，并计算 OI、资金费率及市场状态。"""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -31,10 +31,9 @@ OI_FIELD_LABELS = (
         "oi_change_pct": "7日持仓量变化（%）",
         "price_change_pct": "7日现货价格变化（%）",
         "funding_average_pct": "7日窗口平均8小时资金费率（%）",
-        "funding_score": "资金费率分数",
         "market_state": "市场状态",
     },
-    # 24小时比较基准缺失时保留 null，不改变原有7日评分条件。
+    # 24小时比较基准缺失时保留 null，不改变原有7日窗口。
     {
         "oi_24h_change_pct": "24小时持仓量变化（%）",
         "price_24h_change_pct": "24小时现货价格变化（%）",
@@ -51,7 +50,7 @@ def _number(value: Any) -> float:
 
 
 def _rows(payload: dict[str, Any], key: str) -> list[Any]:
-    """接口缺失不能转换为空值或零分。"""
+    """接口缺失不能转换为空数组或零值。"""
     rows = payload[key]
     if isinstance(rows, dict):
         raise TypeError(rows["reason"])
@@ -113,28 +112,19 @@ def _funding(payload: dict[str, Any], prices: pd.Series) -> dict[str, Any]:
     if start not in rates.index:
         raise ValueError("Funding 缺少7日窗口起点结算记录")
     if latest not in prices or start not in prices:
-        raise ValueError("Funding 评分缺少同时间戳7日现货价格")
+        raise ValueError("Funding 缺少同时间戳7日现货价格")
     price_change = _change(prices, latest, 168)
-    # 使用十进制保留分档边界，不把0.03%误判到相邻档。
+    # 保留十进制精度，市场状态按未舍入的资金费率判定。
     average = (
         sum((Decimal(str(rate)) for rate in window.tolist()), Decimal(0))
         * 100
         * 8
         / 168
     )
-    if average <= Decimal("-0.03") or average >= Decimal("0.05"):
-        score = 0
-    elif average < Decimal("-0.01") or average > Decimal("0.03"):
-        score = 2.5
-    elif price_change > 2 and 0 < average <= Decimal("0.03"):
-        score = 7.5
-    else:
-        score = 5
     return {
         "funding_times": [actual_times[t] for t in window.index],
         "funding_rates": window.tolist(),
-        "funding_average_pct": float(average),
-        "funding_score": score,
+        "funding_average_pct": average,
         "funding_timestamp": latest,
         "funding_price_change_pct": price_change,
     }
@@ -157,7 +147,7 @@ def _parse_oi(payload: dict[str, Any]) -> pd.Series:
 def calculate_derivatives(
     raw: dict[str, Any], scope: dict[str, str], metric_id: str
 ) -> dict[str, Any]:
-    """Funding独立评分；OI依赖Funding和同时间戳价格，缺失时不给分。"""
+    """独立计算资金费率；OI 结合资金费率及同时间戳价格判断市场状态。"""
     if metric_id not in {"OI", "Funding"}:
         raise ValueError("不支持的衍生品指标")
     payload = raw["payload"]
@@ -170,7 +160,6 @@ def calculate_derivatives(
         funding = _funding(payload, prices)
         result = {**funding, "symbol": payload["symbol"]}
         latest = funding["funding_timestamp"]
-        score = funding["funding_score"]
         source = raw["sources"]["funding"]
         if metric_id == "OI":
             oi = _parse_oi(payload)
@@ -185,19 +174,10 @@ def calculate_derivatives(
             price_change = _change(prices, latest, 168)
             if oi_change is None or price_change is None:
                 raise ValueError("OI或现货缺少168小时前精确基准")
-            if (score < 5 and oi_change > 5) or (price_change < -2 and oi_change > 5):
-                score = 0
-            elif price_change < -2 and oi_change < -5:
-                score = 2.5
-            elif price_change > 2 and oi_change < -5:
-                score = 7.5
-            elif price_change > 2 and oi_change > 5:
-                score = 10
-            else:
-                score = 5
             state = (
                 "杠杆压力"
-                if funding["funding_score"] < 5
+                if funding["funding_average_pct"] < Decimal("-0.01")
+                or funding["funding_average_pct"] > Decimal("0.03")
                 else "去杠杆"
                 if oi_change < -5
                 else "健康扩张候选"
@@ -217,8 +197,8 @@ def calculate_derivatives(
                 market_state=state,
             )
             source = raw["sources"]["oi"]
-        # 评分和市场状态判定完成后，再统一处理返回值的小数精度。
-        result["funding_average_pct"] = round(result["funding_average_pct"], 6)
+        # 市场状态判定完成后，再统一处理返回值的小数精度。
+        result["funding_average_pct"] = round(float(result["funding_average_pct"]), 6)
         for field in (
             "funding_price_change_pct",
             "oi_change_pct",
@@ -231,7 +211,6 @@ def calculate_derivatives(
         return {
             **result,
             "status": "ok",
-            "score": round(score, 2),
             "unit": "%",
             "observed_at": datetime.fromtimestamp(latest / 1000, timezone.utc)
             .date()

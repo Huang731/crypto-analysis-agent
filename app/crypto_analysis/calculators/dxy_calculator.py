@@ -1,12 +1,10 @@
-"""DXY 原始日线的校验、均线与评分。"""
+"""DXY 原始日线的校验、均线与偏离计算。"""
 
 from datetime import date
 from math import isfinite
 from typing import Any
 
 import pandas as pd
-
-from app.crypto_analysis.calculators.score_calculator import linear_score
 
 _DXY_SOURCE = "https://eodhd.com/api/eod/DXY.INDX"
 
@@ -56,7 +54,7 @@ def calculate_dxy_metrics(raw: dict[str, Any]) -> dict[str, Any]:
     closes = _parse_closes(raw)
 
     def ma(period: int, offset: int = 0) -> float:
-        """保留窗口内的 Python 顺序求和，避免评分发生浮点偏移。"""
+        """保留窗口内的 Python 顺序求和与原有浮点精度。"""
         end = len(closes) - offset
         return sum(closes.iloc[end - period : end].tolist()) / period
 
@@ -64,8 +62,6 @@ def calculate_dxy_metrics(raw: dict[str, Any]) -> dict[str, Any]:
     ma50, previous_ma50 = ma(50), ma(50, 1)
     ma200, previous_ma200 = ma(200), ma(200, 1)
     ma50_deviation_pct = 100 * (latest_close / ma50 - 1)
-    # 美元越强，流动性分数越低；沿用相对 MA50 的反向评分。
-    score = round(10 - linear_score(ma50_deviation_pct, -0.5, 0.5), 2)
 
     def direction(current: float, previous: float) -> str:
         if current > previous:
@@ -85,10 +81,6 @@ def calculate_dxy_metrics(raw: dict[str, Any]) -> dict[str, Any]:
         "ma50": round(ma50, 2),
         "ma200": round(ma200, 2),
         "ma50_deviation_pct": round(ma50_deviation_pct, 2),
-        "score_baseline": ma50,
-        "score_calculation_pct": ma50_deviation_pct,
-        "score_upper_threshold_pct": 0.5,
-        "score": score,
         "report_fields": {
             "原始值": latest_close,
             "原始值单位": "指数点",
@@ -96,7 +88,6 @@ def calculate_dxy_metrics(raw: dict[str, Any]) -> dict[str, Any]:
             "基准值名称": "MA50",
             "计算值": ma50_deviation_pct,
             "计算值单位": "%",
-            "分数": score,
         },
         "above_ma50": latest_close > ma50,
         "above_ma200": latest_close > ma200,

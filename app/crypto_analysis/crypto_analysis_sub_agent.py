@@ -1,7 +1,6 @@
 """加密资产技能执行子图：缓存、指标执行、内容生成及结果收尾。"""
 
 from collections.abc import Awaitable, Callable
-from math import fsum
 from traceback import format_exc
 from typing import Any, Literal
 
@@ -45,7 +44,7 @@ from prompts.crypto_analysis_skill_content import skill_retrieval_messages
 def aggregate_skill_results(
     skill: LoadedSkill, indicators: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """根据 Skill 权重聚合已有指标，不要求指标齐全或最低覆盖率。"""
+    """汇总已有指标及执行状态，不要求指标齐全或最低覆盖率。"""
     scoring = skill.scoring
     ids = [item["indicator_id"] for item in indicators]
     if len(ids) != len(set(ids)) or not set(ids).issubset(
@@ -55,20 +54,10 @@ def aggregate_skill_results(
     valid = {
         item["indicator_id"]: item for item in indicators if item["status"] == "ok"
     }
-    coverage = fsum(metric.weight for metric in scoring.metrics if metric.id in valid)
-    if coverage > 0:
-        score = (
-            sum(
-                metric.weight * valid[metric.id]["score"]
-                for metric in scoring.metrics
-                if metric.id in valid
-            )
-            / coverage
-        )
+    if valid:
         status = "ok" if len(valid) == len(scoring.metrics) else "partial"
         reason = None
     else:
-        score = None
         reason = "；".join(
             item["reason"]
             for item in indicators
@@ -89,7 +78,6 @@ def aggregate_skill_results(
         "name": scoring.name,
         "status": status,
         "reason": reason,
-        "score": score,
         "indicators": indicators,
     }
 

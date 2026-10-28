@@ -1,4 +1,4 @@
-"""CMC 稳定币原始报价的校验、日期对齐与评分。"""
+"""CMC 稳定币原始报价的校验、日期对齐与市值变化计算。"""
 
 from datetime import date, datetime, timedelta
 from math import isfinite
@@ -6,7 +6,6 @@ from typing import Any
 
 import pandas as pd
 
-from app.crypto_analysis.calculators.score_calculator import linear_score
 from app.crypto_analysis.tools.source_time_utils import utc_time
 
 _BASE_URL = "https://pro-api.coinmarketcap.com"
@@ -60,7 +59,7 @@ def _parse_quotes(
 
 
 def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
-    """对齐连续 31 个 UTC 日期，沿用原有计算顺序和评分公式。"""
+    """对齐连续 31 个 UTC 日期，沿用原有市值变化计算顺序。"""
     data = raw["payload"].get("data")
     if not isinstance(data, dict):
         raise TypeError("CMC 稳定币响应缺少 data 对象")
@@ -101,14 +100,12 @@ def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
 
     totals = aligned["USDT"] + aligned["USDC"]
     latest = float(totals.iloc[-1])
-    # 保留 Python 顺序求和，避免 pandas 聚合的浮点差异影响未舍入的分数。
+    # 保留 Python 顺序求和，避免 pandas 聚合的浮点差异。
     ma30 = sum(totals.iloc[-30:].tolist()) / 30
     seven_day = float(totals.iloc[-8])
     thirty_day = float(totals.iloc[0])
     ma30_change = 100 * (latest / ma30 - 1)
     seven_day_change = 100 * (latest / seven_day - 1)
-    ma30_score = linear_score(ma30_change, -0.5, 0.5)
-    seven_day_score = linear_score(seven_day_change, -1, 1)
 
     return {
         "status": "ok",
@@ -118,7 +115,7 @@ def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
             symbol: by_coin[symbol][latest_day][1].isoformat()
             for symbol in ("USDT", "USDC")
         },
-        # 评分使用原始美元市值，返回的市值统一换算为亿美元。
+        # 返回的市值统一换算为亿美元。
         "unit": "亿美元",
         "usdt_market_cap": round(by_coin["USDT"][latest_day][0] / 100_000_000, 2),
         "usdc_market_cap": round(by_coin["USDC"][latest_day][0] / 100_000_000, 2),
@@ -128,7 +125,6 @@ def _stablecoin_metrics(raw: dict[str, Any]) -> dict[str, Any]:
         "thirty_day_market_cap": round(thirty_day / 100_000_000, 2),
         "ma30_change_pct": round(ma30_change, 2),
         "seven_day_change_pct": round(seven_day_change, 2),
-        "score": round(0.5 * ma30_score + 0.5 * seven_day_score, 2),
         "thirty_day_change_pct": round(100 * (latest / thirty_day - 1), 2),
         "conflict_flag": (ma30_change > 0 > seven_day_change)
         or (seven_day_change > 0 > ma30_change),

@@ -1,4 +1,4 @@
-"""按百万美元计算现货 ETF 流量评分，返回金额统一为亿美元。"""
+"""汇总现货 ETF 净流量，返回金额统一为亿美元。"""
 
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -17,19 +17,6 @@ ETF_FLOW_FIELD_LABELS = (
     },
     {},
 )
-
-
-def _flow_score(value: Decimal, neutral: int, extreme: int) -> float:
-    """中性区间包含两端，极端流量包含极值边界。"""
-    if value <= -extreme:
-        return 0
-    if value < -neutral:
-        return 2.5
-    if value <= neutral:
-        return 5
-    if value < extreme:
-        return 7.5
-    return 10
 
 
 def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any]:
@@ -62,8 +49,6 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
     values = flows.tolist()
     five = sum(values[-5:], Decimal(0))
     twenty = sum(values, Decimal(0))
-    five_score = _flow_score(five, 500, 1500)
-    twenty_score = _flow_score(twenty, 1500, 5000)
     result = {
         "status": "ok",
         "source": raw["source"],
@@ -77,17 +62,8 @@ def calculate_etf_flows(raw: dict[str, Any], scope: dict[str, str]) -> dict[str,
         ),
         "five_day_flow_usd_100m": round(float(five / 100), 6),
         "twenty_day_flow_usd_100m": round(float(twenty / 100), 6),
-        "five_day_score": five_score,
-        "twenty_day_score": twenty_score,
-        "score": round(
-            float(
-                Decimal(str(five_score)) * Decimal("0.4")
-                + Decimal(str(twenty_score)) * Decimal("0.6")
-            ),
-            2,
-        ),
     }
-    # 最新净流量为零时省略该字段，不影响窗口汇总和评分。
+    # 最新净流量为零时省略该字段，不影响窗口汇总。
     if result["latest_flow_usd_100m"] == 0.0:
         del result["latest_flow_usd_100m"]
     return result

@@ -6,7 +6,6 @@
 """
 
 import json
-from math import isfinite
 from typing import Any
 
 import pytest
@@ -227,10 +226,7 @@ class TestCalculateMetrics:
                 "not_applicable",
                 "calculation_error",
             }
-            if indicator["status"] == "ok":
-                score = indicator["score"]
-                assert isinstance(score, (int, float)) and not isinstance(score, bool)
-                assert isfinite(score) and 0 <= score <= 10
-            else:
+            assert "score" not in indicator
+            assert "funding_score" not in indicator["calculated_values"]
+            if indicator["status"] != "ok":
                 assert indicator["reason"]
-                assert indicator["score"] is None

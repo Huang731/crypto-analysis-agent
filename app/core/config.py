@@ -52,7 +52,6 @@ class Settings(BaseSettings):
     )
     bailian_smart_models: list[str] = Field(
         default_factory=lambda: [
-            "qwen3.7-plus",
             "qwen3.7-plus-2026-05-26",
             "qwen3.6-plus",
             "qwen3.6-plus-2026-04-02",
@@ -77,12 +76,8 @@ class Settings(BaseSettings):
     # 模型用量的成本估算：input/output 的单位均为元/百万 Token。
     # 保留历史评测模型的估算配置；未配置的模型成本按未知处理。
     model_price_table: dict[str, dict[str, float]] = {
-        "qwen3.7-plus": {"input": 50.0, "output": 50.0},
-        "qwen3.7-flash-2026-07-15": {"input": 0.5, "output": 0.5},
-        "text-embedding-v4": {"input": 0.5, "output": 0.0},
-        "text-embedding-v1": {"input": 0.7, "output": 0.0},
-        "qwen3.7-text-embedding": {"input": 0.5, "output": 0.0},
-        "qwen3.7-text-embedding-flash": {"input": 0.125, "output": 0.0},
+        "qwen3.7-plus-2026-05-26": {"input": 50.0, "output": 50.0},
+        "qwen3.6-flash": {"input": 0.5, "output": 0.5},
         "BAAI/bge-m3": {"input": 0.0, "output": 0.0},
         "BAAI/bge-reranker-v2-m3": {"input": 0.0, "output": 0.0},
         "Qwen/Qwen3.5-4B": {"input": 0.0, "output": 0.0},

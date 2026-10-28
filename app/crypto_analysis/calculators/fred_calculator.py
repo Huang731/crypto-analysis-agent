@@ -1,4 +1,4 @@
-"""FRED 月度、周度观测的校验、日期对齐与评分。"""
+"""FRED 月度、周度观测的校验、日期对齐与变化计算。"""
 
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
@@ -6,7 +6,6 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from app.crypto_analysis.calculators.score_calculator import linear_score
 from app.crypto_analysis.tools.source_time_utils import shift_month
 
 _FRED_SOURCE = "https://api.stlouisfed.org/fred/series/observations"
@@ -81,7 +80,7 @@ def _parse_observations(
 
 
 def calculate_m2_yoy_change(raw: dict[str, Any]) -> dict[str, Any]:
-    """用最新月与上月的同比增速之差评分，按精确月份对齐。"""
+    """按精确月份对齐，计算最新月与上月的同比增速之差。"""
     values = _parse_observations(raw, "M2SL")
     if values.empty:
         return {
@@ -122,7 +121,6 @@ def calculate_m2_yoy_change(raw: dict[str, Any]) -> dict[str, Any]:
         "latest_yoy_pct": round(float(latest_yoy), 2),
         "previous_yoy_pct": round(float(previous_yoy), 2),
         "yoy_change_pp": round(float(yoy_change), 2),
-        "score": round(linear_score(yoy_change, -0.5, 0.5), 2),
         "comparison_months": [month.isoformat() for month in required],
     }
 
@@ -161,7 +159,6 @@ def calculate_walcl_ma4(raw: dict[str, Any]) -> dict[str, Any]:
         "latest_value": round(float(latest / 100), 2),
         "ma4_value": round(float(ma4 / 100), 2),
         "ma4_change_pct": round(float(ma4_change_pct), 2),
-        "score": round(linear_score(ma4_change_pct, -0.5, 0.5), 2),
         "comparison_dates": [day.isoformat() for day in required],
         "weekly_values": [round(float(value / 100), 2) for value in weekly_values],
     }

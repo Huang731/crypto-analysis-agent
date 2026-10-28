@@ -45,7 +45,6 @@ def render_metric_tables(skill: LoadedSkill, indicators: list[dict[str, Any]]) -
         )
         rows.extend(
             [
-                ("指标分数", indicator["score"]),
                 ("单位", indicator["unit"]),
                 ("观测日期", indicator["observed_at"]),
                 ("来源链接", indicator["url"]),

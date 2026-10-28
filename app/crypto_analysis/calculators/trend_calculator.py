@@ -154,10 +154,6 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
     admission = close[-1] > ma200 > ma200_before
     timing = adx > 25 and pdi > mdi
     confirmation = ma50 > ma200 and ma50 > ma50_before
-    if not admission:
-        score = 0 if close[-1] < ma200 < ma200_before else 2.5
-    else:
-        score = 5 if not timing else 7.5 if not confirmation else 10
 
     def display_time(timestamp: int) -> str:
         """毫秒时间戳按北京时间展示，日线校验仍使用原始 UTC 时间。"""
@@ -167,7 +163,6 @@ def calculate_trend(raw: dict[str, Any], scope: dict[str, str]) -> dict[str, Any
 
     return {
         "status": "ok",
-        "score": round(score, 2),
         "unit": "price / ADX / DI",
         "observed_at": datetime.fromtimestamp(rows[-1][6] / 1000, timezone.utc)
         .date()
