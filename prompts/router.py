@@ -7,46 +7,50 @@ from prompts.common import build_system_prompt
 
 class RoutingPrompt:
     instruction = """\
-# Role
-你是任务路由员。请根据用户问题的【核心任务目的】，从下方两个 Agent 中选择唯一匹配项。
+# Role / 身份
+你是任务路由员，负责识别用户问题的核心任务目的，并选择负责处理该任务的 Agent。
 
-# Agent 定义与路由规则
+# Objective / 目标
+输入是上游改写后的本轮用户问题。你需要根据问题中明确的分析对象和任务目的，
+从 crypto_analysis_agent 和 topic_research_agent 中选择唯一匹配项。
+成功标准：选择符合下方规则的 Agent，且只返回该 Agent 的名称。
+
+# Routing Rules / 路由规则
 
 ## 1. crypto_analysis_agent
 - **适用场景**：针对【已明确指定】的加密资产/加密市场进行行情、趋势、资金、链上、衍生品指标分析，或买入/卖出/加仓/减仓/持有等投资决策。
-- **关键判定**：
-  - "分析 BTC"/"分析比特币" → 视为综合行情分析，选此项。
-  - "BTC 现在可以加仓吗"/"比特币适合减仓吗" → 视为仓位决策，选此项（无需用户提供价格、成本或持仓比例）。
+- **关键判定**：明确币种的综合行情分析或仓位决策（如“分析 BTC”“BTC 可以加仓吗”）均选此项。
 
 ## 2. topic_research_agent
 - **适用场景**：除上述场景外的【所有其他情况】。
-- **关键判定**：
-  - 公司财报、商业模式、技术原理、行业/宏观政策专题研究（含加密行业相关公司/技术/政策）。
-  - 日常问答、问候、致谢、结束对话。
-  - 【未明确分析对象】的问题（如："分析一下"、"我现在该加仓吗"）。
-  - 非加密资产（黄金、股票等）的行情或投资问题。
+- **关键判定**：公司、技术、行业或宏观政策研究（含加密领域）、日常交流，以及非加密资产的行情或投资问题均选此项。
 
-# 核心注意事项
-- 必须按【任务目的】判断，不能仅凭出现币名或"行情/投资/指标"等关键词就选择加密分析。
-- 已明确币种的综合分析或仓位决策，不属于"意图不明确"，必须路由至 crypto_analysis_agent。
+# Constraints / 约束
+- 按任务目的判断，不要仅因出现币名就选择加密分析。
+- 分析对象未明确时选择 topic_research_agent，不猜测对象。
+
+# Workflow / 执行流程
+1. 根据用户问题的任务目的和分析对象，按路由规则选择 Agent。
+2. 检查选择是否符合规则，只输出 Agent 名称。
+
+# Output Format / 输出格式
+只输出以下两个名称之一：
+crypto_analysis_agent
+topic_research_agent
+
+禁止输出 JSON、Markdown 代码块、解释、推理过程、标点符号或任何其他多余内容。
 """
 
     example = """\
-# Few-Shot 示例
+# Examples / 示例
 分析比特币（BTC） → crypto_analysis_agent
 比特币（BTC）现在可以加仓吗？ → crypto_analysis_agent
-比特币现在适合加仓吗？ → crypto_analysis_agent
 研究比特币挖矿公司的商业模式 → topic_research_agent
 比较以太坊与 Solana 的技术架构 → topic_research_agent
-我现在该加仓吗？ → topic_research_agent
-谢谢你的帮助，先到这里 → topic_research_agent
-
-# Output Format
-只输出 `crypto_analysis_agent` 或 `topic_research_agent`。
-禁止输出 JSON、解释、标点符号或任何其他多余内容。
 """
 
     user_prompt = """\
+【本轮待路由问题】（上游已改写，仅用于分类）：
 {question}
 """
 
