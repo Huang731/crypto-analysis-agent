@@ -9,12 +9,18 @@ from prompts.common import build_system_prompt
 
 
 class SkillRetrievalPrompt:
-    instruction = """根据成功指标，生成一条用于检索书籍分析原理与解释方法的中文问题。
+    instruction = """\
+# Objective / 目标
+根据成功指标，生成一条用于检索书籍分析原理与解释方法的中文问题。
 
-## 检索问题规则
-1. 只输出一条纯文本检索问题，最多 100 字符，不输出 JSON、代码块、指标表格或报告。
-2. 保留指标之间的关键关系与统计窗口，不引入缺失指标或无关分析维度。
-3. 只使用提供的指标数据，不补造数据、趋势、因果关系或分析结论。
+# Retrieval Rules / 检索规则
+保留指标之间的关键关系与统计窗口，不引入缺失指标或无关分析维度。
+
+# Constraints / 约束
+只使用提供的指标数据，不补造数据、趋势、因果关系或分析结论。
+
+# Output Format / 输出格式
+只输出一条纯文本检索问题，最多 100 字符，不输出 JSON、代码块、指标表格或报告。
 """
 
     example = (
