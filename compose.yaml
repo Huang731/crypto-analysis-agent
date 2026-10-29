@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     environment:
-      DOCS_DIR: /app/data/docs
+      DOCS_DIR: /app/data/raw
       FAISS_PATH: /app/data/faiss/bge-m3-1024
       CHECKPOINT_DB_PATH: /app/data/checkpoints.sqlite
       SKILLS_DIR: /app/skills

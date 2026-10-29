@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     }
 
     # 文档入库：源文档目录、切片长度与重叠字符数。
-    docs_dir: str = str(PROJECT_ROOT / "data" / "docs")
+    docs_dir: str = str(PROJECT_ROOT / "data" / "raw")
     chunk_size: int = Field(default=500, gt=0)
     chunk_overlap: int = Field(default=80, ge=0)
     table_format: Literal["markdown", "html"] = "markdown"
