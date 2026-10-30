@@ -106,14 +106,14 @@ async def ainvoke_structured(
     *,
     schema: type[_Schema],
 ) -> _Schema:
-    """统一使用 JSON 模式，返回经过 Schema 校验的对象。"""
+    """统一使用 function calling，返回经过 Schema 校验的对象。"""
     parameters: dict[str, Any] = {}
     config: RunnableConfig = {}
     if isinstance(model, RunnableBinding):
         parameters = model.kwargs
         config = model.config
         model = model.bound
-    structured = model.with_structured_output(schema, method="json_mode")
+    structured = model.with_structured_output(schema, method="function_calling")
     return await ainvoke_model(
         structured.bind(**parameters).with_config(config),
         messages,

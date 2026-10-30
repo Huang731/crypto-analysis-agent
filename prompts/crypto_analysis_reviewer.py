@@ -53,15 +53,17 @@ class AnalysisReviewPrompt:
    仅对不通过项汇总问题、证据和修改方向，合并重复问题，不新增数据或条件。
 
 # Output Format / 输出格式
-只返回符合所附 Schema 的 JSON，不添加 Markdown 代码块或其他文字：
-`review_process` 按“【审核项】【报告原文】vs【本轮证据】【判定及理由】”逐项简记。
+示例：
+```json
+{
+  "review_process": "【数据使用】【报告原文】ETF 资金净流入 vs【本轮证据】ETF 资金净流出【判定及理由】不通过，资金方向相反。",
+  "passed": false,
+  "feedback": "报告将 ETF 资金净流出写成净流入，请修正资金方向及相关结论。"
+}
+```
 """
 
     example = ""
-
-    pydantic_schema = json.dumps(
-        ReportReview.model_json_schema(), ensure_ascii=False, indent=2
-    )
 
     user_prompt = """\
 ## 任务上下文
@@ -82,12 +84,9 @@ class AnalysisReviewPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
-    system_prompt_with_schema = build_system_prompt(
-        instruction, example, pydantic_schema
-    )
     prompt = ChatPromptTemplate.from_messages(
         [
-            SystemMessage(content=system_prompt_with_schema),
+            SystemMessage(content=system_prompt),
             ("human", user_prompt),
         ]
     )

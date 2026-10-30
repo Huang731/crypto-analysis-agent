@@ -1,7 +1,5 @@
 """加密资产分析规划节点提示词。"""
 
-import json
-
 from langchain_core.messages import BaseMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,12 +72,6 @@ class AnalysisPlanPrompt:
 目标资产为 BTC；技能选择 analyzing-crypto-etf-flows；refresh 为 true。
 """
 
-    pydantic_schema = json.dumps(
-        AnalysisPlan.model_json_schema(),
-        ensure_ascii=False,
-        indent=2,
-    )
-
     user_prompt = """\
 ## 输入
 技能目录与描述：
@@ -89,19 +81,16 @@ class AnalysisPlanPrompt:
 """
 
     system_prompt = build_system_prompt(instruction, example)
-    system_prompt_with_schema = build_system_prompt(
-        instruction, example, pydantic_schema
-    )
     prompt = ChatPromptTemplate.from_messages(
         [
-            SystemMessage(content=system_prompt_with_schema),
+            SystemMessage(content=system_prompt),
             ("human", user_prompt),
         ]
     )
 
 
 def analysis_plan_messages(skill_descriptions: str, question: str) -> list[BaseMessage]:
-    """组装规划规则、输出结构和本轮输入。"""
+    """组装规划规则、参考示例和本轮输入。"""
     return AnalysisPlanPrompt.prompt.format_messages(
         skill_descriptions=skill_descriptions,
         question=question,
